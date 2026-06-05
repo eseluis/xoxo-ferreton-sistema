@@ -20,7 +20,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   canAssign,
   canGovern,
@@ -41,6 +41,7 @@ import {
   todayKey,
   weekDays,
 } from "./data";
+import { cloudLoad, cloudSave, isCloudReady } from "./cloudStore";
 
 type Attendance = {
   employeeId: string;
@@ -148,6 +149,7 @@ const load = <T,>(key: string, fallback: T): T => {
 
 const save = (key: string, value: unknown) => {
   localStorage.setItem(key, JSON.stringify(value));
+  void cloudSave(key, value);
 };
 
 const passwordFor = (employee: Employee) => employee.password || `xoxo${employee.id}`;
@@ -192,6 +194,52 @@ function App() {
   const [note, setNote] = useState("");
   const [personalSales, setPersonalSales] = useState(0);
   const [salesGoal, setSalesGoal] = useState(1000);
+
+  useEffect(() => {
+    if (!isCloudReady) return;
+    const hydrate = async () => {
+      const [
+        cloudCollaborators,
+        cloudAttendance,
+        cloudEvaluations,
+        cloudCashIncidents,
+        cloudCashCuts,
+        cloudWarranties,
+        cloudDailyTasks,
+        cloudProcessInstances,
+        cloudInternalRequests,
+        cloudShiftConfigs,
+        cloudActivitySchedules,
+        cloudCleaningRole,
+      ] = await Promise.all([
+        cloudLoad("xoxo.collaborators", collaborators),
+        cloudLoad("xoxo.attendance", attendance),
+        cloudLoad("xoxo.evaluations", evaluations),
+        cloudLoad("xoxo.cash", cashIncidents),
+        cloudLoad("xoxo.cashCuts", cashCuts),
+        cloudLoad("xoxo.warranties", warranties),
+        cloudLoad("xoxo.dailyTasks", dailyTasks),
+        cloudLoad("xoxo.processInstances", processInstances),
+        cloudLoad("xoxo.internalRequests", internalRequests),
+        cloudLoad("xoxo.shiftConfigs", shiftConfigs),
+        cloudLoad("xoxo.activitySchedules", activitySchedules),
+        cloudLoad("xoxo.cleaningRole", cleaningRole),
+      ]);
+      setCollaborators(normalizeEmployees(cloudCollaborators));
+      setAttendance(cloudAttendance);
+      setEvaluations(cloudEvaluations);
+      setCashIncidents(cloudCashIncidents);
+      setCashCuts(cloudCashCuts);
+      setWarranties(cloudWarranties);
+      setDailyTasks(cloudDailyTasks);
+      setProcessInstances(cloudProcessInstances);
+      setInternalRequests(cloudInternalRequests);
+      setShiftConfigs(cloudShiftConfigs);
+      setActivitySchedules(cloudActivitySchedules);
+      setCleaningRole(cloudCleaningRole);
+    };
+    void hydrate();
+  }, []);
 
   const user = collaborators.find((employee) => employee.id === activeId) ?? collaborators[0] ?? defaultEmployees[2];
   const visibleEmployees = canViewAll(user)
@@ -413,6 +461,7 @@ function App() {
           <small>Sesion activa</small>
           <strong>{user.id}</strong>
           <span>{user.name}</span>
+          <em>{isCloudReady ? "Datos en Supabase" : "Datos locales"}</em>
         </div>
 
         <nav>
