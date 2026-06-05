@@ -1,7 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const fallbackSupabaseUrl = "https://cuqgddgmpraichiqmjqh.supabase.co";
+const fallbackSupabaseAnonKey =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1cWdkZGdtcHJhaWNoaXFtanFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2ODQ0MDgsImV4cCI6MjA5NjI2MDQwOH0.Llqg-rk0ozalJSoJ3xeqPv2ipqRr8677mo_lIvqN4-I";
+
+const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || fallbackSupabaseUrl;
+const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || fallbackSupabaseAnonKey;
 
 export const isCloudReady = Boolean(supabaseUrl && supabaseAnonKey);
 
