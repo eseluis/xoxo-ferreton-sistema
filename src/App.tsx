@@ -137,6 +137,19 @@ type InternalRequest = {
   response: string;
 };
 
+type ActivityCompletion = {
+  id: string;
+  employeeId: string;
+  date: string;
+  itemType: "Actividad" | "Aseo";
+  itemId: string;
+  title: string;
+  start: string;
+  end: string;
+  status: "Completada";
+  completedAt: string;
+};
+
 type ShiftConfig = (typeof defaultShiftConfigs)[number];
 type ActivitySchedule = (typeof defaultActivitySchedules)[number];
 type CleaningRole = (typeof defaultCleaningRole)[number];
@@ -184,6 +197,7 @@ function App() {
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
   const [internalRequests, setInternalRequests] = useState<InternalRequest[]>(() => load("xoxo.internalRequests", []));
+  const [activityCompletions, setActivityCompletions] = useState<ActivityCompletion[]>(() => load("xoxo.activityCompletions", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -208,6 +222,7 @@ function App() {
         cloudDailyTasks,
         cloudProcessInstances,
         cloudInternalRequests,
+        cloudActivityCompletions,
         cloudShiftConfigs,
         cloudActivitySchedules,
         cloudCleaningRole,
@@ -221,6 +236,7 @@ function App() {
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
         cloudLoad("xoxo.internalRequests", internalRequests),
+        cloudLoad("xoxo.activityCompletions", activityCompletions),
         cloudLoad("xoxo.shiftConfigs", shiftConfigs),
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
@@ -234,6 +250,7 @@ function App() {
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
       setInternalRequests(cloudInternalRequests);
+      setActivityCompletions(cloudActivityCompletions);
       setShiftConfigs(cloudShiftConfigs);
       setActivitySchedules(cloudActivitySchedules);
       setCleaningRole(cloudCleaningRole);
@@ -256,6 +273,7 @@ function App() {
   }, [evaluations, today, user.id]);
   const shiftMap = Object.fromEntries(shiftConfigs.map((shift) => [shift.key, shift])) as Record<string, ShiftConfig>;
   const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole);
+  const currentCleaningRow = getEditableCleaningRow(user, cleaningRole);
   const userTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
 
   const persistCollaborators = (next: Employee[]) => {
@@ -432,6 +450,11 @@ function App() {
     save("xoxo.internalRequests", next);
   };
 
+  const persistActivityCompletions = (next: ActivityCompletion[]) => {
+    setActivityCompletions(next);
+    save("xoxo.activityCompletions", next);
+  };
+
   if (!isAuthenticated) {
     return (
       <LoginView
@@ -548,7 +571,10 @@ function App() {
             shift={shiftMap[user.shift]}
             activitySchedules={activitySchedules}
             cleaningAssignment={currentCleaningAssignment}
+            cleaningRow={currentCleaningRow}
             dailyTasks={userTasks}
+            activityCompletions={activityCompletions}
+            setActivityCompletions={persistActivityCompletions}
           />
         )}
         {view === "equipo" && (
@@ -637,6 +663,7 @@ function App() {
             dailyTasks={dailyTasks}
             processInstances={processInstances}
             internalRequests={internalRequests}
+            activityCompletions={activityCompletions}
           />
         )}
         {view === "instructivo" && <GuideView />}
@@ -708,31 +735,31 @@ function LoginView({
             type="password"
             value={loginPassword}
             onChange={(event) => setLoginPassword(event.target.value)}
-            placeholder="Ejemplo inicial: xoxo003"
             required
           />
         </label>
         {loginError && <p className="loginError">{loginError}</p>}
         <button className="primary">Entrar</button>
-        <p className="muted">
-          Clave inicial: xoxo + numero de colaborador. Ejemplo: colaborador 003 usa xoxo003 hasta que direccion cambie su clave.
-        </p>
       </form>
     </main>
   );
 }
 
 function getEditableCleaningAssignment(employee: Employee, cleaningRole: CleaningRole[]) {
+  const assignment = getEditableCleaningRow(employee, cleaningRole);
+  if (!assignment) return "Sin aseo asignado en el rol editable";
+  return `${assignment.activity} (${assignment.start} - ${assignment.end})`;
+}
+
+function getEditableCleaningRow(employee: Employee, cleaningRole: CleaningRole[]) {
   const dayName = weekDays[(new Date().getDay() + 6) % 7];
-  const assignment = cleaningRole.find((row) =>
+  return cleaningRole.find((row) =>
     row.assignments[dayName]
       .toLowerCase()
       .split("/")
       .map((name) => name.trim())
       .includes(employee.name.toLowerCase()),
   );
-  if (!assignment) return "Sin aseo asignado en el rol editable";
-  return `${assignment.activity} (${assignment.start} - ${assignment.end})`;
 }
 
 function supervisorFor(employee: Employee, collaborators: Employee[]) {
@@ -868,7 +895,10 @@ function AttendanceView({
   shift,
   activitySchedules,
   cleaningAssignment,
+  cleaningRow,
   dailyTasks,
+  activityCompletions,
+  setActivityCompletions,
 }: {
   user: Employee;
   myAttendance?: Attendance;
@@ -877,9 +907,46 @@ function AttendanceView({
   shift?: ShiftConfig;
   activitySchedules: ActivitySchedule[];
   cleaningAssignment: string;
+  cleaningRow?: CleaningRole;
   dailyTasks: DailyTask[];
+  activityCompletions: ActivityCompletion[];
+  setActivityCompletions: (value: ActivityCompletion[]) => void;
 }) {
   const userActivities = activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role));
+  const today = todayKey();
+  const completeItem = (item: {
+    itemType: ActivityCompletion["itemType"];
+    itemId: string;
+    title: string;
+    start: string;
+    end: string;
+  }) => {
+    const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
+    if (activityCompletions.some((completion) => completion.id === id) || isPastEnd(item.end)) return;
+    setActivityCompletions([
+      ...activityCompletions,
+      {
+        id,
+        employeeId: user.id,
+        date: today,
+        itemType: item.itemType,
+        itemId: item.itemId,
+        title: item.title,
+        start: item.start,
+        end: item.end,
+        status: "Completada",
+        completedAt: timeNow(),
+      },
+    ]);
+  };
+  const statusFor = (itemType: ActivityCompletion["itemType"], itemId: string, end: string) => {
+    const id = `${user.id}-${today}-${itemType}-${itemId}`;
+    const completed = activityCompletions.find((completion) => completion.id === id);
+    if (completed) return { label: `Completada ${completed.completedAt}`, locked: true, className: "ok" };
+    if (isPastEnd(end)) return { label: "Vencida / bloqueada", locked: true, className: "danger" };
+    return { label: "Pendiente", locked: false, className: "warn" };
+  };
+
   return (
     <section className="grid two">
       <article className="panelCard">
@@ -896,6 +963,23 @@ function AttendanceView({
             <strong>{cleaningAssignment}</strong>
           </div>
         </div>
+        {cleaningRow && (
+          <TimeBoundRow
+            title={cleaningRow.activity}
+            start={cleaningRow.start}
+            end={cleaningRow.end}
+            status={statusFor("Aseo", cleaningRow.activity, cleaningRow.end)}
+            onComplete={() =>
+              completeItem({
+                itemType: "Aseo",
+                itemId: cleaningRow.activity,
+                title: cleaningRow.activity,
+                start: cleaningRow.start,
+                end: cleaningRow.end,
+              })
+            }
+          />
+        )}
         <div className="punchGrid">
           <button onClick={() => updateAttendance("in")}>Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}</button>
           <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
@@ -908,12 +992,22 @@ function AttendanceView({
         <h2>Actividades programadas</h2>
         <div className="taskList">
           {userActivities.map((activity) => (
-            <div className="taskRow" key={activity.id}>
-              <span>{activity.name}</span>
-              <strong>
-                {activity.start}-{activity.end}
-              </strong>
-            </div>
+            <TimeBoundRow
+              key={activity.id}
+              title={activity.name}
+              start={activity.start}
+              end={activity.end}
+              status={statusFor("Actividad", activity.id, activity.end)}
+              onComplete={() =>
+                completeItem({
+                  itemType: "Actividad",
+                  itemId: activity.id,
+                  title: activity.name,
+                  start: activity.start,
+                  end: activity.end,
+                })
+              }
+            />
           ))}
         </div>
       </article>
@@ -953,6 +1047,45 @@ function AttendanceView({
       </article>
     </section>
   );
+}
+
+function TimeBoundRow({
+  title,
+  start,
+  end,
+  status,
+  onComplete,
+}: {
+  title: string;
+  start: string;
+  end: string;
+  status: { label: string; locked: boolean; className: string };
+  onComplete: () => void;
+}) {
+  return (
+    <div className="taskRow timeBoundRow">
+      <span>
+        {title}
+        <small>
+          {start}-{end} · <b className={status.className}>{status.label}</b>
+        </small>
+      </span>
+      <button className="ghost compact" disabled={status.locked} onClick={onComplete}>
+        Marcar hecho
+      </button>
+    </div>
+  );
+}
+
+function isPastEnd(end: string) {
+  if (!/^\d{2}:\d{2}$/.test(end)) return false;
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes() > timeToMinutes(end);
+}
+
+function timeToMinutes(time: string) {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
 }
 
 function GovernanceView({
@@ -2085,6 +2218,7 @@ function ReportsView({
   dailyTasks,
   processInstances,
   internalRequests,
+  activityCompletions,
 }: {
   user: Employee;
   collaborators: Employee[];
@@ -2096,6 +2230,7 @@ function ReportsView({
   dailyTasks: DailyTask[];
   processInstances: ProcessInstance[];
   internalRequests: InternalRequest[];
+  activityCompletions: ActivityCompletion[];
 }) {
   const [period, setPeriod] = useState<"day" | "week" | "month">("day");
   const [baseDate, setBaseDate] = useState(todayKey());
@@ -2109,6 +2244,7 @@ function ReportsView({
   const filteredTasks = dailyTasks.filter((entry) => inRange(entry.date));
   const filteredProcesses = processInstances.filter((entry) => inRange(entry.date));
   const filteredRequests = internalRequests.filter((entry) => inRange(entry.date));
+  const filteredActivityCompletions = activityCompletions.filter((entry) => inRange(entry.date));
   const sales = filteredCuts.reduce((sum, cut) => sum + cut.erpSales, 0);
   const difference = filteredCuts.reduce((sum, cut) => sum + cut.difference, 0);
   const avgEval =
@@ -2223,6 +2359,18 @@ function ReportsView({
               key={process.id}
               left={`${process.date} · ${process.title}`}
               right={`${process.status} · ${process.stepStates.filter((step) => step.done).length}/${process.stepStates.length} pasos`}
+            />
+          ))}
+        </ReportSection>
+
+        <ReportSection title="Cumplimiento de actividades y aseo">
+          {filteredActivityCompletions.map((item) => (
+            <ReportLine
+              key={item.id}
+              left={`${item.date} · ${item.itemType} · ${item.title}`}
+              right={`${collaborators.find((employee) => employee.id === item.employeeId)?.name ?? item.employeeId} · ${item.start}-${item.end} · ${
+                item.status
+              } ${item.completedAt}`}
             />
           ))}
         </ReportSection>

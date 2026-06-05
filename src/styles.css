@@ -982,6 +982,18 @@ h2 {
   align-items: center;
 }
 
+.timeBoundRow {
+  align-items: center;
+}
+
+.timeBoundRow button {
+  align-self: center;
+}
+
+.timeBoundRow b {
+  font-weight: 800;
+}
+
 .taskEditable small,
 .taskRow small {
   display: block;
