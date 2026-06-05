@@ -573,6 +573,8 @@ function App() {
             cleaningAssignment={currentCleaningAssignment}
             cleaningRow={currentCleaningRow}
             dailyTasks={userTasks}
+            allDailyTasks={dailyTasks}
+            setDailyTasks={persistDailyTasks}
             activityCompletions={activityCompletions}
             setActivityCompletions={persistActivityCompletions}
           />
@@ -840,6 +842,55 @@ function Dashboard({
         </div>
       </article>
 
+      {(canViewAll(user) || dailyTasks.some((task) => task.assignedById === user.id)) && (
+        <article className="wide panelCard">
+          <div className="sectionHead">
+            <div>
+              <h2>Seguimiento operativo del dia</h2>
+              <span>Entradas, tareas activas, pasos, incidencias y aprobaciones pendientes</span>
+            </div>
+          </div>
+          <div className="operationTable">
+            <div className="operationRow head">
+              <span>Colaborador</span>
+              <span>Entrada</span>
+              <span>Tarea actual</span>
+              <span>Estado / paso</span>
+              <span>Seguimiento</span>
+            </div>
+            {collaborators
+              .filter(
+                (employee) =>
+                  canViewAll(user) ||
+                  employee.supervisorId === user.id ||
+                  dailyTasks.some((task) => task.employeeId === employee.id && task.assignedById === user.id),
+              )
+              .map((employee) => {
+                const dayAttendance = attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
+                const activeTask =
+                  dailyTasks.find(
+                    (task) =>
+                      task.employeeId === employee.id &&
+                      task.date === today &&
+                      ["En proceso", "Incidencia", "Pausada"].includes(task.status),
+                  ) ?? dailyTasks.find((task) => task.employeeId === employee.id && task.date === today);
+                return (
+                  <div className="operationRow" key={employee.id}>
+                    <strong>{employee.name}</strong>
+                    <span>{dayAttendance?.in ?? "Sin entrada"}</span>
+                    <span>{activeTask?.title ?? "Sin tarea asignada"}</span>
+                    <span>
+                      {activeTask ? `${activeTask.status} · ${activeTask.currentStep || "Sin paso"}` : "--"}
+                      {activeTask?.approvalStatus === "Pendiente" ? <small className="danger">Requiere aprobacion</small> : null}
+                    </span>
+                    <span>{activeTask?.incidentNote || activeTask?.employeeComment || activeTask?.notes || "--"}</span>
+                  </div>
+                );
+              })}
+          </div>
+        </article>
+      )}
+
       <article className="panelCard">
         <h2>Tareas asignadas hoy</h2>
         <div className="taskList">
@@ -897,6 +948,8 @@ function AttendanceView({
   cleaningAssignment,
   cleaningRow,
   dailyTasks,
+  allDailyTasks,
+  setDailyTasks,
   activityCompletions,
   setActivityCompletions,
 }: {
@@ -909,6 +962,8 @@ function AttendanceView({
   cleaningAssignment: string;
   cleaningRow?: CleaningRole;
   dailyTasks: DailyTask[];
+  allDailyTasks: DailyTask[];
+  setDailyTasks: (value: DailyTask[]) => void;
   activityCompletions: ActivityCompletion[];
   setActivityCompletions: (value: ActivityCompletion[]) => void;
 }) {
@@ -945,6 +1000,17 @@ function AttendanceView({
     if (completed) return { label: `Completada ${completed.completedAt}`, locked: true, className: "ok" };
     if (isPastEnd(end)) return { label: "Vencida / bloqueada", locked: true, className: "danger" };
     return { label: "Pendiente", locked: false, className: "warn" };
+  };
+  const updateTask = (id: string, patch: Partial<DailyTask>) => {
+    setDailyTasks(allDailyTasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+  };
+  const pauseTaskForIncident = (task: DailyTask, incidentNote: string) => {
+    updateTask(task.id, {
+      status: "Pausada",
+      paused: true,
+      approvalStatus: "Pendiente",
+      incidentNote,
+    });
   };
 
   return (
@@ -1017,14 +1083,48 @@ function AttendanceView({
         <div className="taskList">
           {dailyTasks.length ? (
             dailyTasks.map((task) => (
-              <div className="taskRow" key={task.id}>
-                <span>
-                  {task.title}
-                  <small>
-                    {task.start}-{task.end} · {task.priority}
-                  </small>
-                </span>
-                <strong>{task.status}</strong>
+              <div className="taskProgressCard" key={task.id}>
+                <div className="sectionHead">
+                  <span>
+                    <strong>{task.title}</strong>
+                    <small>
+                      {task.start}-{task.end} · {task.priority}
+                    </small>
+                  </span>
+                  <strong className={task.status === "Pausada" || task.status === "Incidencia" ? "danger" : ""}>{task.status}</strong>
+                </div>
+                <div className="taskProgressInputs">
+                  <input
+                    value={task.currentStep ?? ""}
+                    disabled={task.paused}
+                    onChange={(event) => updateTask(task.id, { currentStep: event.target.value, status: "En proceso" })}
+                    placeholder="Paso actual de la tarea"
+                  />
+                  <textarea
+                    value={task.employeeComment ?? ""}
+                    disabled={task.paused}
+                    onChange={(event) => updateTask(task.id, { employeeComment: event.target.value })}
+                    placeholder="Comentario de avance"
+                  />
+                  <textarea
+                    value={task.incidentNote ?? ""}
+                    onChange={(event) => updateTask(task.id, { incidentNote: event.target.value })}
+                    placeholder="Incidencia que detiene la tarea"
+                  />
+                </div>
+                <div className="taskActions">
+                  <button
+                    className="ghost danger"
+                    disabled={task.paused}
+                    onClick={() => pauseTaskForIncident(task, task.incidentNote || "Incidencia reportada por colaborador")}
+                  >
+                    Reportar incidencia y pausar
+                  </button>
+                  <button className="primary compact" disabled={task.paused} onClick={() => updateTask(task.id, { status: "Completada" })}>
+                    Marcar completada
+                  </button>
+                </div>
+                {task.paused && <p className="muted">Tarea pausada hasta aprobacion del superior.</p>}
               </div>
             ))
           ) : (
@@ -1798,6 +1898,12 @@ function TasksView({
         status: "Pendiente",
         priority: String(form.get("priority")) as DailyTask["priority"],
         notes: String(form.get("notes")),
+        currentStep: "Asignada",
+        employeeComment: "",
+        supervisorComment: "",
+        incidentNote: "",
+        paused: false,
+        approvalStatus: "No requerida",
       },
     ];
     setDailyTasks(next);
@@ -1805,7 +1911,30 @@ function TasksView({
   };
 
   const updateTaskStatus = (id: string, status: DailyTask["status"]) => {
-    setDailyTasks(dailyTasks.map((task) => (task.id === id ? { ...task, status } : task)));
+    setDailyTasks(
+      dailyTasks.map((task) =>
+        task.id === id
+          ? {
+              ...task,
+              status,
+              paused: status === "Pausada" || status === "Incidencia" ? true : task.paused,
+              approvalStatus: status === "Pausada" || status === "Incidencia" ? "Pendiente" : task.approvalStatus,
+            }
+          : task,
+      ),
+    );
+  };
+
+  const updateTaskPatch = (id: string, patch: Partial<DailyTask>) => {
+    setDailyTasks(dailyTasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+  };
+
+  const approveTask = (id: string) => {
+    updateTaskPatch(id, {
+      status: "En proceso",
+      paused: false,
+      approvalStatus: "Aprobada",
+    });
   };
 
   const deleteTask = (id: string) => {
@@ -1851,19 +1980,48 @@ function TasksView({
         <h2>Tabla de tareas</h2>
         <div className="taskList">
           {visibleTasks.map((task) => (
-            <div className="taskRow taskEditable" key={task.id}>
-              <span>
-                <strong>{task.title}</strong>
-                <small>
-                  {collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.start}-{task.end} · {task.priority}
-                </small>
-              </span>
+            <div className="taskFollowCard" key={task.id}>
+              <div className="sectionHead">
+                <span>
+                  <strong>{task.title}</strong>
+                  <small>
+                    {collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.start}-{task.end} · {task.priority}
+                  </small>
+                </span>
+                <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
+              </div>
+              <div className="taskFollowGrid">
+                <div>
+                  <small>Paso actual</small>
+                  <strong>{task.currentStep || "Sin paso registrado"}</strong>
+                </div>
+                <div>
+                  <small>Comentario colaborador</small>
+                  <span>{task.employeeComment || "--"}</span>
+                </div>
+                <div>
+                  <small>Incidencia</small>
+                  <span className={task.incidentNote ? "danger" : ""}>{task.incidentNote || "--"}</span>
+                </div>
+                <div>
+                  <small>Aprobacion</small>
+                  <span>{task.approvalStatus || "No requerida"}</span>
+                </div>
+              </div>
+              <textarea
+                value={task.supervisorComment ?? ""}
+                onChange={(event) => updateTaskPatch(task.id, { supervisorComment: event.target.value })}
+                placeholder="Comentario, instruccion o seguimiento del superior"
+              />
               <div className="taskActions">
                 <select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value as DailyTask["status"])}>
-                  {["Pendiente", "En proceso", "Completada", "Incidencia"].map((status) => (
+                  {["Pendiente", "En proceso", "Completada", "Incidencia", "Pausada"].map((status) => (
                     <option key={status}>{status}</option>
                   ))}
                 </select>
+                <button className="ghost" disabled={!task.paused && task.approvalStatus !== "Pendiente"} onClick={() => approveTask(task.id)}>
+                  Aprobar y reanudar
+                </button>
                 <button className="ghost danger" onClick={() => deleteTask(task.id)}>
                   Borrar
                 </button>
@@ -2351,7 +2509,9 @@ function ReportsView({
             <ReportLine
               key={task.id}
               left={`${task.date} · ${task.title}`}
-              right={`${collaborators.find((employee) => employee.id === task.employeeId)?.name ?? task.employeeId} · ${task.status}`}
+              right={`${collaborators.find((employee) => employee.id === task.employeeId)?.name ?? task.employeeId} · ${task.status} · ${
+                task.currentStep || "Sin paso"
+              }${task.incidentNote ? ` · Incidencia: ${task.incidentNote}` : ""}`}
             />
           ))}
           {filteredProcesses.map((process) => (

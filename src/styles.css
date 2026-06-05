@@ -774,6 +774,33 @@ h2 {
   border-top: 1px solid #edf0ed;
 }
 
+.operationTable {
+  display: grid;
+  overflow-x: auto;
+}
+
+.operationRow {
+  display: grid;
+  grid-template-columns: 150px 100px 1.2fr 1.1fr 1.4fr;
+  gap: 12px;
+  align-items: center;
+  min-width: 900px;
+  padding: 11px 0;
+  border-top: 1px solid #edf0ed;
+}
+
+.operationRow.head {
+  border-top: 0;
+  color: #66736b;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.operationRow small {
+  display: block;
+  margin-top: 3px;
+}
+
 .requestList {
   display: grid;
   gap: 12px;
@@ -982,6 +1009,46 @@ h2 {
   align-items: center;
 }
 
+.taskProgressCard,
+.taskFollowCard {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #edf0ed;
+  padding: 14px 0;
+}
+
+.taskProgressInputs,
+.taskFollowGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.taskProgressInputs {
+  grid-template-columns: 1fr;
+}
+
+.taskProgressInputs textarea,
+.taskFollowCard textarea {
+  min-height: 76px;
+}
+
+.taskFollowGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.taskFollowGrid > div {
+  border: 1px solid #edf0ed;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8faf8;
+}
+
+.taskFollowGrid small {
+  display: block;
+  color: #66736b;
+  margin-bottom: 4px;
+}
+
 .timeBoundRow {
   align-items: center;
 }
@@ -1045,7 +1112,8 @@ textarea {
   .reportMetrics,
   .reportLine,
   .requestControls,
-  .guideGrid {
+  .guideGrid,
+  .taskFollowGrid {
     grid-template-columns: 1fr;
   }
 

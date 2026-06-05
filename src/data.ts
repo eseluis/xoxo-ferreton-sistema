@@ -101,9 +101,15 @@ export type DailyTask = {
   date: string;
   start: string;
   end: string;
-  status: "Pendiente" | "En proceso" | "Completada" | "Incidencia";
+  status: "Pendiente" | "En proceso" | "Completada" | "Incidencia" | "Pausada";
   priority: "Baja" | "Media" | "Alta";
   notes: string;
+  currentStep?: string;
+  employeeComment?: string;
+  supervisorComment?: string;
+  incidentNote?: string;
+  paused?: boolean;
+  approvalStatus?: "No requerida" | "Pendiente" | "Aprobada";
 };
 
 export const roleRank: Record<Role, number> = {
