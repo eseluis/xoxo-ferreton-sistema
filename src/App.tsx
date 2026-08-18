@@ -121,6 +121,8 @@ type ProcessInstance = {
     note: string;
     completedAt?: string;
   }[];
+  fleteType?: "Fletera externa" | "Flete propio del proveedor";
+  merchandisingTipo?: "Normal" | "Oferta" | "Producto ancla" | "Novedad";
 };
 
 type InternalRequest = {
@@ -867,6 +869,7 @@ function App() {
             collaborators={collaborators}
             processInstances={processInstances}
             setProcessInstances={persistProcessInstances}
+            notify={escalate}
           />
         )}
         {view === "evaluacion" && (
@@ -1898,11 +1901,13 @@ function ProcessesView({
   collaborators,
   processInstances,
   setProcessInstances,
+  notify,
 }: {
   user: Employee;
   collaborators: Employee[];
   processInstances: ProcessInstance[];
   setProcessInstances: (value: ProcessInstance[]) => void;
+  notify: (title: string, message: string, recipientId: string | undefined, priority?: InternalRequest["priority"]) => void;
 }) {
   const startProcess = (processId: string, ownerId: string, notes: string) => {
     const process = processes.find((item) => item.id === processId);
@@ -1952,6 +1957,18 @@ function ProcessesView({
           {activeInstances.map((instance) => {
             const owner = collaborators.find((employee) => employee.id === instance.ownerId);
             const completed = instance.stepStates.filter((step) => step.done).length;
+            if (instance.processId === "recepcion-mercancia") {
+              return (
+                <RecepcionMercanciaCard
+                  key={instance.id}
+                  instance={instance}
+                  owner={owner}
+                  collaborators={collaborators}
+                  updateInstance={updateInstance}
+                  notify={notify}
+                />
+              );
+            }
             return (
               <div className="processInstance" key={instance.id}>
                 <div className="sectionHead">
@@ -2041,6 +2058,180 @@ function ProcessesView({
         </div>
       </article>
     </section>
+  );
+}
+
+// Paso 6 (indice 5) del proceso "recepcion-mercancia": captura de precios en ERP.
+// Al marcarse, se dispara la notificacion de Luz Verde y se desbloquea el paso 7 (acomodo).
+const RECEPCION_LUZ_VERDE_INDEX = 5;
+
+function merchandisingHint(tipo?: ProcessInstance["merchandisingTipo"]) {
+  if (tipo === "Oferta" || tipo === "Novedad") return "Ubicar en zona de alto impacto visual (entrada, cabecera o mostrador principal).";
+  if (tipo === "Producto ancla") return "Ubicar en zona estrategica de paso obligado del cliente.";
+  return "Acomodo estandar en su zona / anaquel correspondiente.";
+}
+
+function RecepcionMercanciaCard({
+  instance,
+  owner,
+  updateInstance,
+  notify,
+}: {
+  instance: ProcessInstance;
+  owner?: Employee;
+  collaborators: Employee[];
+  updateInstance: (instance: ProcessInstance) => void;
+  notify: (title: string, message: string, recipientId: string | undefined, priority?: InternalRequest["priority"]) => void;
+}) {
+  const completed = instance.stepStates.filter((step) => step.done).length;
+  const luzVerde = instance.stepStates[RECEPCION_LUZ_VERDE_INDEX]?.done ?? false;
+  const isUnlocked = (index: number) => (index === 0 ? Boolean(instance.fleteType) : Boolean(instance.stepStates[index - 1]?.done));
+
+  const setStepNote = (index: number, note: string) => {
+    const stepStates = instance.stepStates.map((current, currentIndex) => (currentIndex === index ? { ...current, note } : current));
+    updateInstance({ ...instance, stepStates });
+  };
+
+  const completeStep = (index: number) => {
+    const step = instance.stepStates[index];
+    if (step.evidence !== "none" && !step.note.trim()) return;
+    const stepStates = instance.stepStates.map((current, currentIndex) =>
+      currentIndex === index ? { ...current, done: true, completedAt: timeNow() } : current,
+    );
+    updateInstance({ ...instance, stepStates });
+    if (index === RECEPCION_LUZ_VERDE_INDEX) {
+      notify(
+        "Luz verde: mercancia lista para acomodo",
+        `El administrador ya capturo precios en ERP para "${instance.title}"${instance.notes ? ` (${instance.notes})` : ""}. Ya se puede acomodar, etiquetar y exhibir.`,
+        instance.ownerId,
+        "Alta",
+      );
+    }
+  };
+
+  const undoStep = (index: number) => {
+    const stepStates = instance.stepStates.map((current, currentIndex) =>
+      currentIndex === index ? { ...current, done: false, completedAt: undefined } : current,
+    );
+    updateInstance({ ...instance, stepStates });
+  };
+
+  return (
+    <div className="processInstance luzVerdeCard">
+      <div className="sectionHead">
+        <div>
+          <strong>{instance.title}</strong>
+          <span>
+            Responsable: {owner?.name ?? "Sin asignar"} · {instance.date}
+          </span>
+        </div>
+        <span className={instance.status === "Incidencia" ? "status dangerText" : "status"}>{instance.status}</span>
+      </div>
+
+      {luzVerde && (
+        <div className="luzVerdeBanner">
+          <Sparkles size={16} /> LUZ VERDE — precios capturados, ya se puede acomodar y exhibir
+        </div>
+      )}
+
+      <label className="fleteTypeSelect">
+        Tipo de flete
+        <select
+          value={instance.fleteType ?? ""}
+          disabled={instance.stepStates[0]?.done}
+          onChange={(event) => updateInstance({ ...instance, fleteType: event.target.value as ProcessInstance["fleteType"] })}
+        >
+          <option value="" disabled>
+            Selecciona...
+          </option>
+          <option value="Fletera externa">Fletera externa (revisar sellos y empaque exterior)</option>
+          <option value="Flete propio del proveedor">Flete propio del proveedor (revisar pieza por pieza contra remision)</option>
+        </select>
+      </label>
+
+      <div className="progressLine">
+        <span style={{ width: `${(completed / Math.max(instance.stepStates.length, 1)) * 100}%` }} />
+      </div>
+
+      <div className="luzVerdeSteps">
+        {instance.stepStates.map((step, index) => {
+          const unlocked = isUnlocked(index);
+          const gatedByLuzVerde = index === RECEPCION_LUZ_VERDE_INDEX + 1 && !luzVerde;
+          return (
+            <div className={`luzVerdeStep ${step.done ? "done" : unlocked ? "active" : "locked"}`} key={`${instance.id}-${step.title}`}>
+              <div className="stepHeader">
+                <b>{index + 1}</b>
+                <span>
+                  <strong>{step.title}</strong>
+                  <small>
+                    {step.owner} · Evidencia: {step.evidence}
+                    {step.completedAt ? ` · ${step.completedAt}` : ""}
+                  </small>
+                </span>
+                {step.done ? (
+                  <CheckCircle2 className="greenIcon" size={18} />
+                ) : unlocked ? (
+                  <button className="ghost compact" onClick={() => completeStep(index)}>
+                    Marcar hecho
+                  </button>
+                ) : (
+                  <span className="statusPill muted">{gatedByLuzVerde ? "Esperando luz verde" : "Bloqueado"}</span>
+                )}
+              </div>
+              {index === RECEPCION_LUZ_VERDE_INDEX + 1 && (
+                <label className="merchandisingSelect">
+                  Tipo de exhibicion
+                  <select
+                    value={instance.merchandisingTipo ?? "Normal"}
+                    disabled={!unlocked}
+                    onChange={(event) =>
+                      updateInstance({ ...instance, merchandisingTipo: event.target.value as ProcessInstance["merchandisingTipo"] })
+                    }
+                  >
+                    <option value="Normal">Normal</option>
+                    <option value="Oferta">Oferta</option>
+                    <option value="Producto ancla">Producto ancla</option>
+                    <option value="Novedad">Novedad</option>
+                  </select>
+                  <small>{merchandisingHint(instance.merchandisingTipo)}</small>
+                </label>
+              )}
+              {!step.done && unlocked && step.evidence !== "none" && (
+                <textarea
+                  value={step.note}
+                  onChange={(event) => setStepNote(index, event.target.value)}
+                  placeholder={`Evidencia (${step.evidence}) requerida para marcar este paso`}
+                />
+              )}
+              {step.done && step.note && <p className="muted stepNote">{step.note}</p>}
+              {step.done && (
+                <button className="ghost compact" onClick={() => undoStep(index)}>
+                  Deshacer
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <textarea
+        value={instance.notes}
+        onChange={(event) => updateInstance({ ...instance, notes: event.target.value })}
+        placeholder="Proveedor, numero de factura, incidencia u observacion general"
+      />
+      <div className="taskActions">
+        <button className="ghost danger" onClick={() => updateInstance({ ...instance, status: "Incidencia" })}>
+          Marcar incidencia
+        </button>
+        <button
+          className="primary"
+          onClick={() => updateInstance({ ...instance, status: "Completado" })}
+          disabled={completed < instance.stepStates.length}
+        >
+          Completar proceso
+        </button>
+      </div>
+    </div>
   );
 }
 
