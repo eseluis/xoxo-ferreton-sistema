@@ -260,6 +260,40 @@ function liveStatusFor(
   return { state: "off", label: "Fuera de turno", className: "muted", sub: shiftMap[employee.shift]?.name ?? "Sin turno" };
 }
 
+// Sueldos del Manual Corporativo (Sec. 3 — Perfiles de Puesto) se pactan quincenales;
+// se toma el punto medio del rango y se divide entre 15 dias para el costo del dia.
+function dailySalaryFor(employee: Employee) {
+  if (employee.salaryMin === undefined || employee.salaryMax === undefined) return 0;
+  return (employee.salaryMin + employee.salaryMax) / 2 / 15;
+}
+
+function paidMinutesFor(shift?: { start: string; end: string; lunchStart?: string; lunchEnd?: string }) {
+  if (!shift) return 0;
+  const start = timeToMinutes(shift.start);
+  const end = timeToMinutes(shift.end);
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  let total = end - start;
+  const lunchStart = shift.lunchStart ? timeToMinutes(shift.lunchStart) : NaN;
+  const lunchEnd = shift.lunchEnd ? timeToMinutes(shift.lunchEnd) : NaN;
+  if (!Number.isNaN(lunchStart) && !Number.isNaN(lunchEnd) && lunchEnd > lunchStart) {
+    total -= lunchEnd - lunchStart;
+  }
+  return Math.max(0, total);
+}
+
+// Minutos "concluidos" del cronometro SLA: actividades de rutina + tareas asignadas
+// que ya se marcaron completadas hoy. Sirve como proxy de tiempo efectivo mientras
+// no exista captura fotografica de evidencia (pendiente como modulo aparte).
+function completedMinutesFor(employeeId: string, date: string, activityRuns: ActivityRun[], dailyTasks: DailyTask[]) {
+  const fromRuns = activityRuns
+    .filter((run) => run.employeeId === employeeId && run.date === date && run.completedAt)
+    .reduce((sum, run) => sum + run.slaMinutes, 0);
+  const fromTasks = dailyTasks
+    .filter((task) => task.employeeId === employeeId && task.date === date && task.completedAt)
+    .reduce((sum, task) => sum + (task.slaMinutes ?? Math.max(15, timeToMinutes(task.end) - timeToMinutes(task.start))), 0);
+  return fromRuns + fromTasks;
+}
+
 type ShiftConfig = (typeof defaultShiftConfigs)[number];
 type ActivitySchedule = (typeof defaultActivitySchedules)[number];
 type CleaningRole = (typeof defaultCleaningRole)[number];
@@ -851,6 +885,10 @@ function App() {
             submitEvaluation={submitEvaluation}
             evaluations={evaluations}
             collaborators={collaborators}
+            activityRuns={activityRuns}
+            dailyTasks={dailyTasks}
+            shiftMap={shiftMap}
+            cashIncidents={cashIncidents}
           />
         )}
         {view === "caja" && (
@@ -2088,11 +2126,28 @@ function EvaluationView(props: {
   submitEvaluation: () => void;
   evaluations: Evaluation[];
   collaborators: Employee[];
+  activityRuns: ActivityRun[];
+  dailyTasks: DailyTask[];
+  shiftMap: Record<string, ShiftConfig>;
+  cashIncidents: CashIncident[];
 }) {
   const average = props.scores.reduce((sum, value) => sum + value, 0) / props.scores.length;
   const rate = commissionRate(average, props.salesGoal, props.personalSales);
+  const canSeeStoreSummary =
+    canViewAll(props.user) || props.collaborators.some((employee) => employee.supervisorId === props.user.id);
   return (
     <section className="grid two">
+      {canSeeStoreSummary && (
+        <StoreSummaryPanel
+          user={props.user}
+          collaborators={props.collaborators}
+          evaluations={props.evaluations}
+          activityRuns={props.activityRuns}
+          dailyTasks={props.dailyTasks}
+          shiftMap={props.shiftMap}
+          cashIncidents={props.cashIncidents}
+        />
+      )}
       <article className="panelCard">
         <div className="sectionHead">
           <h2>Evaluar colaborador</h2>
@@ -2162,6 +2217,112 @@ function EvaluationView(props: {
         </div>
       </article>
     </section>
+  );
+}
+
+function semaforoFor(average?: number): { label: string; className: string } {
+  if (average === undefined) return { label: "Sin evaluar", className: "muted" };
+  if (average >= 9) return { label: "Excelente", className: "ok" };
+  if (average >= 8) return { label: "Aceptable", className: "warn" };
+  return { label: "Problema", className: "danger" };
+}
+
+function StoreSummaryPanel({
+  user,
+  collaborators,
+  evaluations,
+  activityRuns,
+  dailyTasks,
+  shiftMap,
+  cashIncidents,
+}: {
+  user: Employee;
+  collaborators: Employee[];
+  evaluations: Evaluation[];
+  activityRuns: ActivityRun[];
+  dailyTasks: DailyTask[];
+  shiftMap: Record<string, ShiftConfig>;
+  cashIncidents: CashIncident[];
+}) {
+  const today = todayKey();
+  const visible = canViewAll(user) ? collaborators : collaborators.filter((employee) => employee.supervisorId === user.id);
+  const rows = visible.map((employee) => {
+    const todaysEval = evaluations.find((entry) => entry.employeeId === employee.id && entry.date === today);
+    const average = todaysEval ? todaysEval.scores.reduce((sum, value) => sum + value, 0) / todaysEval.scores.length : undefined;
+    const rate = todaysEval ? commissionRate(average ?? 0, todaysEval.salesGoal, todaysEval.personalSales) : 0;
+    const commission = todaysEval ? todaysEval.personalSales * rate : 0;
+    const cost = dailySalaryFor(employee) + commission;
+    const paidMinutes = paidMinutesFor(shiftMap[employee.shift]);
+    const doneMinutes = completedMinutesFor(employee.id, today, activityRuns, dailyTasks);
+    const productivity = paidMinutes > 0 ? Math.min(100, (doneMinutes / paidMinutes) * 100) : 0;
+    const incidents =
+      cashIncidents.filter((item) => item.ownerId === employee.id && item.date === today).length +
+      activityRuns.filter((run) => run.employeeId === employee.id && run.date === today && run.escalated).length +
+      dailyTasks.filter((task) => task.employeeId === employee.id && task.date === today && task.escalated).length;
+    return { employee, average, cost, productivity, incidents, semaforo: semaforoFor(average) };
+  });
+  const totalSales = evaluations
+    .filter((entry) => entry.date === today && visible.some((employee) => employee.id === entry.employeeId))
+    .reduce((sum, entry) => sum + entry.personalSales, 0);
+  const totalGoal = evaluations
+    .filter((entry) => entry.date === today && visible.some((employee) => employee.id === entry.employeeId))
+    .reduce((sum, entry) => sum + entry.salesGoal, 0);
+  const totalCost = rows.reduce((sum, row) => sum + row.cost, 0);
+
+  return (
+    <article className="wide panelCard">
+      <div className="sectionHead">
+        <div>
+          <h2>Resumen diario de tienda — costo, productividad y calidad</h2>
+          <span>Formato B del Manual + costo real por colaborador (sueldo quincenal / 15 + comision del dia)</span>
+        </div>
+      </div>
+      <div className="reportMetrics">
+        <div>
+          <span>Venta total del dia</span>
+          <strong>${totalSales.toLocaleString("es-MX")}</strong>
+        </div>
+        <div>
+          <span>Meta del dia</span>
+          <strong>${totalGoal.toLocaleString("es-MX")}</strong>
+        </div>
+        <div>
+          <span>% Cumplimiento</span>
+          <strong>{totalGoal > 0 ? `${((totalSales / totalGoal) * 100).toFixed(0)}%` : "--"}</strong>
+        </div>
+        <div>
+          <span>Costo total del dia</span>
+          <strong>${totalCost.toLocaleString("es-MX", { maximumFractionDigits: 0 })}</strong>
+        </div>
+      </div>
+      <div className="operationTable storeSummaryTable">
+        <div className="operationRow head">
+          <span>Colaborador / Puesto</span>
+          <span>Costo del dia</span>
+          <span>% Tiempo efectivo</span>
+          <span>Calificacion</span>
+          <span>Semaforo</span>
+          <span>Incidencias</span>
+        </div>
+        {rows.map(({ employee, average, cost, productivity, incidents, semaforo }) => (
+          <div className="operationRow" key={employee.id}>
+            <span>
+              <strong>{employee.name}</strong>
+              <small>{employee.roleLabel}</small>
+            </span>
+            <span>${cost.toLocaleString("es-MX", { maximumFractionDigits: 0 })}</span>
+            <span>{productivity.toFixed(0)}%</span>
+            <span>{average !== undefined ? average.toFixed(1) : "--"}</span>
+            <span className={`statusPill ${semaforo.className}`}>{semaforo.label}</span>
+            <span className={incidents > 0 ? "danger" : ""}>{incidents}</span>
+          </div>
+        ))}
+      </div>
+      <p className="muted">
+        % Tiempo efectivo = minutos de actividades y tareas completadas hoy / minutos pagados del turno. Aun no incorpora
+        evidencia fotografica (modulo pendiente) — por ahora cuenta lo marcado como completado en el cronometro.
+      </p>
+    </article>
   );
 }
 
