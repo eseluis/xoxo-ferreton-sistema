@@ -4,14 +4,17 @@ import {
   BriefcaseBusiness,
   Building2,
   CalendarCheck,
+  Camera,
   CheckCircle2,
   Clock,
   ClipboardList,
   FileCheck2,
   FileText,
   LogOut,
+  MapPin,
   MessageSquare,
   Network,
+  PenTool,
   Printer,
   BookOpen,
   Settings2,
@@ -20,7 +23,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   canAssign,
   canGovern,
@@ -104,6 +107,62 @@ type Warranty = {
   date: string;
 };
 
+type EvidenceCapture = {
+  dataUrl: string;
+  capturedAt: string;
+  lat?: number;
+  lng?: number;
+  accuracyM?: number;
+};
+
+// Redimensiona y comprime la imagen antes de guardarla (se guarda como
+// dataURL dentro del mismo JSON que ya sincroniza toda la app; no hay
+// bucket de Storage dedicado todavia, asi que conviene mantenerla ligera).
+function compressImage(sourceDataUrl: string, maxDim = 640, quality = 0.55): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Sin contexto de canvas"));
+        return;
+      }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => reject(new Error("No se pudo procesar la imagen"));
+    img.src = sourceDataUrl;
+  });
+}
+
+// Estampa de ubicacion "mejor esfuerzo": si el colaborador niega el permiso
+// o el dispositivo no tiene GPS, la evidencia se guarda igual, solo sin
+// coordenadas.
+function captureGeolocation(): Promise<{ lat?: number; lng?: number; accuracyM?: number }> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve({});
+      return;
+    }
+    const timer = setTimeout(() => resolve({}), 4000);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        clearTimeout(timer);
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy });
+      },
+      () => {
+        clearTimeout(timer);
+        resolve({});
+      },
+      { enableHighAccuracy: false, timeout: 3500, maximumAge: 60000 },
+    );
+  });
+}
+
 type ProcessInstance = {
   id: string;
   processId: string;
@@ -120,6 +179,7 @@ type ProcessInstance = {
     done: boolean;
     note: string;
     completedAt?: string;
+    evidenceCapture?: EvidenceCapture;
   }[];
   fleteType?: "Fletera externa" | "Flete propio del proveedor";
   merchandisingTipo?: "Normal" | "Oferta" | "Producto ancla" | "Novedad";
@@ -151,6 +211,8 @@ type ActivityRun = {
   scheduledStart: string;
   scheduledEnd: string;
   slaMinutes: number;
+  evidence?: string;
+  evidenceCapture?: EvidenceCapture;
   startedAt?: string;
   completedAt?: string;
   status: SlaState;
@@ -630,6 +692,7 @@ function App() {
     scheduledStart: string;
     scheduledEnd: string;
     slaMinutes: number;
+    evidence?: string;
   }) => {
     const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
     const existing = activityRuns.find((run) => run.id === id);
@@ -649,6 +712,7 @@ function App() {
             scheduledStart: item.scheduledStart,
             scheduledEnd: item.scheduledEnd,
             slaMinutes: item.slaMinutes,
+            evidence: item.evidence,
             startedAt,
             status: "En curso" as SlaState,
           },
@@ -657,9 +721,18 @@ function App() {
   };
 
   const completeActivityRun = (id: string) => {
-    const next = activityRuns.map((run) =>
-      run.id === id ? { ...run, completedAt: new Date().toISOString(), status: slaStatus({ ...run, completedAt: new Date().toISOString() }) } : run,
+    const run = activityRuns.find((entry) => entry.id === id);
+    if (!run) return;
+    if (run.evidence && run.evidence !== "none" && !run.evidenceCapture) return;
+    const completedAt = new Date().toISOString();
+    const next = activityRuns.map((entry) =>
+      entry.id === id ? { ...entry, completedAt, status: slaStatus({ ...entry, completedAt }) } : entry,
     );
+    persistActivityRuns(next);
+  };
+
+  const setActivityEvidence = (id: string, evidence: EvidenceCapture | undefined) => {
+    const next = activityRuns.map((run) => (run.id === id ? { ...run, evidenceCapture: evidence } : run));
     persistActivityRuns(next);
   };
 
@@ -852,6 +925,7 @@ function App() {
             activityRuns={activityRuns}
             startActivityRun={startActivityRun}
             completeActivityRun={completeActivityRun}
+            setActivityEvidence={setActivityEvidence}
           />
         )}
         {view === "equipo" && (
@@ -1247,6 +1321,7 @@ function AttendanceView({
   activityRuns,
   startActivityRun,
   completeActivityRun,
+  setActivityEvidence,
 }: {
   user: Employee;
   myAttendance?: Attendance;
@@ -1268,8 +1343,10 @@ function AttendanceView({
     scheduledStart: string;
     scheduledEnd: string;
     slaMinutes: number;
+    evidence?: string;
   }) => void;
   completeActivityRun: (id: string) => void;
+  setActivityEvidence: (id: string, evidence: EvidenceCapture | undefined) => void;
 }) {
   const userActivities = activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role));
   const today = todayKey();
@@ -1352,6 +1429,7 @@ function AttendanceView({
               scheduledStart={activity.start}
               scheduledEnd={activity.end}
               slaMinutes={activity.durationMinutes}
+              evidence={activity.evidence}
               run={runFor("Actividad", activity.id)}
               onStart={() =>
                 startActivityRun({
@@ -1361,9 +1439,12 @@ function AttendanceView({
                   scheduledStart: activity.start,
                   scheduledEnd: activity.end,
                   slaMinutes: activity.durationMinutes,
+                  evidence: activity.evidence,
                 })
               }
               onComplete={completeActivityRun}
+              onCaptureEvidence={(evidence) => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, evidence)}
+              onClearEvidence={() => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, undefined)}
             />
           ))}
         </div>
@@ -1454,6 +1535,271 @@ function AttendanceView({
   );
 }
 
+function EvidenceCaptured({
+  value,
+  label,
+  onClear,
+  retakeLabel,
+  readOnly,
+}: {
+  value: EvidenceCapture;
+  label: string;
+  onClear: () => void;
+  retakeLabel: string;
+  readOnly?: boolean;
+}) {
+  return (
+    <div className="evidenceCaptured">
+      <img src={value.dataUrl} alt={label} />
+      <div>
+        <small>
+          <CheckCircle2 size={13} className="greenIcon" /> {new Date(value.capturedAt).toLocaleString("es-MX")}
+        </small>
+        <small>
+          <MapPin size={13} />{" "}
+          {value.lat !== undefined && value.lng !== undefined
+            ? `${value.lat.toFixed(5)}, ${value.lng.toFixed(5)}`
+            : "Sin ubicacion (permiso no otorgado)"}
+        </small>
+        {!readOnly && (
+          <button type="button" className="ghost compact" onClick={onClear}>
+            {retakeLabel}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PhotoCapture({
+  value,
+  onCapture,
+  onClear,
+  label,
+  readOnly,
+}: {
+  value?: EvidenceCapture;
+  onCapture: (evidence: EvidenceCapture) => void;
+  onClear: () => void;
+  label: string;
+  readOnly?: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      void videoRef.current.play().catch(() => {});
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), []);
+
+  const openCamera = async () => {
+    setCameraError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      streamRef.current = stream;
+      setCameraOpen(true);
+    } catch {
+      setCameraError("No se pudo abrir la camara del dispositivo. Usa 'Subir foto' como alternativa.");
+    }
+  };
+
+  const closeCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setCameraOpen(false);
+  };
+
+  const snap = async () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    setBusy(true);
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setBusy(false);
+      return;
+    }
+    ctx.drawImage(video, 0, 0);
+    const raw = canvas.toDataURL("image/jpeg", 0.85);
+    const [compressed, geo] = await Promise.all([compressImage(raw), captureGeolocation()]);
+    onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
+    setBusy(false);
+    closeCamera();
+  };
+
+  const handleFile = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const [compressed, geo] = await Promise.all([compressImage(String(reader.result)), captureGeolocation()]);
+      onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
+      setBusy(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  if (value) {
+    return <EvidenceCaptured value={value} label={label} onClear={onClear} retakeLabel="Volver a tomar foto" readOnly={readOnly} />;
+  }
+
+  return (
+    <div className="evidenceCapture">
+      {cameraOpen ? (
+        <div className="cameraBox">
+          <video ref={videoRef} autoPlay playsInline muted />
+          <div className="cameraActions">
+            <button type="button" className="primary compact" disabled={busy} onClick={snap}>
+              <Camera size={15} /> {busy ? "Guardando..." : "Capturar"}
+            </button>
+            <button type="button" className="ghost compact" onClick={closeCamera}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="evidenceButtons">
+          <button type="button" className="ghost compact" onClick={openCamera}>
+            <Camera size={15} /> Abrir camara
+          </button>
+          <button type="button" className="ghost compact" onClick={() => fileInputRef.current?.click()}>
+            Subir foto
+          </button>
+          <input ref={fileInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleFile} />
+        </div>
+      )}
+      {cameraError && <small className="danger">{cameraError}</small>}
+    </div>
+  );
+}
+
+function SignaturePad({
+  value,
+  onCapture,
+  onClear,
+  readOnly,
+}: {
+  value?: EvidenceCapture;
+  onCapture: (evidence: EvidenceCapture) => void;
+  onClear: () => void;
+  readOnly?: boolean;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawing = useRef(false);
+  const hasStroke = useRef(false);
+
+  const getPos = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  };
+
+  const start = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    drawing.current = true;
+    hasStroke.current = true;
+    const ctx = canvasRef.current?.getContext("2d");
+    const { x, y } = getPos(event);
+    ctx?.beginPath();
+    ctx?.moveTo(x, y);
+  };
+
+  const move = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drawing.current) return;
+    const ctx = canvasRef.current?.getContext("2d");
+    const { x, y } = getPos(event);
+    if (!ctx) return;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#14211b";
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const end = () => {
+    drawing.current = false;
+  };
+
+  const clearCanvas = () => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hasStroke.current = false;
+  };
+
+  const save = async () => {
+    if (!hasStroke.current || !canvasRef.current) return;
+    const dataUrl = canvasRef.current.toDataURL("image/png");
+    const geo = await captureGeolocation();
+    onCapture({ dataUrl, capturedAt: new Date().toISOString(), ...geo });
+  };
+
+  if (value) {
+    return <EvidenceCaptured value={value} label="Firma" onClear={onClear} retakeLabel="Volver a firmar" readOnly={readOnly} />;
+  }
+
+  return (
+    <div className="signaturePad">
+      <canvas
+        ref={canvasRef}
+        width={280}
+        height={110}
+        onPointerDown={start}
+        onPointerMove={move}
+        onPointerUp={end}
+        onPointerLeave={end}
+      />
+      <div className="cameraActions">
+        <button type="button" className="ghost compact" onClick={clearCanvas}>
+          Borrar
+        </button>
+        <button type="button" className="primary compact" onClick={save}>
+          <PenTool size={15} /> Guardar firma
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EvidenceField({
+  evidence,
+  value,
+  onCapture,
+  onClear,
+  readOnly,
+}: {
+  evidence?: string;
+  value?: EvidenceCapture;
+  onCapture: (evidence: EvidenceCapture) => void;
+  onClear: () => void;
+  readOnly?: boolean;
+}) {
+  if (!evidence || evidence === "none") return null;
+  if (evidence === "signature") {
+    return <SignaturePad value={value} onCapture={onCapture} onClear={onClear} readOnly={readOnly} />;
+  }
+  return (
+    <PhotoCapture
+      value={value}
+      onCapture={onCapture}
+      onClear={onClear}
+      label={evidence === "ticket" ? "Foto del ticket" : "Foto de evidencia"}
+      readOnly={readOnly}
+    />
+  );
+}
+
 function LiveStopwatch({ startedAt, slaMinutes }: { startedAt: string; slaMinutes: number }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -1481,27 +1827,44 @@ function LiveActivityCard({
   scheduledStart,
   scheduledEnd,
   slaMinutes,
+  evidence,
   run,
   onStart,
   onComplete,
+  onCaptureEvidence,
+  onClearEvidence,
 }: {
   title: string;
   scheduledStart: string;
   scheduledEnd: string;
   slaMinutes: number;
+  evidence?: string;
   run?: ActivityRun;
   onStart: () => void;
   onComplete: (id: string) => void;
+  onCaptureEvidence?: (evidence: EvidenceCapture) => void;
+  onClearEvidence?: () => void;
 }) {
   const status = run ? slaStatus(run) : "Pendiente";
+  const needsEvidence = Boolean(evidence && evidence !== "none");
+  const evidenceReady = !needsEvidence || Boolean(run?.evidenceCapture);
+  const inProgress = Boolean(run?.startedAt) && !run?.completedAt;
   return (
     <div className="taskRow liveActivityRow">
       <span>
         {title}
         <small>
-          Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min
+          Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
-        {run?.startedAt && !run.completedAt && <LiveStopwatch startedAt={run.startedAt} slaMinutes={slaMinutes} />}
+        {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} />}
+        {inProgress && needsEvidence && (
+          <EvidenceField
+            evidence={evidence}
+            value={run?.evidenceCapture}
+            onCapture={onCaptureEvidence ?? (() => {})}
+            onClear={onClearEvidence ?? (() => {})}
+          />
+        )}
       </span>
       <div className="liveActivityActions">
         <span className={`statusPill ${slaClassName(status)}`}>{status}</span>
@@ -1510,8 +1873,8 @@ function LiveActivityCard({
             Iniciar
           </button>
         )}
-        {run?.startedAt && !run.completedAt && (
-          <button className="primary compact" onClick={() => onComplete(run.id)}>
+        {inProgress && (
+          <button className="primary compact" disabled={!evidenceReady} onClick={() => onComplete(run!.id)}>
             Completar
           </button>
         )}
@@ -1985,29 +2348,66 @@ function ProcessesView({
                   <span style={{ width: `${(completed / Math.max(instance.stepStates.length, 1)) * 100}%` }} />
                 </div>
                 <div className="steps">
-                  {instance.stepStates.map((step, index) => (
-                    <label className="checkStep" key={`${instance.id}-${step.title}`}>
-                      <input
-                        type="checkbox"
-                        checked={step.done}
-                        onChange={(event) => {
-                          const stepStates = instance.stepStates.map((current, currentIndex) =>
-                            currentIndex === index
-                              ? { ...current, done: event.target.checked, completedAt: event.target.checked ? timeNow() : undefined }
-                              : current,
-                          );
-                          updateInstance({ ...instance, stepStates });
-                        }}
-                      />
-                      <span>
-                        <strong>{step.title}</strong>
-                        <small>
-                          {step.owner} · Evidencia: {step.evidence}
-                          {step.completedAt ? ` · ${step.completedAt}` : ""}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
+                  {instance.stepStates.map((step, index) => {
+                    const needsEvidence = step.evidence !== "none";
+                    const setEvidence = (evidenceCapture: EvidenceCapture | undefined) => {
+                      const stepStates = instance.stepStates.map((current, currentIndex) =>
+                        currentIndex === index ? { ...current, evidenceCapture } : current,
+                      );
+                      updateInstance({ ...instance, stepStates });
+                    };
+                    const toggleDone = (done: boolean) => {
+                      if (done && needsEvidence && !step.evidenceCapture) return;
+                      const stepStates = instance.stepStates.map((current, currentIndex) =>
+                        currentIndex === index ? { ...current, done, completedAt: done ? timeNow() : undefined } : current,
+                      );
+                      updateInstance({ ...instance, stepStates });
+                    };
+                    if (!needsEvidence) {
+                      return (
+                        <label className="checkStep" key={`${instance.id}-${step.title}`}>
+                          <input type="checkbox" checked={step.done} onChange={(event) => toggleDone(event.target.checked)} />
+                          <span>
+                            <strong>{step.title}</strong>
+                            <small>
+                              {step.owner} · Evidencia: {step.evidence}
+                              {step.completedAt ? ` · ${step.completedAt}` : ""}
+                            </small>
+                          </span>
+                        </label>
+                      );
+                    }
+                    return (
+                      <div className={`luzVerdeStep ${step.done ? "done" : "active"}`} key={`${instance.id}-${step.title}`}>
+                        <div className="stepHeader">
+                          <b>{index + 1}</b>
+                          <span>
+                            <strong>{step.title}</strong>
+                            <small>
+                              {step.owner} · Evidencia: {step.evidence}
+                              {step.completedAt ? ` · ${step.completedAt}` : ""}
+                            </small>
+                          </span>
+                          {step.done ? (
+                            <button className="ghost compact" onClick={() => toggleDone(false)}>
+                              Deshacer
+                            </button>
+                          ) : (
+                            <button className="ghost compact" disabled={!step.evidenceCapture} onClick={() => toggleDone(true)}>
+                              Marcar hecho
+                            </button>
+                          )}
+                        </div>
+                        <EvidenceField
+                          evidence={step.evidence}
+                          value={step.evidenceCapture}
+                          onCapture={setEvidence}
+                          onClear={() => setEvidence(undefined)}
+                          readOnly={step.done}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
                 <textarea
                   value={instance.notes}
@@ -2092,9 +2492,14 @@ function RecepcionMercanciaCard({
     updateInstance({ ...instance, stepStates });
   };
 
+  const setStepEvidence = (index: number, evidenceCapture: EvidenceCapture | undefined) => {
+    const stepStates = instance.stepStates.map((current, currentIndex) => (currentIndex === index ? { ...current, evidenceCapture } : current));
+    updateInstance({ ...instance, stepStates });
+  };
+
   const completeStep = (index: number) => {
     const step = instance.stepStates[index];
-    if (step.evidence !== "none" && !step.note.trim()) return;
+    if (step.evidence !== "none" && !step.evidenceCapture) return;
     const stepStates = instance.stepStates.map((current, currentIndex) =>
       currentIndex === index ? { ...current, done: true, completedAt: timeNow() } : current,
     );
@@ -2196,12 +2601,23 @@ function RecepcionMercanciaCard({
                   <small>{merchandisingHint(instance.merchandisingTipo)}</small>
                 </label>
               )}
-              {!step.done && unlocked && step.evidence !== "none" && (
+              {unlocked && step.evidence !== "none" && !step.done && (
+                <EvidenceField
+                  evidence={step.evidence}
+                  value={step.evidenceCapture}
+                  onCapture={(evidence) => setStepEvidence(index, evidence)}
+                  onClear={() => setStepEvidence(index, undefined)}
+                />
+              )}
+              {!step.done && unlocked && (
                 <textarea
                   value={step.note}
                   onChange={(event) => setStepNote(index, event.target.value)}
-                  placeholder={`Evidencia (${step.evidence}) requerida para marcar este paso`}
+                  placeholder="Comentario opcional"
                 />
+              )}
+              {step.done && step.evidenceCapture && (
+                <EvidenceField evidence={step.evidence} value={step.evidenceCapture} onCapture={() => {}} onClear={() => {}} readOnly />
               )}
               {step.done && step.note && <p className="muted stepNote">{step.note}</p>}
               {step.done && (

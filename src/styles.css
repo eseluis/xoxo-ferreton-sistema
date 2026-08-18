@@ -699,6 +699,81 @@ h2 {
   margin: 0;
 }
 
+.evidenceCapture,
+.evidenceCaptured {
+  border: 1px dashed #c7d2c9;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f8faf8;
+}
+
+.evidenceCaptured {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border-style: solid;
+  border-color: #bfe0cd;
+  background: #f3fbf6;
+}
+
+.evidenceCaptured img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #dce2dc;
+  flex-shrink: 0;
+}
+
+.evidenceCaptured > div {
+  display: grid;
+  gap: 3px;
+}
+
+.evidenceCaptured small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #4a564e;
+}
+
+.evidenceButtons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cameraBox {
+  display: grid;
+  gap: 8px;
+}
+
+.cameraBox video {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 8px;
+  background: #14211b;
+}
+
+.cameraActions {
+  display: flex;
+  gap: 8px;
+}
+
+.signaturePad {
+  display: grid;
+  gap: 8px;
+}
+
+.signaturePad canvas {
+  border: 1px dashed #c7d2c9;
+  border-radius: 8px;
+  background: white;
+  touch-action: none;
+  cursor: crosshair;
+  max-width: 100%;
+}
+
 .checkStep {
   display: grid;
   grid-template-columns: 24px 1fr;
