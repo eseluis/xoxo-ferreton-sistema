@@ -1049,16 +1049,103 @@ h2 {
   margin-bottom: 4px;
 }
 
-.timeBoundRow {
+.liveActivityRow {
   align-items: center;
 }
 
-.timeBoundRow button {
-  align-self: center;
+.liveActivityActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
-.timeBoundRow b {
+.statusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #edf0ed;
+  color: #66736b;
+  white-space: nowrap;
+}
+
+.statusPill.ok {
+  background: #e3f4ea;
+  color: #176b4d;
+}
+
+.statusPill.warn {
+  background: #fdf1d9;
+  color: #a46d00;
+}
+
+.statusPill.danger {
+  background: #fbe4e4;
+  color: #9f2f2f;
+}
+
+.slaTimer {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 180px;
+}
+
+.slaClock {
+  font-family: "SFMono-Regular", ui-monospace, Consolas, "Roboto Mono", monospace;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #14211b;
+}
+
+.slaBar {
+  height: 6px;
+  border-radius: 999px;
+  background: #edf0ed;
+  overflow: hidden;
+}
+
+.slaBar .fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s ease;
+  background: #176b4d;
+}
+
+.slaBar .fill.warn {
+  background: #d99a1f;
+}
+
+.slaBar .fill.danger {
+  background: #c94747;
+}
+
+.slaTimer small {
+  font-weight: 700;
+}
+
+.pulse .slaClock {
+  animation: slaPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes slaPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.liveList .liveActivityRow small {
+  display: block;
 }
 
 .taskEditable small,

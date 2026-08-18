@@ -110,6 +110,10 @@ export type DailyTask = {
   incidentNote?: string;
   paused?: boolean;
   approvalStatus?: "No requerida" | "Pendiente" | "Aprobada";
+  slaMinutes?: number;
+  startedAt?: string;
+  completedAt?: string;
+  escalated?: boolean;
 };
 
 export const roleRank: Record<Role, number> = {

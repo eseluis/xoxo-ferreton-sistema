@@ -137,18 +137,128 @@ type InternalRequest = {
   response: string;
 };
 
-type ActivityCompletion = {
+type SlaState = "Pendiente" | "En curso" | "Por vencer" | "Vencida" | "Completada" | "Completada con retraso";
+
+type ActivityRun = {
   id: string;
   employeeId: string;
   date: string;
   itemType: "Actividad" | "Aseo";
   itemId: string;
   title: string;
-  start: string;
-  end: string;
-  status: "Completada";
-  completedAt: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  slaMinutes: number;
+  startedAt?: string;
+  completedAt?: string;
+  status: SlaState;
+  escalated?: boolean;
 };
+
+const SLA_WARN_RATIO = 0.8;
+
+function minutesBetween(startIso?: string, endIso?: string) {
+  if (!startIso) return 0;
+  const end = endIso ? new Date(endIso).getTime() : Date.now();
+  return Math.max(0, (end - new Date(startIso).getTime()) / 60000);
+}
+
+function slaStatus(run: { startedAt?: string; completedAt?: string; slaMinutes: number }): SlaState {
+  if (run.completedAt) {
+    return minutesBetween(run.startedAt, run.completedAt) > run.slaMinutes ? "Completada con retraso" : "Completada";
+  }
+  if (!run.startedAt) return "Pendiente";
+  const elapsed = minutesBetween(run.startedAt);
+  if (elapsed > run.slaMinutes) return "Vencida";
+  if (elapsed >= run.slaMinutes * SLA_WARN_RATIO) return "Por vencer";
+  return "En curso";
+}
+
+function slaClassName(status: SlaState) {
+  if (status === "Completada") return "ok";
+  if (status === "Completada con retraso") return "warn";
+  if (status === "Vencida") return "danger";
+  if (status === "Por vencer") return "warn";
+  if (status === "En curso") return "ok";
+  return "muted";
+}
+
+function formatElapsed(startedAt?: string, completedAt?: string) {
+  if (!startedAt) return "00:00";
+  const totalSeconds = Math.max(
+    0,
+    Math.floor(((completedAt ? new Date(completedAt).getTime() : Date.now()) - new Date(startedAt).getTime()) / 1000),
+  );
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return hours > 0 ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+}
+
+function slaSeverity(status: SlaState) {
+  return (
+    ({
+      Vencida: 3,
+      "Por vencer": 2,
+      "En curso": 1,
+      "Completada con retraso": 1,
+      Completada: 0,
+      Pendiente: 0,
+    } as Record<SlaState, number>)[status] ?? 0
+  );
+}
+
+function isWithinShift(shift?: { start: string; end: string }) {
+  if (!shift) return false;
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const start = timeToMinutes(shift.start);
+  const end = timeToMinutes(shift.end);
+  if (Number.isNaN(start) || Number.isNaN(end)) return false;
+  return nowMinutes >= start && nowMinutes <= end;
+}
+
+function liveStatusFor(
+  employee: Employee,
+  activityRuns: ActivityRun[],
+  dailyTasks: DailyTask[],
+  shiftMap: Record<string, { start: string; end: string; name?: string }>,
+  today: string,
+): { state: "active" | "idle" | "breach" | "off"; label: string; className: string; sub: string } {
+  const runningRun = activityRuns.find(
+    (run) => run.employeeId === employee.id && run.date === today && run.startedAt && !run.completedAt,
+  );
+  const runningTask = dailyTasks.find(
+    (task) =>
+      task.employeeId === employee.id && task.date === today && task.startedAt && !task.completedAt && task.status !== "Pausada",
+  );
+  const candidates: { label: string; status: SlaState; elapsed: string }[] = [];
+  if (runningTask) {
+    const sla = runningTask.slaMinutes ?? 60;
+    candidates.push({
+      label: runningTask.title,
+      status: slaStatus({ startedAt: runningTask.startedAt, completedAt: undefined, slaMinutes: sla }),
+      elapsed: formatElapsed(runningTask.startedAt),
+    });
+  }
+  if (runningRun) {
+    candidates.push({ label: runningRun.title, status: slaStatus(runningRun), elapsed: formatElapsed(runningRun.startedAt) });
+  }
+  if (candidates.length) {
+    const worst = candidates.sort((a, b) => slaSeverity(b.status) - slaSeverity(a.status))[0];
+    return {
+      state: worst.status === "Vencida" ? "breach" : "active",
+      label: worst.label,
+      className: slaClassName(worst.status),
+      sub: `${worst.status} · ${worst.elapsed}`,
+    };
+  }
+  if (isWithinShift(shiftMap[employee.shift])) {
+    return { state: "idle", label: "Sin actividad activa", className: "warn", sub: "Tiempo libre" };
+  }
+  return { state: "off", label: "Fuera de turno", className: "muted", sub: shiftMap[employee.shift]?.name ?? "Sin turno" };
+}
 
 type ShiftConfig = (typeof defaultShiftConfigs)[number];
 type ActivitySchedule = (typeof defaultActivitySchedules)[number];
@@ -197,7 +307,7 @@ function App() {
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
   const [internalRequests, setInternalRequests] = useState<InternalRequest[]>(() => load("xoxo.internalRequests", []));
-  const [activityCompletions, setActivityCompletions] = useState<ActivityCompletion[]>(() => load("xoxo.activityCompletions", []));
+  const [activityRuns, setActivityRuns] = useState<ActivityRun[]>(() => load("xoxo.activityRuns", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -222,7 +332,7 @@ function App() {
         cloudDailyTasks,
         cloudProcessInstances,
         cloudInternalRequests,
-        cloudActivityCompletions,
+        cloudActivityRuns,
         cloudShiftConfigs,
         cloudActivitySchedules,
         cloudCleaningRole,
@@ -236,7 +346,7 @@ function App() {
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
         cloudLoad("xoxo.internalRequests", internalRequests),
-        cloudLoad("xoxo.activityCompletions", activityCompletions),
+        cloudLoad("xoxo.activityRuns", activityRuns),
         cloudLoad("xoxo.shiftConfigs", shiftConfigs),
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
@@ -250,7 +360,7 @@ function App() {
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
       setInternalRequests(cloudInternalRequests);
-      setActivityCompletions(cloudActivityCompletions);
+      setActivityRuns(cloudActivityRuns);
       setShiftConfigs(cloudShiftConfigs);
       setActivitySchedules(cloudActivitySchedules);
       setCleaningRole(cloudCleaningRole);
@@ -450,10 +560,135 @@ function App() {
     save("xoxo.internalRequests", next);
   };
 
-  const persistActivityCompletions = (next: ActivityCompletion[]) => {
-    setActivityCompletions(next);
-    save("xoxo.activityCompletions", next);
+  const persistActivityRuns = (next: ActivityRun[]) => {
+    setActivityRuns(next);
+    save("xoxo.activityRuns", next);
   };
+
+  const escalate = (title: string, message: string, recipientId: string | undefined, priority: InternalRequest["priority"] = "Alta") => {
+    if (!recipientId) return;
+    const next: InternalRequest[] = [
+      {
+        id: crypto.randomUUID(),
+        type: "Reporte",
+        title,
+        message,
+        requestedById: "sistema",
+        recipientId,
+        date: today,
+        priority,
+        status: "Abierta",
+        confidentiality: "Normal",
+        response: "",
+      },
+      ...internalRequests,
+    ];
+    setInternalRequests(next);
+    save("xoxo.internalRequests", next);
+  };
+
+  const startActivityRun = (item: {
+    itemType: ActivityRun["itemType"];
+    itemId: string;
+    title: string;
+    scheduledStart: string;
+    scheduledEnd: string;
+    slaMinutes: number;
+  }) => {
+    const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
+    const existing = activityRuns.find((run) => run.id === id);
+    if (existing?.startedAt) return;
+    const startedAt = new Date().toISOString();
+    const next = existing
+      ? activityRuns.map((run) => (run.id === id ? { ...run, startedAt, status: "En curso" as SlaState } : run))
+      : [
+          ...activityRuns,
+          {
+            id,
+            employeeId: user.id,
+            date: today,
+            itemType: item.itemType,
+            itemId: item.itemId,
+            title: item.title,
+            scheduledStart: item.scheduledStart,
+            scheduledEnd: item.scheduledEnd,
+            slaMinutes: item.slaMinutes,
+            startedAt,
+            status: "En curso" as SlaState,
+          },
+        ];
+    persistActivityRuns(next);
+  };
+
+  const completeActivityRun = (id: string) => {
+    const next = activityRuns.map((run) =>
+      run.id === id ? { ...run, completedAt: new Date().toISOString(), status: slaStatus({ ...run, completedAt: new Date().toISOString() }) } : run,
+    );
+    persistActivityRuns(next);
+  };
+
+  const startDailyTask = (task: DailyTask) => {
+    if (task.startedAt) return;
+    persistDailyTasks(
+      dailyTasks.map((entry) =>
+        entry.id === task.id
+          ? {
+              ...entry,
+              startedAt: new Date().toISOString(),
+              status: "En proceso",
+              slaMinutes: entry.slaMinutes ?? Math.max(15, timeToMinutes(entry.end) - timeToMinutes(entry.start)),
+            }
+          : entry,
+      ),
+    );
+  };
+
+  useEffect(() => {
+    const tick = () => {
+      const runsToEscalate = activityRuns.filter(
+        (run) => !run.completedAt && !run.escalated && slaStatus(run) === "Vencida",
+      );
+      const tasksToEscalate = dailyTasks.filter(
+        (task) =>
+          task.startedAt &&
+          task.slaMinutes &&
+          !task.escalated &&
+          !["Completada", "Pausada"].includes(task.status) &&
+          slaStatus({ startedAt: task.startedAt, completedAt: undefined, slaMinutes: task.slaMinutes }) === "Vencida",
+      );
+      if (runsToEscalate.length) {
+        persistActivityRuns(
+          activityRuns.map((run) => (runsToEscalate.some((item) => item.id === run.id) ? { ...run, escalated: true, status: "Vencida" } : run)),
+        );
+        runsToEscalate.forEach((run) => {
+          const employee = collaborators.find((person) => person.id === run.employeeId);
+          const supervisor = employee ? currentSupervisor(employee, collaborators) : undefined;
+          escalate(
+            `SLA vencido: ${run.title}`,
+            `${employee?.name ?? run.employeeId} no ha completado "${run.title}" dentro del tiempo permitido (${run.slaMinutes} min). Inicio: ${new Date(run.startedAt!).toLocaleTimeString("es-MX")}.`,
+            supervisor?.id,
+          );
+        });
+      }
+      if (tasksToEscalate.length) {
+        persistDailyTasks(
+          dailyTasks.map((task) => (tasksToEscalate.some((item) => item.id === task.id) ? { ...task, escalated: true } : task)),
+        );
+        tasksToEscalate.forEach((task) => {
+          const employee = collaborators.find((person) => person.id === task.employeeId);
+          escalate(
+            `SLA vencido: ${task.title}`,
+            `${employee?.name ?? task.employeeId} no ha completado la tarea "${task.title}" dentro del tiempo asignado (${task.slaMinutes} min).`,
+            task.assignedById,
+          );
+        });
+      }
+    };
+    const interval = setInterval(tick, 20000);
+    tick();
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityRuns, dailyTasks, collaborators]);
 
   if (!isAuthenticated) {
     return (
@@ -560,6 +795,8 @@ function App() {
             cleaningRole={cleaningRole}
             collaborators={collaborators}
             dailyTasks={dailyTasks}
+            activityRuns={activityRuns}
+            shiftMap={shiftMap}
           />
         )}
         {view === "asistencia" && (
@@ -575,8 +812,10 @@ function App() {
             dailyTasks={userTasks}
             allDailyTasks={dailyTasks}
             setDailyTasks={persistDailyTasks}
-            activityCompletions={activityCompletions}
-            setActivityCompletions={persistActivityCompletions}
+            startDailyTask={startDailyTask}
+            activityRuns={activityRuns}
+            startActivityRun={startActivityRun}
+            completeActivityRun={completeActivityRun}
           />
         )}
         {view === "equipo" && (
@@ -665,7 +904,7 @@ function App() {
             dailyTasks={dailyTasks}
             processInstances={processInstances}
             internalRequests={internalRequests}
-            activityCompletions={activityCompletions}
+            activityRuns={activityRuns}
           />
         )}
         {view === "instructivo" && <GuideView />}
@@ -782,6 +1021,8 @@ function Dashboard({
   cleaningRole,
   collaborators,
   dailyTasks,
+  activityRuns,
+  shiftMap,
 }: {
   user: Employee;
   attendance: Attendance[];
@@ -792,7 +1033,14 @@ function Dashboard({
   cleaningRole: CleaningRole[];
   collaborators: Employee[];
   dailyTasks: DailyTask[];
+  activityRuns: ActivityRun[];
+  shiftMap: Record<string, ShiftConfig>;
 }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((value) => value + 1), 15000);
+    return () => clearInterval(interval);
+  }, []);
   const today = todayKey();
   const todaysAttendance = attendance.filter((entry) => entry.date === today);
   const todaysEvaluations = evaluations.filter((entry) => entry.date === today);
@@ -801,12 +1049,23 @@ function Dashboard({
       ? 0
       : todaysEvaluations.reduce((sum, entry) => sum + entry.scores.reduce((a, b) => a + b, 0) / entry.scores.length, 0) /
         todaysEvaluations.length;
+  const visibleForMonitor = collaborators.filter(
+    (employee) =>
+      canViewAll(user) ||
+      employee.supervisorId === user.id ||
+      dailyTasks.some((task) => task.employeeId === employee.id && task.assignedById === user.id),
+  );
+  const liveStatuses = visibleForMonitor.map((employee) => ({ employee, live: liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today) }));
+  const idleNow = liveStatuses.filter((entry) => entry.live.state === "idle").length;
+  const breachedNow = liveStatuses.filter((entry) => entry.live.state === "breach").length;
   return (
     <section className="grid">
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
       <Metric label="Garantias abiertas" value={warranties.filter((item) => item.status === "Abierta").length.toString()} icon={<ShieldCheck />} />
+      <Metric label="En tiempo libre ahora" value={idleNow.toString()} icon={<Clock />} />
+      <Metric label="SLA vencidos ahora" value={breachedNow.toString()} icon={<AlertTriangle />} />
 
       <article className="wide panelCard">
         <div className="sectionHead">
@@ -846,47 +1105,40 @@ function Dashboard({
         <article className="wide panelCard">
           <div className="sectionHead">
             <div>
-              <h2>Seguimiento operativo del dia</h2>
-              <span>Entradas, tareas activas, pasos, incidencias y aprobaciones pendientes</span>
+              <h2>Monitor en vivo</h2>
+              <span>Que esta haciendo cada colaborador ahora mismo, con SLA en tiempo real y tiempos libres</span>
             </div>
           </div>
-          <div className="operationTable">
+          <div className="operationTable liveMonitorTable">
             <div className="operationRow head">
               <span>Colaborador</span>
               <span>Entrada</span>
-              <span>Tarea actual</span>
-              <span>Estado / paso</span>
+              <span>Actividad en vivo</span>
+              <span>Estado SLA</span>
               <span>Seguimiento</span>
             </div>
-            {collaborators
-              .filter(
-                (employee) =>
-                  canViewAll(user) ||
-                  employee.supervisorId === user.id ||
-                  dailyTasks.some((task) => task.employeeId === employee.id && task.assignedById === user.id),
-              )
-              .map((employee) => {
-                const dayAttendance = attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
-                const activeTask =
-                  dailyTasks.find(
-                    (task) =>
-                      task.employeeId === employee.id &&
-                      task.date === today &&
-                      ["En proceso", "Incidencia", "Pausada"].includes(task.status),
-                  ) ?? dailyTasks.find((task) => task.employeeId === employee.id && task.date === today);
-                return (
-                  <div className="operationRow" key={employee.id}>
-                    <strong>{employee.name}</strong>
-                    <span>{dayAttendance?.in ?? "Sin entrada"}</span>
-                    <span>{activeTask?.title ?? "Sin tarea asignada"}</span>
-                    <span>
-                      {activeTask ? `${activeTask.status} · ${activeTask.currentStep || "Sin paso"}` : "--"}
-                      {activeTask?.approvalStatus === "Pendiente" ? <small className="danger">Requiere aprobacion</small> : null}
-                    </span>
-                    <span>{activeTask?.incidentNote || activeTask?.employeeComment || activeTask?.notes || "--"}</span>
-                  </div>
-                );
-              })}
+            {liveStatuses.map(({ employee, live }) => {
+              const dayAttendance = attendance.find((entry) => entry.employeeId === employee.id && entry.date === today);
+              const activeTask =
+                dailyTasks.find(
+                  (task) =>
+                    task.employeeId === employee.id &&
+                    task.date === today &&
+                    ["En proceso", "Incidencia", "Pausada"].includes(task.status),
+                ) ?? dailyTasks.find((task) => task.employeeId === employee.id && task.date === today);
+              return (
+                <div className="operationRow" key={employee.id}>
+                  <strong>{employee.name}</strong>
+                  <span>{dayAttendance?.in ?? "Sin entrada"}</span>
+                  <span>{live.label}</span>
+                  <span>
+                    <span className={`statusPill ${live.className}`}>{live.sub}</span>
+                    {activeTask?.approvalStatus === "Pendiente" ? <small className="danger">Requiere aprobacion</small> : null}
+                  </span>
+                  <span>{activeTask?.incidentNote || activeTask?.employeeComment || activeTask?.notes || "--"}</span>
+                </div>
+              );
+            })}
           </div>
         </article>
       )}
@@ -950,8 +1202,10 @@ function AttendanceView({
   dailyTasks,
   allDailyTasks,
   setDailyTasks,
-  activityCompletions,
-  setActivityCompletions,
+  startDailyTask,
+  activityRuns,
+  startActivityRun,
+  completeActivityRun,
 }: {
   user: Employee;
   myAttendance?: Attendance;
@@ -964,43 +1218,23 @@ function AttendanceView({
   dailyTasks: DailyTask[];
   allDailyTasks: DailyTask[];
   setDailyTasks: (value: DailyTask[]) => void;
-  activityCompletions: ActivityCompletion[];
-  setActivityCompletions: (value: ActivityCompletion[]) => void;
+  startDailyTask: (task: DailyTask) => void;
+  activityRuns: ActivityRun[];
+  startActivityRun: (item: {
+    itemType: ActivityRun["itemType"];
+    itemId: string;
+    title: string;
+    scheduledStart: string;
+    scheduledEnd: string;
+    slaMinutes: number;
+  }) => void;
+  completeActivityRun: (id: string) => void;
 }) {
   const userActivities = activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role));
   const today = todayKey();
-  const completeItem = (item: {
-    itemType: ActivityCompletion["itemType"];
-    itemId: string;
-    title: string;
-    start: string;
-    end: string;
-  }) => {
-    const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
-    if (activityCompletions.some((completion) => completion.id === id) || isPastEnd(item.end)) return;
-    setActivityCompletions([
-      ...activityCompletions,
-      {
-        id,
-        employeeId: user.id,
-        date: today,
-        itemType: item.itemType,
-        itemId: item.itemId,
-        title: item.title,
-        start: item.start,
-        end: item.end,
-        status: "Completada",
-        completedAt: timeNow(),
-      },
-    ]);
-  };
-  const statusFor = (itemType: ActivityCompletion["itemType"], itemId: string, end: string) => {
-    const id = `${user.id}-${today}-${itemType}-${itemId}`;
-    const completed = activityCompletions.find((completion) => completion.id === id);
-    if (completed) return { label: `Completada ${completed.completedAt}`, locked: true, className: "ok" };
-    if (isPastEnd(end)) return { label: "Vencida / bloqueada", locked: true, className: "danger" };
-    return { label: "Pendiente", locked: false, className: "warn" };
-  };
+  const runFor = (itemType: ActivityRun["itemType"], itemId: string) =>
+    activityRuns.find((run) => run.id === `${user.id}-${today}-${itemType}-${itemId}`);
+
   const updateTask = (id: string, patch: Partial<DailyTask>) => {
     setDailyTasks(allDailyTasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
   };
@@ -1011,6 +1245,9 @@ function AttendanceView({
       approvalStatus: "Pendiente",
       incidentNote,
     });
+  };
+  const completeTask = (task: DailyTask) => {
+    updateTask(task.id, { status: "Completada", completedAt: new Date().toISOString() });
   };
 
   return (
@@ -1029,23 +1266,30 @@ function AttendanceView({
             <strong>{cleaningAssignment}</strong>
           </div>
         </div>
-        {cleaningRow && (
-          <TimeBoundRow
-            title={cleaningRow.activity}
-            start={cleaningRow.start}
-            end={cleaningRow.end}
-            status={statusFor("Aseo", cleaningRow.activity, cleaningRow.end)}
-            onComplete={() =>
-              completeItem({
-                itemType: "Aseo",
-                itemId: cleaningRow.activity,
-                title: cleaningRow.activity,
-                start: cleaningRow.start,
-                end: cleaningRow.end,
-              })
-            }
-          />
-        )}
+        {cleaningRow &&
+          (() => {
+            const slaMinutes = Math.max(5, timeToMinutes(cleaningRow.end) - timeToMinutes(cleaningRow.start));
+            return (
+              <LiveActivityCard
+                title={cleaningRow.activity}
+                scheduledStart={cleaningRow.start}
+                scheduledEnd={cleaningRow.end}
+                slaMinutes={slaMinutes}
+                run={runFor("Aseo", cleaningRow.activity)}
+                onStart={() =>
+                  startActivityRun({
+                    itemType: "Aseo",
+                    itemId: cleaningRow.activity,
+                    title: cleaningRow.activity,
+                    scheduledStart: cleaningRow.start,
+                    scheduledEnd: cleaningRow.end,
+                    slaMinutes,
+                  })
+                }
+                onComplete={completeActivityRun}
+              />
+            );
+          })()}
         <div className="punchGrid">
           <button onClick={() => updateAttendance("in")}>Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}</button>
           <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
@@ -1055,24 +1299,30 @@ function AttendanceView({
       </article>
 
       <article className="panelCard">
-        <h2>Actividades programadas</h2>
-        <div className="taskList">
+        <div className="sectionHead">
+          <h2>Actividades programadas</h2>
+          <span>Cronometro en vivo · SLA por actividad</span>
+        </div>
+        <div className="taskList liveList">
           {userActivities.map((activity) => (
-            <TimeBoundRow
+            <LiveActivityCard
               key={activity.id}
               title={activity.name}
-              start={activity.start}
-              end={activity.end}
-              status={statusFor("Actividad", activity.id, activity.end)}
-              onComplete={() =>
-                completeItem({
+              scheduledStart={activity.start}
+              scheduledEnd={activity.end}
+              slaMinutes={activity.durationMinutes}
+              run={runFor("Actividad", activity.id)}
+              onStart={() =>
+                startActivityRun({
                   itemType: "Actividad",
                   itemId: activity.id,
                   title: activity.name,
-                  start: activity.start,
-                  end: activity.end,
+                  scheduledStart: activity.start,
+                  scheduledEnd: activity.end,
+                  slaMinutes: activity.durationMinutes,
                 })
               }
+              onComplete={completeActivityRun}
             />
           ))}
         </div>
@@ -1082,51 +1332,65 @@ function AttendanceView({
         <h2>Tareas asignadas por superior</h2>
         <div className="taskList">
           {dailyTasks.length ? (
-            dailyTasks.map((task) => (
-              <div className="taskProgressCard" key={task.id}>
-                <div className="sectionHead">
-                  <span>
-                    <strong>{task.title}</strong>
-                    <small>
-                      {task.start}-{task.end} · {task.priority}
-                    </small>
-                  </span>
-                  <strong className={task.status === "Pausada" || task.status === "Incidencia" ? "danger" : ""}>{task.status}</strong>
+            dailyTasks.map((task) => {
+              const sla = task.slaMinutes ?? Math.max(15, timeToMinutes(task.end) - timeToMinutes(task.start));
+              const status = task.completedAt
+                ? task.status
+                : slaStatus({ startedAt: task.startedAt, completedAt: undefined, slaMinutes: sla });
+              return (
+                <div className="taskProgressCard" key={task.id}>
+                  <div className="sectionHead">
+                    <span>
+                      <strong>{task.title}</strong>
+                      <small>
+                        {task.start}-{task.end} · {task.priority} · SLA {sla} min
+                      </small>
+                    </span>
+                    <span className={`statusPill ${slaClassName(status as SlaState)}`}>
+                      {task.status === "Pausada" || task.status === "Incidencia" ? task.status : status}
+                    </span>
+                  </div>
+                  {task.startedAt && !task.completedAt && <LiveStopwatch startedAt={task.startedAt} slaMinutes={sla} />}
+                  <div className="taskProgressInputs">
+                    <input
+                      value={task.currentStep ?? ""}
+                      disabled={task.paused}
+                      onChange={(event) => updateTask(task.id, { currentStep: event.target.value })}
+                      placeholder="Paso actual de la tarea"
+                    />
+                    <textarea
+                      value={task.employeeComment ?? ""}
+                      disabled={task.paused}
+                      onChange={(event) => updateTask(task.id, { employeeComment: event.target.value })}
+                      placeholder="Comentario de avance"
+                    />
+                    <textarea
+                      value={task.incidentNote ?? ""}
+                      onChange={(event) => updateTask(task.id, { incidentNote: event.target.value })}
+                      placeholder="Incidencia que detiene la tarea"
+                    />
+                  </div>
+                  <div className="taskActions">
+                    {!task.startedAt && (
+                      <button className="ghost compact" onClick={() => startDailyTask(task)}>
+                        Iniciar tarea
+                      </button>
+                    )}
+                    <button
+                      className="ghost danger"
+                      disabled={task.paused}
+                      onClick={() => pauseTaskForIncident(task, task.incidentNote || "Incidencia reportada por colaborador")}
+                    >
+                      Reportar incidencia y pausar
+                    </button>
+                    <button className="primary compact" disabled={task.paused} onClick={() => completeTask(task)}>
+                      Marcar completada
+                    </button>
+                  </div>
+                  {task.paused && <p className="muted">Tarea pausada hasta aprobacion del superior.</p>}
                 </div>
-                <div className="taskProgressInputs">
-                  <input
-                    value={task.currentStep ?? ""}
-                    disabled={task.paused}
-                    onChange={(event) => updateTask(task.id, { currentStep: event.target.value, status: "En proceso" })}
-                    placeholder="Paso actual de la tarea"
-                  />
-                  <textarea
-                    value={task.employeeComment ?? ""}
-                    disabled={task.paused}
-                    onChange={(event) => updateTask(task.id, { employeeComment: event.target.value })}
-                    placeholder="Comentario de avance"
-                  />
-                  <textarea
-                    value={task.incidentNote ?? ""}
-                    onChange={(event) => updateTask(task.id, { incidentNote: event.target.value })}
-                    placeholder="Incidencia que detiene la tarea"
-                  />
-                </div>
-                <div className="taskActions">
-                  <button
-                    className="ghost danger"
-                    disabled={task.paused}
-                    onClick={() => pauseTaskForIncident(task, task.incidentNote || "Incidencia reportada por colaborador")}
-                  >
-                    Reportar incidencia y pausar
-                  </button>
-                  <button className="primary compact" disabled={task.paused} onClick={() => updateTask(task.id, { status: "Completada" })}>
-                    Marcar completada
-                  </button>
-                </div>
-                {task.paused && <p className="muted">Tarea pausada hasta aprobacion del superior.</p>}
-              </div>
-            ))
+              );
+            })
           ) : (
             <p className="muted">Sin tareas especiales asignadas hoy.</p>
           )}
@@ -1149,38 +1413,70 @@ function AttendanceView({
   );
 }
 
-function TimeBoundRow({
-  title,
-  start,
-  end,
-  status,
-  onComplete,
-}: {
-  title: string;
-  start: string;
-  end: string;
-  status: { label: string; locked: boolean; className: string };
-  onComplete: () => void;
-}) {
+function LiveStopwatch({ startedAt, slaMinutes }: { startedAt: string; slaMinutes: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick((value) => value + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  const elapsedMinutes = minutesBetween(startedAt);
+  const ratio = Math.min(1.2, elapsedMinutes / slaMinutes);
+  const status = slaStatus({ startedAt, completedAt: undefined, slaMinutes });
   return (
-    <div className="taskRow timeBoundRow">
-      <span>
-        {title}
-        <small>
-          {start}-{end} · <b className={status.className}>{status.label}</b>
-        </small>
-      </span>
-      <button className="ghost compact" disabled={status.locked} onClick={onComplete}>
-        Marcar hecho
-      </button>
+    <div className={`slaTimer ${status === "Vencida" ? "pulse" : ""}`}>
+      <span className="slaClock">{formatElapsed(startedAt)}</span>
+      <div className="slaBar">
+        <div className={`fill ${slaClassName(status)}`} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+      </div>
+      <small className={slaClassName(status)}>
+        {status === "Vencida" ? `SLA vencido · limite ${slaMinutes} min` : `${Math.round(elapsedMinutes)} / ${slaMinutes} min`}
+      </small>
     </div>
   );
 }
 
-function isPastEnd(end: string) {
-  if (!/^\d{2}:\d{2}$/.test(end)) return false;
-  const now = new Date();
-  return now.getHours() * 60 + now.getMinutes() > timeToMinutes(end);
+function LiveActivityCard({
+  title,
+  scheduledStart,
+  scheduledEnd,
+  slaMinutes,
+  run,
+  onStart,
+  onComplete,
+}: {
+  title: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  slaMinutes: number;
+  run?: ActivityRun;
+  onStart: () => void;
+  onComplete: (id: string) => void;
+}) {
+  const status = run ? slaStatus(run) : "Pendiente";
+  return (
+    <div className="taskRow liveActivityRow">
+      <span>
+        {title}
+        <small>
+          Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min
+        </small>
+        {run?.startedAt && !run.completedAt && <LiveStopwatch startedAt={run.startedAt} slaMinutes={slaMinutes} />}
+      </span>
+      <div className="liveActivityActions">
+        <span className={`statusPill ${slaClassName(status)}`}>{status}</span>
+        {!run?.startedAt && (
+          <button className="ghost compact" onClick={onStart}>
+            Iniciar
+          </button>
+        )}
+        {run?.startedAt && !run.completedAt && (
+          <button className="primary compact" onClick={() => onComplete(run.id)}>
+            Completar
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function timeToMinutes(time: string) {
@@ -2318,6 +2614,7 @@ function RequestsView({
         <div className="requestList">
           {visibleRequests.map((request) => {
             const author = collaborators.find((employee) => employee.id === request.requestedById);
+            const authorName = request.requestedById === "sistema" ? "Sistema (SLA automatico)" : author?.name ?? "Sin autor";
             const recipient = collaborators.find((employee) => employee.id === request.recipientId);
             const canAnswer = request.recipientId === user.id || canGovern(user);
             return (
@@ -2328,7 +2625,7 @@ function RequestsView({
                       {request.type}: {request.title}
                     </strong>
                     <span>
-                      De {author?.name ?? "Sin autor"} para {recipient?.name ?? "Sin destinatario"} · {request.date}
+                      De {authorName} para {recipient?.name ?? "Sin destinatario"} · {request.date}
                     </span>
                   </div>
                   <span className={`status ${request.priority === "Critica" ? "dangerText" : ""}`}>{request.priority}</span>
@@ -2376,7 +2673,7 @@ function ReportsView({
   dailyTasks,
   processInstances,
   internalRequests,
-  activityCompletions,
+  activityRuns,
 }: {
   user: Employee;
   collaborators: Employee[];
@@ -2388,7 +2685,7 @@ function ReportsView({
   dailyTasks: DailyTask[];
   processInstances: ProcessInstance[];
   internalRequests: InternalRequest[];
-  activityCompletions: ActivityCompletion[];
+  activityRuns: ActivityRun[];
 }) {
   const [period, setPeriod] = useState<"day" | "week" | "month">("day");
   const [baseDate, setBaseDate] = useState(todayKey());
@@ -2402,7 +2699,10 @@ function ReportsView({
   const filteredTasks = dailyTasks.filter((entry) => inRange(entry.date));
   const filteredProcesses = processInstances.filter((entry) => inRange(entry.date));
   const filteredRequests = internalRequests.filter((entry) => inRange(entry.date));
-  const filteredActivityCompletions = activityCompletions.filter((entry) => inRange(entry.date));
+  const filteredActivityRuns = activityRuns.filter((entry) => inRange(entry.date));
+  const slaOnTime = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada").length;
+  const slaLate = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada con retraso").length;
+  const slaBreached = filteredActivityRuns.filter((entry) => !entry.completedAt && slaStatus(entry) === "Vencida").length;
   const sales = filteredCuts.reduce((sum, cut) => sum + cut.erpSales, 0);
   const difference = filteredCuts.reduce((sum, cut) => sum + cut.difference, 0);
   const avgEval =
@@ -2464,6 +2764,12 @@ function ReportsView({
             <span>Procesos activos/cerrados</span>
             <strong>{filteredProcesses.length}</strong>
           </div>
+          <div>
+            <span>SLA a tiempo / con retraso / vencido</span>
+            <strong>
+              {slaOnTime} / {slaLate} / {slaBreached}
+            </strong>
+          </div>
         </div>
 
         <ReportSection title="Asistencia">
@@ -2523,14 +2829,16 @@ function ReportsView({
           ))}
         </ReportSection>
 
-        <ReportSection title="Cumplimiento de actividades y aseo">
-          {filteredActivityCompletions.map((item) => (
+        <ReportSection title="Cumplimiento de actividades y aseo (SLA)">
+          {filteredActivityRuns.map((item) => (
             <ReportLine
               key={item.id}
               left={`${item.date} · ${item.itemType} · ${item.title}`}
-              right={`${collaborators.find((employee) => employee.id === item.employeeId)?.name ?? item.employeeId} · ${item.start}-${item.end} · ${
-                item.status
-              } ${item.completedAt}`}
+              right={`${collaborators.find((employee) => employee.id === item.employeeId)?.name ?? item.employeeId} · Programada ${
+                item.scheduledStart
+              }-${item.scheduledEnd} · SLA ${item.slaMinutes} min · ${slaStatus(item)}${
+                item.escalated ? " · Escalado a supervisor" : ""
+              }`}
             />
           ))}
         </ReportSection>
