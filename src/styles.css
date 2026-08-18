@@ -1,8 +1,38 @@
 :root {
-  color-scheme: light;
+  color-scheme: dark;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f4f5f2;
-  color: #1c2520;
+  --mono: "SFMono-Regular", ui-monospace, "JetBrains Mono", Consolas, "Roboto Mono", monospace;
+
+  --bg: #070d0a;
+  --surface: #0f1a14;
+  --surface-alt: #0b1410;
+  --surface-hover: #16241c;
+  --border: #1e3129;
+  --border-strong: #2c4a3a;
+  --text: #e9f3ec;
+  --text-muted: #85998c;
+  --text-dim: #56685d;
+
+  --accent: #f2c84b;
+  --accent-ink: #1c1508;
+  --accent2: #35e0b8;
+  --accent2-soft: rgba(53, 224, 184, 0.14);
+  --accent2-ink: #06231b;
+
+  --ok: #35d488;
+  --ok-soft: rgba(53, 212, 136, 0.16);
+  --ok-ink: #04140c;
+  --warn: #f0b429;
+  --warn-soft: rgba(240, 180, 41, 0.16);
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.16);
+
+  --radius: 10px;
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  --glow: 0 0 0 1px rgba(53, 224, 184, 0.05), 0 20px 60px rgba(0, 0, 0, 0.5);
+
+  background: var(--bg);
+  color: var(--text);
 }
 
 * {
@@ -11,6 +41,11 @@
 
 body {
   margin: 0;
+  background:
+    radial-gradient(circle at 12% -8%, rgba(53, 224, 184, 0.06), transparent 42%),
+    radial-gradient(circle at 88% 0%, rgba(242, 200, 75, 0.05), transparent 38%),
+    var(--bg);
+  background-attachment: fixed;
 }
 
 button,
@@ -24,22 +59,55 @@ button {
   cursor: pointer;
 }
 
+::selection {
+  background: var(--accent2-soft);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
 .loginPage {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 22px;
-  background: #14211b;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(53, 224, 184, 0.1), transparent 45%),
+    radial-gradient(ellipse at 50% 100%, rgba(242, 200, 75, 0.06), transparent 55%),
+    var(--bg);
+  background-image:
+    radial-gradient(circle at 50% 0%, rgba(53, 224, 184, 0.1), transparent 45%),
+    radial-gradient(ellipse at 50% 100%, rgba(242, 200, 75, 0.06), transparent 55%),
+    radial-gradient(rgba(53, 224, 184, 0.06) 1px, transparent 1px),
+    var(--bg);
+  background-size:
+    auto,
+    auto,
+    22px 22px,
+    auto;
 }
 
 .loginCard {
   width: min(430px, 100%);
   display: grid;
   gap: 16px;
-  padding: 24px;
-  border-radius: 8px;
-  background: white;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+  padding: 26px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
 }
 
 .loginCard label {
@@ -53,12 +121,12 @@ button {
 }
 
 .loginBrand small {
-  color: #66736b;
+  color: var(--text-muted);
 }
 
 .loginError {
   margin: 0;
-  color: #9f2f2f;
+  color: var(--danger);
   font-weight: 700;
 }
 
@@ -69,12 +137,24 @@ button {
 }
 
 .sidebar {
-  background: #14211b;
+  position: relative;
+  background: linear-gradient(180deg, #0c1610 0%, #08120d 100%);
+  border-right: 1px solid var(--border);
   color: white;
   padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 22px;
+}
+
+.sidebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -1px;
+  width: 1px;
+  height: 100%;
+  background: linear-gradient(180deg, transparent, rgba(53, 224, 184, 0.35), transparent);
 }
 
 .brand {
@@ -88,10 +168,11 @@ button {
   place-items: center;
   width: 44px;
   height: 44px;
-  border-radius: 8px;
-  background: #f2c84b;
-  color: #14211b;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-ink);
   font-weight: 900;
+  box-shadow: 0 0 0 1px rgba(242, 200, 75, 0.3), 0 0 24px rgba(242, 200, 75, 0.25);
 }
 
 .brand small,
@@ -100,12 +181,12 @@ button {
 .topbar small,
 .sectionHead span,
 .muted {
-  color: #66736b;
+  color: var(--text-muted);
 }
 
 .sidebar .brand small,
 .sidebar .loginLabel {
-  color: #b8c7bd;
+  color: #8fa398;
 }
 
 .sidebar select,
@@ -113,53 +194,70 @@ button {
 select,
 input,
 textarea {
-  border: 1px solid #d8ded8;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 11px 12px;
-  background: white;
-  color: #1c2520;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 1px;
 }
 
 .sidebar nav {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sidebar button {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
   border: 0;
   background: transparent;
-  color: #dce7df;
+  color: #b9c9bf;
   text-align: left;
+  border-radius: 8px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 .sidebar button.active,
 .sidebar button:hover {
-  background: #274237;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.sidebar button.active {
+  color: var(--accent2);
+  box-shadow: inset 3px 0 0 var(--accent2);
 }
 
 .sessionBox {
   display: grid;
   gap: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .sessionBox small {
-  color: #b8c7bd;
+  color: #8fa398;
 }
 
 .sessionBox span {
-  color: #dce7df;
+  color: var(--text);
   font-size: 13px;
 }
 
 .sessionBox em {
-  color: #f2c84b;
+  color: var(--accent2);
   font-size: 12px;
   font-style: normal;
 }
@@ -187,6 +285,7 @@ p {
 h1 {
   margin-bottom: 0;
   font-size: 30px;
+  letter-spacing: -0.01em;
 }
 
 h2 {
@@ -199,9 +298,9 @@ h2 {
   grid-template-columns: 1fr auto;
   align-items: center;
   gap: 2px 12px;
-  background: white;
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 12px 14px;
   min-width: 260px;
 }
@@ -218,10 +317,10 @@ h2 {
   grid-column: 2;
   width: 34px;
   height: 34px;
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
-  background: #f8faf8;
-  color: #1c2520;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+  color: var(--text);
   padding: 0;
 }
 
@@ -241,10 +340,22 @@ h2 {
 
 .metric,
 .panelCard {
-  background: white;
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
-  box-shadow: 0 14px 40px rgba(20, 33, 27, 0.06);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  position: relative;
+}
+
+.metric::before,
+.panelCard::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 14px;
+  right: 14px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(53, 224, 184, 0.4), transparent);
 }
 
 .metric {
@@ -264,14 +375,15 @@ h2 {
   place-items: center;
   width: 42px;
   height: 42px;
-  border-radius: 8px;
-  background: #e8f1ed;
-  color: #176b4d;
+  border-radius: var(--radius);
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 
 .metric strong {
   display: block;
   font-size: 28px;
+  font-family: var(--mono);
 }
 
 .panelCard {
@@ -288,9 +400,14 @@ h2 {
 
 .summaryRows p,
 .taskRow {
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid var(--border);
   padding: 12px 0;
   margin: 0;
+}
+
+.taskList {
+  display: grid;
+  gap: 2px;
 }
 
 .taskRow {
@@ -307,15 +424,15 @@ h2 {
   display: flex;
   align-items: center;
   gap: 16px;
-  background: #fff8df;
-  border: 1px solid #f2d86c;
-  border-radius: 8px;
+  background: var(--warn-soft);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  border-radius: var(--radius);
   padding: 18px;
   margin-bottom: 18px;
 }
 
 .cleaningHero svg {
-  color: #a46d00;
+  color: var(--warn);
 }
 
 .cleaningHero strong,
@@ -332,29 +449,40 @@ h2 {
 .punchGrid button,
 .primary {
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 14px;
-  background: #176b4d;
-  color: white;
-  font-weight: 700;
+  background: linear-gradient(135deg, var(--ok), #23b370);
+  color: var(--ok-ink);
+  font-weight: 800;
+  box-shadow: 0 8px 24px rgba(53, 212, 136, 0.22);
+}
+
+.primary:disabled,
+.punchGrid button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+  box-shadow: none;
 }
 
 .punchGrid span {
   display: block;
   margin-top: 4px;
-  opacity: 0.8;
+  opacity: 0.85;
+  font-family: var(--mono);
 }
 
 .scoreBox {
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 18px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .scoreBox strong {
   font-size: 48px;
   display: block;
+  font-family: var(--mono);
+  color: var(--accent2);
 }
 
 .table {
@@ -369,27 +497,27 @@ h2 {
   align-items: center;
   padding: 12px 0;
   min-width: 900px;
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid var(--border);
 }
 
 .tr.head {
   font-weight: 800;
-  color: #66736b;
+  color: var(--text-muted);
   border-top: 0;
 }
 
 .ok {
-  color: #176b4d;
+  color: var(--ok);
   font-weight: 800;
 }
 
 .warn,
 .amberIcon {
-  color: #b56214;
+  color: var(--warn);
 }
 
 .greenIcon {
-  color: #176b4d;
+  color: var(--ok);
 }
 
 .orgWrap {
@@ -399,10 +527,10 @@ h2 {
 .orgCanvas {
   min-width: 980px;
   padding: 22px;
-  border: 1px solid #e2e7e2;
-  border-radius: 8px;
-  background-color: #fbfcfb;
-  background-image: radial-gradient(#d9dfdc 1px, transparent 1px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background-color: var(--surface-alt);
+  background-image: radial-gradient(rgba(53, 224, 184, 0.14) 1px, transparent 1px);
   background-size: 18px 18px;
 }
 
@@ -420,18 +548,20 @@ h2 {
   left: 50%;
   width: 1px;
   height: 22px;
-  background: #aeb8b2;
+  background: var(--border-strong);
 }
 
 .levelTag {
   justify-self: center;
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 6px 10px;
-  background: white;
-  color: #66736b;
+  background: var(--surface);
+  color: var(--text-muted);
   font-size: 12px;
   font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .orgLevelNodes {
@@ -448,32 +578,34 @@ h2 {
   width: 178px;
   min-height: 154px;
   padding: 14px 12px;
-  border: 1px solid #cad4cf;
-  border-radius: 8px;
-  background: #e9eefc;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
   text-align: center;
-  box-shadow: 0 10px 24px rgba(20, 33, 27, 0.08);
+  box-shadow: var(--shadow);
 }
 
 .orgCard.rank1 {
-  background: #14211b;
+  background: linear-gradient(160deg, #1a2e24, #0d1712);
+  border-color: var(--accent);
   color: white;
 }
 
 .orgCard.rank2 {
-  background: #627384;
+  background: linear-gradient(160deg, #223b30, #0f1a14);
+  border-color: var(--accent2);
   color: white;
 }
 
 .orgCard.rank3 {
-  background: #6f78dc;
+  background: linear-gradient(160deg, #26463a, #0f1a14);
   color: white;
 }
 
 .orgCard.rank4,
 .orgCard.rank5,
 .orgCard.rank6 {
-  background: #c8d3fb;
+  background: var(--surface-hover);
 }
 
 .avatar {
@@ -481,10 +613,10 @@ h2 {
   place-items: center;
   width: 46px;
   height: 46px;
-  border: 3px solid white;
+  border: 3px solid var(--surface);
   border-radius: 999px;
-  background: #176b4d;
-  color: white;
+  background: var(--ok);
+  color: var(--ok-ink);
   font-weight: 900;
 }
 
@@ -525,13 +657,14 @@ h2 {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: #e8f1ed;
-  color: #176b4d;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-family: var(--mono);
 }
 
 .step span {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-top: 3px;
 }
 
@@ -551,7 +684,7 @@ h2 {
 
 .mutedText {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-top: 10px;
 }
 
@@ -563,10 +696,10 @@ h2 {
 
 .processInstance,
 .ruleGrid > div {
-  border: 1px solid #edf0ed;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .processInstance {
@@ -579,32 +712,33 @@ h2 {
 }
 
 .status {
-  border: 1px solid #c7ded3;
-  border-radius: 8px;
+  border: 1px solid rgba(53, 212, 136, 0.35);
+  border-radius: var(--radius);
   padding: 7px 9px;
-  color: #176b4d;
+  color: var(--ok);
   font-size: 13px;
   font-weight: 800;
   white-space: nowrap;
+  font-family: var(--mono);
 }
 
 .dangerText {
-  border-color: #efcece;
-  color: #9f2f2f;
+  border-color: rgba(255, 107, 107, 0.35);
+  color: var(--danger);
 }
 
 .progressLine {
   height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e1e7e2;
+  background: var(--surface-hover);
 }
 
 .progressLine span {
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: #176b4d;
+  background: linear-gradient(90deg, var(--ok), var(--accent2));
 }
 
 .luzVerdeBanner {
@@ -612,12 +746,13 @@ h2 {
   align-items: center;
   gap: 10px;
   padding: 10px 14px;
-  border-radius: 8px;
-  background: #e3f4ea;
-  border: 1px solid #176b4d;
-  color: #176b4d;
+  border-radius: var(--radius);
+  background: var(--ok-soft);
+  border: 1px solid var(--ok);
+  color: var(--ok);
   font-weight: 800;
   letter-spacing: 0.02em;
+  box-shadow: 0 0 18px rgba(53, 212, 136, 0.18);
 }
 
 .luzVerdeBanner svg {
@@ -638,7 +773,7 @@ h2 {
 
 .merchandisingSelect small {
   font-weight: 400;
-  color: #66736b;
+  color: var(--text-muted);
 }
 
 .luzVerdeSteps {
@@ -647,22 +782,22 @@ h2 {
 }
 
 .luzVerdeStep {
-  border: 1px solid #e4e9e4;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 12px;
-  background: #ffffff;
+  background: var(--surface);
   display: grid;
   gap: 8px;
 }
 
 .luzVerdeStep.locked {
-  background: #f4f5f2;
-  opacity: 0.65;
+  background: var(--surface-alt);
+  opacity: 0.6;
 }
 
 .luzVerdeStep.done {
-  border-color: #bfe0cd;
-  background: #f3fbf6;
+  border-color: rgba(53, 212, 136, 0.4);
+  background: var(--ok-soft);
 }
 
 .stepHeader {
@@ -678,13 +813,14 @@ h2 {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: #e8f1ed;
-  color: #176b4d;
+  background: var(--ok-soft);
+  color: var(--ok);
+  font-family: var(--mono);
 }
 
 .stepHeader small {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-top: 3px;
 }
 
@@ -693,18 +829,18 @@ h2 {
 }
 
 .stepNote {
-  background: #f8faf8;
-  border-radius: 8px;
+  background: var(--surface-alt);
+  border-radius: var(--radius);
   padding: 8px 10px;
   margin: 0;
 }
 
 .evidenceCapture,
 .evidenceCaptured {
-  border: 1px dashed #c7d2c9;
-  border-radius: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
   padding: 10px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .evidenceCaptured {
@@ -712,8 +848,8 @@ h2 {
   gap: 10px;
   align-items: center;
   border-style: solid;
-  border-color: #bfe0cd;
-  background: #f3fbf6;
+  border-color: rgba(53, 212, 136, 0.35);
+  background: var(--ok-soft);
 }
 
 .evidenceCaptured img {
@@ -721,7 +857,7 @@ h2 {
   height: 72px;
   object-fit: cover;
   border-radius: 6px;
-  border: 1px solid #dce2dc;
+  border: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -734,7 +870,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 5px;
-  color: #4a564e;
+  color: #a9bcaf;
 }
 
 .evidenceButtons {
@@ -751,8 +887,9 @@ h2 {
 .cameraBox video {
   width: 100%;
   max-width: 320px;
-  border-radius: 8px;
-  background: #14211b;
+  border-radius: var(--radius);
+  background: #000;
+  border: 1px solid var(--border-strong);
 }
 
 .cameraActions {
@@ -766,9 +903,9 @@ h2 {
 }
 
 .signaturePad canvas {
-  border: 1px dashed #c7d2c9;
-  border-radius: 8px;
-  background: white;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: #f7f9f7;
   touch-action: none;
   cursor: crosshair;
   max-width: 100%;
@@ -780,22 +917,23 @@ h2 {
   gap: 10px;
   align-items: flex-start;
   padding: 10px;
-  border: 1px solid #e4e9e4;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .checkStep input {
   width: 18px;
   height: 18px;
   margin-top: 2px;
+  accent-color: var(--ok);
 }
 
 .checkStep small,
 .ruleGrid small,
 .ruleGrid span {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-top: 4px;
 }
 
@@ -805,7 +943,7 @@ h2 {
 
 .ruleGrid p {
   margin: 8px 0;
-  color: #37453d;
+  color: #c3d1c8;
 }
 
 .criteria {
@@ -869,12 +1007,12 @@ h2 {
   align-items: center;
   min-width: 830px;
   padding: 11px 0;
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid var(--border);
 }
 
 .cashRow.head {
   border-top: 0;
-  color: #66736b;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 800;
 }
@@ -883,8 +1021,14 @@ h2 {
   grid-template-columns: 180px 180px;
 }
 
+/* El resumen imprimible se mantiene como "hoja de papel" clara y
+   legible aunque el resto del sistema use tema oscuro. */
 .reportSheet {
+  background: #f7f9f7;
   color: #1c2520;
+  border-radius: var(--radius);
+  padding: 22px;
+  border: 1px solid var(--border);
 }
 
 .reportHeader {
@@ -897,7 +1041,7 @@ h2 {
 }
 
 .reportHeader span {
-  color: #66736b;
+  color: #5c6b61;
 }
 
 .reportMetrics {
@@ -909,18 +1053,19 @@ h2 {
   border: 1px solid #dce2dc;
   border-radius: 8px;
   padding: 12px;
-  background: #f8faf8;
+  background: #ffffff;
 }
 
 .reportMetrics span,
 .reportLine span {
-  color: #66736b;
+  color: #5c6b61;
 }
 
 .reportMetrics strong {
   display: block;
   margin-top: 5px;
   font-size: 22px;
+  font-family: var(--mono);
 }
 
 .reportSection {
@@ -938,7 +1083,7 @@ h2 {
   grid-template-columns: 1.1fr 1fr;
   gap: 14px;
   padding: 9px 0;
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid #e5e9e5;
 }
 
 .operationTable {
@@ -953,12 +1098,12 @@ h2 {
   align-items: center;
   min-width: 900px;
   padding: 11px 0;
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid var(--border);
 }
 
 .operationRow.head {
   border-top: 0;
-  color: #66736b;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 800;
 }
@@ -981,10 +1126,10 @@ h2 {
 .requestCard {
   display: grid;
   gap: 10px;
-  border: 1px solid #edf0ed;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .requestCard p {
@@ -992,7 +1137,7 @@ h2 {
 }
 
 .requestCard small {
-  color: #66736b;
+  color: var(--text-muted);
 }
 
 .requestControls {
@@ -1010,16 +1155,16 @@ h2 {
   display: flex;
   gap: 16px;
   align-items: flex-start;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .guideHero svg {
-  color: #176b4d;
+  color: var(--ok);
   flex: 0 0 auto;
 }
 
 .guideHero p {
-  color: #66736b;
+  color: var(--text-muted);
   margin-bottom: 0;
 }
 
@@ -1034,7 +1179,7 @@ h2 {
   gap: 8px;
   margin: 0;
   padding-left: 20px;
-  color: #37453d;
+  color: #c3d1c8;
 }
 
 .stack {
@@ -1043,21 +1188,36 @@ h2 {
 }
 
 .ghost {
-  border: 1px solid #d8ded8;
-  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
   padding: 10px 12px;
-  background: #f8faf8;
-  color: #1c2520;
+  background: var(--surface-hover);
+  color: var(--text);
   font-weight: 700;
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: var(--accent2);
+  color: var(--accent2);
 }
 
 .ghost:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
+}
+
+.ghost.danger {
+  color: var(--danger);
+  border-color: rgba(255, 107, 107, 0.35);
+}
+
+.ghost.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .danger {
-  color: #9f2f2f;
+  color: var(--danger);
 }
 
 .compact {
@@ -1072,15 +1232,15 @@ h2 {
 }
 
 .governanceGrid > div {
-  border: 1px solid #edf0ed;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .governanceGrid p {
   margin: 8px 0 0;
-  color: #66736b;
+  color: var(--text-muted);
 }
 
 .editableTable {
@@ -1098,7 +1258,7 @@ h2 {
 }
 
 .editableRow.head {
-  color: #66736b;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 800;
   padding: 0 2px;
@@ -1112,7 +1272,7 @@ h2 {
 
 .editableRow small {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-top: 3px;
 }
 
@@ -1141,7 +1301,7 @@ h2 {
 }
 
 .peopleHead {
-  color: #66736b;
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 800;
 }
@@ -1153,14 +1313,14 @@ h2 {
 }
 
 .profileGrid > div {
-  border: 1px solid #edf0ed;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 14px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .profileGrid p {
-  color: #66736b;
+  color: var(--text-muted);
   margin: 8px 0;
 }
 
@@ -1171,10 +1331,10 @@ h2 {
 }
 
 .pillList span {
-  border: 1px solid #dce2dc;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 8px 10px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .taskEditable {
@@ -1185,7 +1345,7 @@ h2 {
 .taskFollowCard {
   display: grid;
   gap: 12px;
-  border-top: 1px solid #edf0ed;
+  border-top: 1px solid var(--border);
   padding: 14px 0;
 }
 
@@ -1209,15 +1369,15 @@ h2 {
 }
 
 .taskFollowGrid > div {
-  border: 1px solid #edf0ed;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 10px;
-  background: #f8faf8;
+  background: var(--surface-alt);
 }
 
 .taskFollowGrid small {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   margin-bottom: 4px;
 }
 
@@ -1241,24 +1401,25 @@ h2 {
   font-weight: 800;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  background: #edf0ed;
-  color: #66736b;
+  background: var(--surface-hover);
+  color: var(--text-muted);
   white-space: nowrap;
+  font-family: var(--mono);
 }
 
 .statusPill.ok {
-  background: #e3f4ea;
-  color: #176b4d;
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 
 .statusPill.warn {
-  background: #fdf1d9;
-  color: #a46d00;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .statusPill.danger {
-  background: #fbe4e4;
-  color: #9f2f2f;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .slaTimer {
@@ -1269,17 +1430,17 @@ h2 {
 }
 
 .slaClock {
-  font-family: "SFMono-Regular", ui-monospace, Consolas, "Roboto Mono", monospace;
+  font-family: var(--mono);
   font-size: 20px;
   font-weight: 800;
   letter-spacing: 0.04em;
-  color: #14211b;
+  color: var(--accent2);
 }
 
 .slaBar {
   height: 6px;
   border-radius: 999px;
-  background: #edf0ed;
+  background: var(--surface-hover);
   overflow: hidden;
 }
 
@@ -1287,15 +1448,15 @@ h2 {
   height: 100%;
   border-radius: 999px;
   transition: width 0.6s ease;
-  background: #176b4d;
+  background: var(--ok);
 }
 
 .slaBar .fill.warn {
-  background: #d99a1f;
+  background: var(--warn);
 }
 
 .slaBar .fill.danger {
-  background: #c94747;
+  background: var(--danger);
 }
 
 .slaTimer small {
@@ -1312,7 +1473,7 @@ h2 {
     opacity: 1;
   }
   50% {
-    opacity: 0.45;
+    opacity: 0.4;
   }
 }
 
@@ -1323,7 +1484,7 @@ h2 {
 .taskEditable small,
 .taskRow small {
   display: block;
-  color: #66736b;
+  color: var(--text-muted);
   font-weight: 400;
   margin-top: 4px;
 }
@@ -1448,6 +1609,10 @@ textarea {
 }
 
 @media print {
+  :root {
+    color-scheme: light;
+  }
+
   body {
     background: white;
   }
