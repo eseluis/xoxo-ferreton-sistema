@@ -2,6 +2,8 @@
 
 La version local ya usa sesiones reales de Supabase. La limpieza inicial ya fue realizada el 21 de agosto de 2026; el archivo de migracion queda seguro para futuras actualizaciones y no vuelve a borrar registros. No publicar hasta completar estos pasos y probar al menos una cuenta directiva y una cuenta operativa.
 
+La limpieza inicial afecta solamente registros operativos. Los colaboradores, puestos, jerarquias, turnos, horarios, actividades programadas y rol de limpieza se consideran estructura maestra y deben conservarse. Pueden reconstruirse desde `scripts/export-structure.cjs`.
+
 ## 1. Respaldar los datos
 
 En Supabase, exportar la tabla `app_state` o crear un respaldo del proyecto antes de ejecutar la migracion.
