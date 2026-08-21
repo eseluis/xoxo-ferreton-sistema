@@ -85,6 +85,26 @@ type CashIncident = {
   note: string;
   ownerId: string;
   date: string;
+  folio: string;
+  status: "Pendiente" | "Aprobado" | "Rechazado";
+  approvedById?: string;
+  approvedAt?: string;
+  createdAt: string;
+};
+
+type CashSession = {
+  id: string;
+  branch: string;
+  date: string;
+  openedById: string;
+  openingFund: number;
+  openedAt: string;
+  status: "Abierta" | "Cerrada" | "Aprobada";
+  cutId?: string;
+  closedAt?: string;
+  approvedById?: string;
+  approvedAt?: string;
+  notes: string;
 };
 
 type CashCut = {
@@ -104,6 +124,10 @@ type CashCut = {
   matches: boolean;
   incident: string;
   notes: string;
+  openingFund: number;
+  status: "Pendiente" | "Aprobado" | "Rechazado";
+  reviewedById?: string;
+  reviewedAt?: string;
 };
 
 type Warranty = {
@@ -407,6 +431,7 @@ function App() {
   const [attendance, setAttendance] = useState<Attendance[]>(() => load("xoxo.attendance", []));
   const [evaluations, setEvaluations] = useState<Evaluation[]>(() => load("xoxo.evaluations", []));
   const [cashIncidents, setCashIncidents] = useState<CashIncident[]>(() => load("xoxo.cash", []));
+  const [cashSessions, setCashSessions] = useState<CashSession[]>(() => load("xoxo.cashSessions", []));
   const [cashCuts, setCashCuts] = useState<CashCut[]>(() => load("xoxo.cashCuts", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
@@ -457,6 +482,7 @@ function App() {
         cloudAttendance,
         cloudEvaluations,
         cloudCashIncidents,
+        cloudCashSessions,
         cloudCashCuts,
         cloudWarranties,
         cloudDailyTasks,
@@ -471,6 +497,7 @@ function App() {
         cloudLoad("xoxo.attendance", attendance),
         cloudLoad("xoxo.evaluations", evaluations),
         cloudLoad("xoxo.cash", cashIncidents),
+        cloudLoad("xoxo.cashSessions", cashSessions),
         cloudLoad("xoxo.cashCuts", cashCuts),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
@@ -485,6 +512,7 @@ function App() {
       setAttendance(cloudAttendance);
       setEvaluations(cloudEvaluations);
       setCashIncidents(cloudCashIncidents);
+      setCashSessions(cloudCashSessions);
       setCashCuts(cloudCashCuts);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
@@ -601,10 +629,29 @@ function App() {
         note: String(form.get("note")),
         ownerId: user.id,
         date: today,
+        folio: String(form.get("folio")),
+        status: "Pendiente" as const,
+        createdAt: new Date().toISOString(),
       },
     ];
     setCashIncidents(next);
     save("xoxo.cash", next);
+    event.currentTarget.reset();
+  };
+
+  const addCashOpening = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const branch = String(form.get("branch") || user.branch);
+    const date = String(form.get("date") || today);
+    if (cashSessions.some((session) => session.branch === branch && session.date === date && session.status === "Abierta")) return;
+    const next: CashSession[] = [{
+      id: crypto.randomUUID(), branch, date, openedById: user.id,
+      openingFund: Number(form.get("openingFund")), openedAt: new Date().toISOString(),
+      status: "Abierta", notes: String(form.get("notes")),
+    }, ...cashSessions];
+    setCashSessions(next);
+    save("xoxo.cashSessions", next);
     event.currentTarget.reset();
   };
 
@@ -618,13 +665,18 @@ function App() {
     const providerPayments = Number(form.get("providerPayments"));
     const operationalExpenses = Number(form.get("operationalExpenses"));
     const cashCounted = Number(form.get("cashCounted"));
-    const expectedCash = erpSales - cardTotal - transferTotal - withdrawals - providerPayments - operationalExpenses;
+    const branch = String(form.get("branch") || user.branch);
+    const date = String(form.get("date") || today);
+    const openSession = cashSessions.find((session) => session.branch === branch && session.date === date && session.status === "Abierta");
+    if (!openSession) return;
+    const openingFund = openSession.openingFund;
+    const expectedCash = openingFund + erpSales - cardTotal - transferTotal - withdrawals - providerPayments - operationalExpenses;
     const difference = cashCounted - expectedCash;
     const next = [
       {
         id: crypto.randomUUID(),
-        branch: String(form.get("branch") || user.branch),
-        date: String(form.get("date") || today),
+        branch,
+        date,
         cashierId: user.id,
         erpSales,
         cardTotal,
@@ -638,12 +690,42 @@ function App() {
         matches: Math.abs(difference) < 1,
         incident: String(form.get("incident")),
         notes: String(form.get("notes")),
+        openingFund,
+        status: "Pendiente" as const,
       },
       ...cashCuts,
     ];
     setCashCuts(next);
     save("xoxo.cashCuts", next);
+    const cutId = next[0].id;
+    const nextSessions: CashSession[] = cashSessions.map((session) => session.id === openSession.id
+      ? { ...session, status: "Cerrada", cutId, closedAt: new Date().toISOString() }
+      : session);
+    setCashSessions(nextSessions);
+    save("xoxo.cashSessions", nextSessions);
     event.currentTarget.reset();
+  };
+
+  const reviewCashCut = (id: string, status: "Aprobado" | "Rechazado") => {
+    const reviewedAt = new Date().toISOString();
+    const nextCuts = cashCuts.map((cut) => cut.id === id ? { ...cut, status, reviewedById: user.id, reviewedAt } : cut);
+    setCashCuts(nextCuts);
+    save("xoxo.cashCuts", nextCuts);
+    if (status === "Aprobado") {
+      const nextSessions: CashSession[] = cashSessions.map((session) => session.cutId === id
+        ? { ...session, status: "Aprobada", approvedById: user.id, approvedAt: reviewedAt }
+        : session);
+      setCashSessions(nextSessions);
+      save("xoxo.cashSessions", nextSessions);
+    }
+  };
+
+  const reviewCashIncident = (id: string, status: "Aprobado" | "Rechazado") => {
+    const next = cashIncidents.map((item) => item.id === id
+      ? { ...item, status, approvedById: user.id, approvedAt: new Date().toISOString() }
+      : item);
+    setCashIncidents(next);
+    save("xoxo.cash", next);
   };
 
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1013,8 +1095,12 @@ function App() {
             user={user}
             addCashIncident={addCashIncident}
             cashIncidents={cashIncidents}
+            cashSessions={cashSessions}
+            addCashOpening={addCashOpening}
             addCashCut={addCashCut}
             cashCuts={cashCuts}
+            reviewCashCut={reviewCashCut}
+            reviewCashIncident={reviewCashIncident}
             collaborators={collaborators}
           />
         )}
@@ -3160,22 +3246,31 @@ function roleLabel(role: Role) {
 
 function CashView({
   user,
+  cashSessions,
+  addCashOpening,
   addCashIncident,
   cashIncidents,
   addCashCut,
   cashCuts,
+  reviewCashCut,
+  reviewCashIncident,
   collaborators,
 }: {
   user: Employee;
+  cashSessions: CashSession[];
+  addCashOpening: (event: React.FormEvent<HTMLFormElement>) => void;
   addCashIncident: (event: React.FormEvent<HTMLFormElement>) => void;
   cashIncidents: CashIncident[];
   addCashCut: (event: React.FormEvent<HTMLFormElement>) => void;
   cashCuts: CashCut[];
+  reviewCashCut: (id: string, status: "Aprobado" | "Rechazado") => void;
+  reviewCashIncident: (id: string, status: "Aprobado" | "Rechazado") => void;
   collaborators: Employee[];
 }) {
   const todayCuts = cashCuts.filter((cut) => cut.date === todayKey());
   const totalSales = todayCuts.reduce((sum, cut) => sum + cut.erpSales, 0);
   const totalDifference = todayCuts.reduce((sum, cut) => sum + cut.difference, 0);
+  const canReview = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
   return (
     <section className="stack">
       <div className="grid">
@@ -3186,11 +3281,43 @@ function CashView({
       </div>
 
       <section className="grid two">
+        <form className="panelCard form" onSubmit={addCashOpening}>
+          <div className="sectionHead">
+            <div>
+              <h2>1. Apertura de caja</h2>
+              <span>El fondo debe contarse y registrarse antes de la primera venta.</span>
+            </div>
+            <WalletCards className="greenIcon" />
+          </div>
+          <div className="moneyInputs">
+            <label>Fecha<input name="date" type="date" defaultValue={todayKey()} required /></label>
+            <label>Sucursal<select name="branch" defaultValue={user.branch}><option>Matriz</option><option>Sucursal Centro</option><option>Corporativo</option></select></label>
+          </div>
+          <label>Fondo inicial contado<input name="openingFund" type="number" min="0" step="0.01" required /></label>
+          <textarea name="notes" placeholder="Billetes, monedas, folio de entrega y observaciones" required />
+          <button className="primary">Abrir caja</button>
+        </form>
+        <article className="panelCard">
+          <h2>Sesiones de caja</h2>
+          <p className="muted">Una caja debe pasar por Abierta → Cerrada → Aprobada.</p>
+          <div className="taskList">
+            {cashSessions.length === 0 && <p className="muted">No hay sesiones registradas.</p>}
+            {cashSessions.map((session) => (
+              <div className="taskRow" key={session.id}>
+                <span>{session.branch}<small>{session.date} · Fondo ${session.openingFund.toLocaleString("es-MX")} · {collaborators.find((e) => e.id === session.openedById)?.name}</small></span>
+                <strong className={session.status === "Aprobada" ? "ok" : session.status === "Cerrada" ? "warn" : ""}>{session.status}</strong>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+
+      <section className="grid two">
         <form className="panelCard form" onSubmit={addCashCut}>
           <div className="sectionHead">
             <div>
-              <h2>Corte de caja</h2>
-              <span>Ventas ERP menos tarjeta, transferencia, retiros y pagos</span>
+              <h2>3. Corte y conciliacion</h2>
+              <span>Fondo inicial + efectivo de ventas - salidas documentadas</span>
             </div>
           </div>
           <div className="moneyInputs">
@@ -3250,7 +3377,7 @@ function CashView({
         </form>
 
         <form className="panelCard form" onSubmit={addCashIncident}>
-          <h2>Retiros, pagos e incidencias</h2>
+          <h2>2. Movimientos durante el dia</h2>
           <select name="type">
             <option>Diferencia de caja</option>
             <option>Retiro preventivo caja mayor a $10,000</option>
@@ -3277,6 +3404,7 @@ function CashView({
           </div>
           <input name="recipient" placeholder="A quien se pago, retiro o cobro" />
           <input name="purpose" placeholder="Para que / concepto" />
+          <input name="folio" placeholder="Folio de ticket, factura o autorizacion" required />
           <textarea name="note" placeholder="Motivo, folio, responsable y accion tomada" required />
           <button className="primary">Guardar movimiento</button>
           <p className="muted">Responsable: {user.name}. Las fallas se escalan al gerente general.</p>
@@ -3294,7 +3422,8 @@ function CashView({
               <span>Efectivo esperado</span>
               <span>Contado</span>
               <span>Diferencia</span>
-              <span>Coincide</span>
+              <span>Estado</span>
+              <span>Revision</span>
             </div>
             {cashCuts.map((cut) => (
               <div className="cashRow" key={cut.id}>
@@ -3304,7 +3433,13 @@ function CashView({
                 <span>${cut.expectedCash.toLocaleString("es-MX")}</span>
                 <span>${cut.cashCounted.toLocaleString("es-MX")}</span>
                 <strong className={cut.matches ? "ok" : "danger"}>${cut.difference.toLocaleString("es-MX")}</strong>
-                <span>{cut.matches ? "Si" : "No"}</span>
+                <span className={cut.status === "Aprobado" ? "ok" : cut.status === "Rechazado" ? "danger" : "warn"}>{cut.status || "Pendiente"}</span>
+                <span className="cashActions">
+                  {canReview && (cut.status || "Pendiente") === "Pendiente" ? <>
+                    <button className="ghost" onClick={() => reviewCashCut(cut.id, "Aprobado")}>Aprobar</button>
+                    <button className="ghost danger" onClick={() => reviewCashCut(cut.id, "Rechazado")}>Rechazar</button>
+                  </> : "--"}
+                </span>
               </div>
             ))}
           </div>
@@ -3318,11 +3453,18 @@ function CashView({
                 <span>
                   {item.type}
                   <small>
-                    {item.paymentMethod || "Sin metodo"} · {item.recipient || "Sin destinatario"} ·{" "}
+                    {item.folio || "Sin folio"} · {item.paymentMethod || "Sin metodo"} · {item.recipient || "Sin destinatario"} ·{" "}
                     {collaborators.find((employee) => employee.id === item.ownerId)?.name ?? "Sin responsable"}
                   </small>
                 </span>
-                <strong>${item.amount.toLocaleString("es-MX")}</strong>
+                <span>
+                  <strong>${item.amount.toLocaleString("es-MX")}</strong>
+                  <small className={item.status === "Aprobado" ? "ok" : item.status === "Rechazado" ? "danger" : "warn"}>{item.status || "Pendiente"}</small>
+                  {canReview && (item.status || "Pendiente") === "Pendiente" && <span className="cashActions">
+                    <button className="ghost" onClick={() => reviewCashIncident(item.id, "Aprobado")}>Aprobar</button>
+                    <button className="ghost danger" onClick={() => reviewCashIncident(item.id, "Rechazado")}>Rechazar</button>
+                  </span>}
+                </span>
               </div>
             ))}
           </div>

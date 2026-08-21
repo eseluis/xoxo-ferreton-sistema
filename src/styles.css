@@ -1002,12 +1002,23 @@ h2 {
 
 .cashRow {
   display: grid;
-  grid-template-columns: 105px 130px 110px 140px 110px 110px 90px;
+  grid-template-columns: 105px 130px 110px 140px 110px 110px 90px 170px;
   gap: 10px;
   align-items: center;
-  min-width: 830px;
+  min-width: 1010px;
   padding: 11px 0;
   border-top: 1px solid var(--border);
+}
+
+.cashActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cashActions button {
+  padding: 6px 8px;
+  font-size: 11px;
 }
 
 .cashRow.head {

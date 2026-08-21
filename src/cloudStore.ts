@@ -51,6 +51,7 @@ const moduleTables: Record<string, string> = {
   "xoxo.attendance": "attendance_records",
   "xoxo.evaluations": "evaluation_records",
   "xoxo.cash": "cash_incident_records",
+  "xoxo.cashSessions": "cash_session_records",
   "xoxo.cashCuts": "cash_cut_records",
   "xoxo.warranties": "warranty_records",
   "xoxo.dailyTasks": "daily_task_records",

@@ -25,7 +25,7 @@ do $$
 declare table_name text;
 begin
   foreach table_name in array array[
-    'attendance_records','evaluation_records','cash_incident_records','cash_cut_records',
+    'attendance_records','evaluation_records','cash_incident_records','cash_session_records','cash_cut_records',
     'warranty_records','daily_task_records','process_instance_records',
     'internal_request_records','activity_run_records'
   ] loop
@@ -73,6 +73,7 @@ begin
     when 'attendance' then 'attendance_records'
     when 'evaluations' then 'evaluation_records'
     when 'cash' then 'cash_incident_records'
+    when 'cashSessions' then 'cash_session_records'
     when 'cashCuts' then 'cash_cut_records'
     when 'warranties' then 'warranty_records'
     when 'dailyTasks' then 'daily_task_records'
