@@ -22,7 +22,6 @@ export type Employee = {
   salaryMax?: number;
   commissionBase: string;
   phone?: string;
-  password?: string;
 };
 
 export type RoleProfile = {

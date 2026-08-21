@@ -1289,8 +1289,8 @@ h2 {
 }
 
 .editablePeople .tr {
-  grid-template-columns: 70px 190px 170px 150px 170px 105px 190px 130px 140px 90px;
-  min-width: 1430px;
+  grid-template-columns: 70px 190px 170px 150px 170px 105px 190px 130px 90px;
+  min-width: 1290px;
 }
 
 .editablePeople input,

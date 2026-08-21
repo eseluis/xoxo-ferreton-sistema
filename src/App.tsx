@@ -44,7 +44,16 @@ import {
   todayKey,
   weekDays,
 } from "./data";
-import { cloudLoad, cloudSave, isCloudReady } from "./cloudStore";
+import {
+  cloudLoad,
+  cloudSave,
+  getSession,
+  isCloudReady,
+  sessionEmployeeNumber,
+  signIn,
+  signOut,
+  supabase,
+} from "./cloudStore";
 
 type Attendance = {
   employeeId: string;
@@ -369,17 +378,16 @@ const load = <T,>(key: string, fallback: T): T => {
 };
 
 const save = (key: string, value: unknown) => {
-  localStorage.setItem(key, JSON.stringify(value));
+  if (!isCloudReady) localStorage.setItem(key, JSON.stringify(value));
   void cloudSave(key, value);
 };
 
-const passwordFor = (employee: Employee) => employee.password || `xoxo${employee.id}`;
-
-const normalizeEmployees = (employees: Employee[]) =>
-  employees.map((employee) => ({
-    ...employee,
-    password: employee.password || `xoxo${employee.id}`,
-  }));
+const clearLegacyLocalCache = () => {
+  if (!isCloudReady) return;
+  Object.keys(localStorage)
+    .filter((key) => key.startsWith("xoxo."))
+    .forEach((key) => localStorage.removeItem(key));
+};
 
 const timeNow = () =>
   new Intl.DateTimeFormat("es-MX", {
@@ -388,15 +396,14 @@ const timeNow = () =>
   }).format(new Date());
 
 function App() {
-  const [activeId, setActiveId] = useState(localStorage.getItem("xoxo.activeId") ?? "003");
-  const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem("xoxo.authenticated") === "true");
-  const [loginId, setLoginId] = useState(localStorage.getItem("xoxo.activeId") ?? "003");
+  const [activeId, setActiveId] = useState("");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginId, setLoginId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [view, setView] = useState("panel");
-  const [collaborators, setCollaborators] = useState<Employee[]>(() =>
-    normalizeEmployees(load("xoxo.collaborators", defaultEmployees)),
-  );
+  const [collaborators, setCollaborators] = useState<Employee[]>(() => load("xoxo.collaborators", defaultEmployees));
   const [attendance, setAttendance] = useState<Attendance[]>(() => load("xoxo.attendance", []));
   const [evaluations, setEvaluations] = useState<Evaluation[]>(() => load("xoxo.evaluations", []));
   const [cashIncidents, setCashIncidents] = useState<CashIncident[]>(() => load("xoxo.cash", []));
@@ -418,7 +425,32 @@ function App() {
   const [salesGoal, setSalesGoal] = useState(1000);
 
   useEffect(() => {
-    if (!isCloudReady) return;
+    let active = true;
+    clearLegacyLocalCache();
+    const applySession = async () => {
+      const session = await getSession();
+      if (!active) return;
+      const employeeNumber = sessionEmployeeNumber(session);
+      setActiveId(employeeNumber);
+      setLoginId(employeeNumber);
+      setIsAuthenticated(Boolean(session && employeeNumber));
+      setAuthLoading(false);
+    };
+    void applySession();
+    const subscription = supabase?.auth.onAuthStateChange((_event, session) => {
+      const employeeNumber = sessionEmployeeNumber(session);
+      setActiveId(employeeNumber);
+      setIsAuthenticated(Boolean(session && employeeNumber));
+      setAuthLoading(false);
+    }).data.subscription;
+    return () => {
+      active = false;
+      subscription?.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isCloudReady || !isAuthenticated) return;
     const hydrate = async () => {
       const [
         cloudCollaborators,
@@ -449,7 +481,7 @@ function App() {
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
       ]);
-      setCollaborators(normalizeEmployees(cloudCollaborators));
+      setCollaborators(cloudCollaborators);
       setAttendance(cloudAttendance);
       setEvaluations(cloudEvaluations);
       setCashIncidents(cloudCashIncidents);
@@ -464,7 +496,7 @@ function App() {
       setCleaningRole(cloudCleaningRole);
     };
     void hydrate();
-  }, []);
+  }, [isAuthenticated]);
 
   const user = collaborators.find((employee) => employee.id === activeId) ?? collaborators[0] ?? defaultEmployees[2];
   const visibleEmployees = canViewAll(user)
@@ -485,31 +517,36 @@ function App() {
   const userTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
 
   const persistCollaborators = (next: Employee[]) => {
-    const normalized = normalizeEmployees(next);
-    setCollaborators(normalized);
-    save("xoxo.collaborators", normalized);
+    const sanitized = next.map((employee) => {
+      const copy = { ...employee } as Employee & { password?: string };
+      delete copy.password;
+      return copy;
+    });
+    setCollaborators(sanitized);
+    save("xoxo.collaborators", sanitized);
   };
 
-  const submitLogin = (event: React.FormEvent<HTMLFormElement>) => {
+  const submitLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const found = collaborators.find((employee) => employee.id === loginId);
-    if (!found || passwordFor(found) !== loginPassword) {
-      setLoginError("Numero de colaborador o contrasena incorrecta.");
-      return;
-    }
-    setActiveId(found.id);
-    setIsAuthenticated(true);
     setLoginError("");
-    setLoginPassword("");
-    localStorage.setItem("xoxo.activeId", found.id);
-    localStorage.setItem("xoxo.authenticated", "true");
+    try {
+      const session = await signIn(loginId, loginPassword);
+      const employeeNumber = sessionEmployeeNumber(session);
+      if (!session || !employeeNumber) throw new Error("Usuario sin numero de colaborador configurado.");
+      setActiveId(employeeNumber);
+      setIsAuthenticated(true);
+      setLoginPassword("");
+    } catch {
+      setLoginError("Numero de colaborador o contrasena incorrecta.");
+    }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await signOut();
+    clearLegacyLocalCache();
     setIsAuthenticated(false);
     setLoginPassword("");
     setLoginId(activeId);
-    localStorage.removeItem("xoxo.authenticated");
   };
 
   const persistDailyTasks = (next: DailyTask[]) => {
@@ -799,10 +836,13 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityRuns, dailyTasks, collaborators]);
 
+  if (authLoading) {
+    return <main className="loginPage"><div className="loginCard">Verificando sesion segura...</div></main>;
+  }
+
   if (!isAuthenticated) {
     return (
       <LoginView
-        collaborators={collaborators}
         loginId={loginId}
         setLoginId={setLoginId}
         loginPassword={loginPassword}
@@ -1049,7 +1089,6 @@ function titleFor(view: string) {
 }
 
 function LoginView({
-  collaborators,
   loginId,
   setLoginId,
   loginPassword,
@@ -1057,7 +1096,6 @@ function LoginView({
   loginError,
   submitLogin,
 }: {
-  collaborators: Employee[];
   loginId: string;
   setLoginId: (value: string) => void;
   loginPassword: string;
@@ -1077,13 +1115,13 @@ function LoginView({
         </div>
         <label>
           Numero de colaborador
-          <select value={loginId} onChange={(event) => setLoginId(event.target.value)}>
-            {collaborators.map((employee) => (
-              <option key={employee.id} value={employee.id}>
-                {employee.id} - {employee.name}
-              </option>
-            ))}
-          </select>
+          <input
+            value={loginId}
+            onChange={(event) => setLoginId(event.target.value)}
+            inputMode="numeric"
+            autoComplete="username"
+            required
+          />
         </label>
         <label>
           Contrasena
@@ -1091,6 +1129,7 @@ function LoginView({
             type="password"
             value={loginPassword}
             onChange={(event) => setLoginPassword(event.target.value)}
+            autoComplete="current-password"
             required
           />
         </label>
@@ -2091,7 +2130,6 @@ function TeamView({
       salaryMin: 4000,
       salaryMax: 4200,
       commissionBase: "Se asigna automaticamente por puesto",
-      password: `xoxo${nextId}`,
     };
     setCollaborators([...collaborators, newEmployee]);
   };
@@ -2124,7 +2162,6 @@ function TeamView({
           <span>Turno</span>
           <span>Superior</span>
           <span>Sueldo</span>
-          <span>Contrasena</span>
           <span></span>
         </div>
         {visibleEmployees.map((employee, index) => (
@@ -2173,11 +2210,6 @@ function TeamView({
             <span>
               ${(employee.salaryMin ?? 0).toLocaleString("es-MX")} - ${(employee.salaryMax ?? 0).toLocaleString("es-MX")}
             </span>
-            <input
-              disabled={!canGovern(user)}
-              value={passwordFor(employee)}
-              onChange={(event) => updateEmployee(index, "password", event.target.value)}
-            />
             <button className="ghost danger" disabled={!canGovern(user)} onClick={() => removeEmployee(employee.id)}>
               Borrar
             </button>
