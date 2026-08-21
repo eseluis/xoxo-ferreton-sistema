@@ -47,8 +47,26 @@ export function sessionEmployeeNumber(session: Session | null) {
   return String(session?.user.user_metadata?.employee_number ?? "");
 }
 
+const moduleTables: Record<string, string> = {
+  "xoxo.attendance": "attendance_records",
+  "xoxo.evaluations": "evaluation_records",
+  "xoxo.cash": "cash_incident_records",
+  "xoxo.cashCuts": "cash_cut_records",
+  "xoxo.warranties": "warranty_records",
+  "xoxo.dailyTasks": "daily_task_records",
+  "xoxo.processInstances": "process_instance_records",
+  "xoxo.internalRequests": "internal_request_records",
+  "xoxo.activityRuns": "activity_run_records",
+};
+
 export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
+  const moduleTable = moduleTables[key];
+  if (moduleTable) {
+    const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
+    if (error) return fallback;
+    return data.map((row) => row.payload) as T;
+  }
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
   if (error || !data) return fallback;
   return data.value as T;
@@ -58,6 +76,15 @@ export async function cloudSave(key: string, value: unknown) {
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
+  const moduleTable = moduleTables[key];
+  if (moduleTable) {
+    const { error } = await supabase.rpc("replace_module_records", {
+      module_name: key.replace("xoxo.", ""),
+      records: value,
+    });
+    if (error) throw error;
+    return;
+  }
   const { error } = await supabase.from("app_state").upsert({
     key,
     value,
