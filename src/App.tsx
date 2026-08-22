@@ -1128,6 +1128,9 @@ function App() {
           <button className={view === "panel" ? "active" : ""} onClick={() => setView("panel")}>
             <BarChart3 size={18} /> Panel
           </button>
+          <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => setView("tableroFinanciero")}>
+            <WalletCards size={18} /> Tablero financiero
+          </button>
           <button className={view === "asistencia" ? "active" : ""} onClick={() => setView("asistencia")}>
             <Clock size={18} /> Registro diario
           </button>
@@ -1284,6 +1287,15 @@ function App() {
             collaborators={collaborators}
           />
         )}
+        {view === "tableroFinanciero" && (
+          <FinancialDashboard
+            user={user}
+            suppliers={suppliers}
+            payables={payables}
+            bankAccounts={bankAccounts}
+            bankTransactions={bankTransactions}
+          />
+        )}
         {(view === "finanzas" || view === "bancos") && (
           <FinanceView
             user={user} suppliers={suppliers} payables={payables}
@@ -1347,6 +1359,7 @@ function titleFor(view: string) {
   return (
     {
       panel: "Panel de control",
+      tableroFinanciero: "Tablero financiero gerencial",
       asistencia: "Registro diario",
       equipo: "Colaboradores y directorio",
       organigrama: "Organigrama",
@@ -3432,6 +3445,88 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTransactions }: {
+  user: Employee;
+  suppliers: Supplier[];
+  payables: Payable[];
+  bankAccounts: BankAccount[];
+  bankTransactions: BankTransaction[];
+}) {
+  const today = todayKey();
+  const [month, setMonth] = useState(today.slice(0, 7));
+  const [branch, setBranch] = useState("Todas");
+  const inBranch = (itemBranch: string) => branch === "Todas" || itemBranch === branch;
+  const movements = bankTransactions.filter((item) => item.date.startsWith(month) && inBranch(item.branch));
+  const visiblePayables = payables.filter((item) => inBranch(item.branch));
+  const deposits = movements.filter((item) => item.type === "Deposito").reduce((sum, item) => sum + item.amount, 0);
+  const payments = movements.filter((item) => item.type === "Pago a proveedor").reduce((sum, item) => sum + item.amount, 0);
+  const expenses = movements.filter((item) => item.type === "Gasto operativo").reduce((sum, item) => sum + item.amount, 0);
+  const netFlow = deposits - payments - expenses;
+  const outstanding = visiblePayables.reduce((sum, item) => sum + Math.max(0, item.amount - item.paidAmount), 0);
+  const overdue = visiblePayables.filter((item) => item.status !== "Pagada" && item.dueDate < today);
+  const deductible = movements.filter((item) => item.deductible).reduce((sum, item) => sum + item.amount, 0);
+  const noInvoice = movements.filter((item) => !item.hasInvoice && item.type !== "Deposito").reduce((sum, item) => sum + item.amount, 0);
+  const accountBalance = (account: BankAccount) => account.openingBalance + bankTransactions.reduce((sum, item) => {
+    if (!inBranch(item.branch)) return sum;
+    if (item.type === "Deposito" && item.bankAccountId === account.id) return sum + item.amount;
+    if (item.type === "Transferencia" && item.destinationBankAccountId === account.id) return sum + item.amount;
+    if (item.bankAccountId === account.id && item.type !== "Deposito") return sum - item.amount;
+    return sum;
+  }, 0);
+  const bankBalance = bankAccounts.filter((item) => inBranch(item.branch)).reduce((sum, item) => sum + accountBalance(item), 0);
+  const aging = [
+    { label: "Por vencer o vence hoy", min: -99999, max: 0 },
+    { label: "Vencido 1-30 días", min: 1, max: 30 },
+    { label: "Vencido 31-60 días", min: 31, max: 60 },
+    { label: "Vencido 61-90 días", min: 61, max: 90 },
+    { label: "Vencido más de 90 días", min: 91, max: 99999 },
+  ].map((bucket) => ({ ...bucket, total: visiblePayables.filter((item) => {
+    if (item.status === "Pagada") return false;
+    const days = Math.floor((new Date(`${today}T12:00:00`).getTime() - new Date(`${item.dueDate}T12:00:00`).getTime()) / 86400000);
+    return days >= bucket.min && days <= bucket.max;
+  }).reduce((sum, item) => sum + Math.max(0, item.amount - item.paidAmount), 0) }));
+  const projectionStart = new Date(`${today}T12:00:00`);
+  const projection = Array.from({ length: 13 }, (_, index) => {
+    const start = new Date(projectionStart); start.setDate(start.getDate() + index * 7);
+    const end = new Date(start); end.setDate(end.getDate() + 6);
+    const startKey = start.toISOString().slice(0, 10); const endKey = end.toISOString().slice(0, 10);
+    const due = visiblePayables.filter((item) => item.status !== "Pagada" && item.dueDate >= startKey && item.dueDate <= endKey)
+      .reduce((sum, item) => sum + Math.max(0, item.amount - item.paidAmount), 0);
+    return { label: `Semana ${index + 1}`, range: `${startKey} a ${endKey}`, due };
+  });
+  return <section className="stack">
+    <article className="panelCard noPrint">
+      <div className="sectionHead"><div><h2>Vista de dirección</h2><span>Información registrada en bancos, gastos y cuentas por pagar.</span></div><strong>{user.name}</strong></div>
+      <div className="reportFilters">
+        <label>Mes<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
+        <label>Sucursal<select value={branch} onChange={(event) => setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label>
+      </div>
+    </article>
+    <div className="grid">
+      <Metric label="Saldo en bancos" value={`$${bankBalance.toLocaleString("es-MX")}`} icon={<WalletCards />} />
+      <Metric label="Flujo neto del mes" value={`$${netFlow.toLocaleString("es-MX")}`} icon={<BarChart3 />} />
+      <Metric label="Cuentas por pagar" value={`$${outstanding.toLocaleString("es-MX")}`} icon={<BriefcaseBusiness />} />
+      <Metric label="Saldo vencido" value={`$${overdue.reduce((sum,item)=>sum+Math.max(0,item.amount-item.paidAmount),0).toLocaleString("es-MX")}`} icon={<AlertTriangle />} />
+      <Metric label="Gasto deducible" value={`$${deductible.toLocaleString("es-MX")}`} icon={<FileCheck2 />} />
+      <Metric label="Egresos sin factura" value={`$${noInvoice.toLocaleString("es-MX")}`} icon={<FileText />} />
+    </div>
+    <section className="grid two">
+      <article className="panelCard"><h2>Flujo del mes</h2><div className="taskList">
+        <div className="taskRow"><span>Depósitos</span><strong className="ok">+${deposits.toLocaleString("es-MX")}</strong></div>
+        <div className="taskRow"><span>Pagos a proveedores</span><strong>-${payments.toLocaleString("es-MX")}</strong></div>
+        <div className="taskRow"><span>Gastos operativos</span><strong>-${expenses.toLocaleString("es-MX")}</strong></div>
+        <div className="taskRow"><span>Resultado neto</span><strong className={netFlow < 0 ? "danger" : "ok"}>${netFlow.toLocaleString("es-MX")}</strong></div>
+      </div></article>
+      <article className="panelCard"><h2>Antigüedad de saldos</h2><div className="taskList">{aging.map((item)=><div className="taskRow" key={item.label}><span>{item.label}</span><strong>${item.total.toLocaleString("es-MX")}</strong></div>)}</div></article>
+    </section>
+    <section className="grid two">
+      <article className="panelCard"><h2>Saldos por banco</h2><div className="taskList">{bankAccounts.filter((item)=>inBranch(item.branch)).map((item)=><div className="taskRow" key={item.id}><span>{item.bank}<small>{item.accountName} · termina {item.lastFour}</small></span><strong>${accountBalance(item).toLocaleString("es-MX")}</strong></div>)}{bankAccounts.filter((item)=>inBranch(item.branch)).length===0&&<p className="muted">Primero registra las cuentas en Bancos.</p>}</div></article>
+      <article className="panelCard"><h2>Alertas de pago</h2><div className="taskList">{overdue.slice(0,8).map((item)=><div className="taskRow" key={item.id}><span>{suppliers.find((supplier)=>supplier.id===item.supplierId)?.name||"Proveedor"}<small>{item.invoice} · venció {item.dueDate}</small></span><strong className="danger">${Math.max(0,item.amount-item.paidAmount).toLocaleString("es-MX")}</strong></div>)}{overdue.length===0&&<p className="muted">Sin facturas vencidas.</p>}</div></article>
+    </section>
+    <article className="panelCard"><div className="sectionHead"><div><h2>Compromisos de efectivo · 13 semanas</h2><span>Proyección basada en las fechas de vencimiento capturadas.</span></div><strong>Total ${projection.reduce((sum,item)=>sum+item.due,0).toLocaleString("es-MX")}</strong></div><div className="taskList">{projection.map((item)=><div className="taskRow" key={item.label}><span>{item.label}<small>{item.range}</small></span><strong>${item.due.toLocaleString("es-MX")}</strong></div>)}</div></article>
+  </section>;
 }
 
 function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment, bankAccounts, bankTransactions, addBankAccount, addBankTransaction, importBankTransactions }: {
