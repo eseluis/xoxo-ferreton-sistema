@@ -121,6 +121,11 @@ type BankTransaction = {
   category: string; reconciled: boolean; reconciledAt?: string; reconciledById?: string;
 };
 
+type MonthlyBudget = {
+  id: string; date: string; month: string; category: string; amount: number;
+  branch: string; ownerId: string; createdAt: string;
+};
+
 type CashSession = {
   id: string;
   branch: string;
@@ -466,6 +471,7 @@ function App() {
   const [payables, setPayables] = useState<Payable[]>(() => load("xoxo.payables", []));
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => load("xoxo.bankAccounts", []));
   const [bankTransactions, setBankTransactions] = useState<BankTransaction[]>(() => load("xoxo.bankTransactions", []));
+  const [monthlyBudgets, setMonthlyBudgets] = useState<MonthlyBudget[]>(() => load("xoxo.monthlyBudgets", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -521,6 +527,7 @@ function App() {
         cloudPayables,
         cloudBankAccounts,
         cloudBankTransactions,
+        cloudMonthlyBudgets,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -540,6 +547,7 @@ function App() {
         cloudLoad("xoxo.payables", payables),
         cloudLoad("xoxo.bankAccounts", bankAccounts),
         cloudLoad("xoxo.bankTransactions", bankTransactions),
+        cloudLoad("xoxo.monthlyBudgets", monthlyBudgets),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -559,6 +567,7 @@ function App() {
       setPayables(cloudPayables);
       setBankAccounts(cloudBankAccounts);
       setBankTransactions(cloudBankTransactions);
+      setMonthlyBudgets(cloudMonthlyBudgets);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -911,6 +920,15 @@ function App() {
       reconciledById: !item.reconciled ? user.id : undefined,
     } : item);
     setBankTransactions(next); save("xoxo.bankTransactions", next);
+  };
+
+  const addMonthlyBudget = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const month = String(form.get("month")); const category = String(form.get("category")); const branch = String(form.get("branch") || user.branch);
+    const existing = monthlyBudgets.find((item) => item.month === month && item.category === category && item.branch === branch);
+    const budget: MonthlyBudget = { id: existing?.id || crypto.randomUUID(), date: `${month}-01`, month, category, amount: Number(form.get("amount")), branch, ownerId: user.id, createdAt: existing?.createdAt || new Date().toISOString() };
+    const next = existing ? monthlyBudgets.map((item) => item.id === existing.id ? budget : item) : [budget, ...monthlyBudgets];
+    setMonthlyBudgets(next); save("xoxo.monthlyBudgets", next); event.currentTarget.reset();
   };
 
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1308,6 +1326,8 @@ function App() {
             payables={payables}
             bankAccounts={bankAccounts}
             bankTransactions={bankTransactions}
+            monthlyBudgets={monthlyBudgets}
+            addMonthlyBudget={addMonthlyBudget}
           />
         )}
         {(view === "finanzas" || view === "bancos") && (
@@ -1362,6 +1382,11 @@ function App() {
             processInstances={processInstances}
             internalRequests={internalRequests}
             activityRuns={activityRuns}
+            suppliers={suppliers}
+            payables={payables}
+            bankAccounts={bankAccounts}
+            bankTransactions={bankTransactions}
+            monthlyBudgets={monthlyBudgets}
           />
         )}
         {view === "instructivo" && <GuideView />}
@@ -3462,12 +3487,14 @@ function roleLabel(role: Role) {
   )[role];
 }
 
-function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTransactions }: {
+function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTransactions, monthlyBudgets, addMonthlyBudget }: {
   user: Employee;
   suppliers: Supplier[];
   payables: Payable[];
   bankAccounts: BankAccount[];
   bankTransactions: BankTransaction[];
+  monthlyBudgets: MonthlyBudget[];
+  addMonthlyBudget: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
   const today = todayKey();
   const [month, setMonth] = useState(today.slice(0, 7));
@@ -3483,6 +3510,13 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
   const overdue = visiblePayables.filter((item) => item.status !== "Pagada" && item.dueDate < today);
   const deductible = movements.filter((item) => item.deductible).reduce((sum, item) => sum + item.amount, 0);
   const noInvoice = movements.filter((item) => !item.hasInvoice && item.type !== "Deposito").reduce((sum, item) => sum + item.amount, 0);
+  const selectedBudgets = monthlyBudgets.filter((item) => item.month === month && inBranch(item.branch));
+  const budgetRows = Array.from(new Set([...selectedBudgets.map((item)=>item.category), ...movements.filter((item)=>item.type!=="Deposito").map((item)=>item.category||"Sin clasificar")])).map((category) => {
+    const budget = selectedBudgets.filter((item)=>item.category===category).reduce((sum,item)=>sum+item.amount,0);
+    const actual = movements.filter((item)=>item.type!=="Deposito" && (item.category||"Sin clasificar")===category).reduce((sum,item)=>sum+item.amount,0);
+    return { category, budget, actual, variance: budget-actual, percentage: budget ? (actual/budget)*100 : actual ? 100 : 0 };
+  });
+  const totalBudget = selectedBudgets.reduce((sum,item)=>sum+item.amount,0);
   const accountBalance = (account: BankAccount) => account.openingBalance + bankTransactions.reduce((sum, item) => {
     if (!inBranch(item.branch)) return sum;
     if (item.type === "Deposito" && item.bankAccountId === account.id) return sum + item.amount;
@@ -3519,6 +3553,10 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
         <label>Sucursal<select value={branch} onChange={(event) => setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label>
       </div>
     </article>
+    {(canGovern(user) || ["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)) && <form className="panelCard form" onSubmit={addMonthlyBudget}>
+      <div className="sectionHead"><div><h2>Definir presupuesto mensual</h2><span>Si la categoría ya existe para el mes y sucursal, se actualizará.</span></div></div>
+      <div className="budgetFormGrid"><input name="month" type="month" defaultValue={month} required/><select name="category" required><option value="">Categoría</option><option>Compra de mercancía</option><option>Pago a proveedores</option><option>Nómina</option><option>Renta</option><option>Servicios</option><option>Impuestos</option><option>Mantenimiento</option><option>Publicidad</option><option>Flete</option><option>Viáticos</option><option>Comisiones bancarias</option><option>Otros gastos</option></select><input name="amount" type="number" min="0" step="0.01" placeholder="Presupuesto" required/><select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select><button className="primary">Guardar presupuesto</button></div>
+    </form>}
     <div className="grid">
       <Metric label="Saldo en bancos" value={`$${bankBalance.toLocaleString("es-MX")}`} icon={<WalletCards />} />
       <Metric label="Flujo neto del mes" value={`$${netFlow.toLocaleString("es-MX")}`} icon={<BarChart3 />} />
@@ -3536,6 +3574,7 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
       </div></article>
       <article className="panelCard"><h2>Antigüedad de saldos</h2><div className="taskList">{aging.map((item)=><div className="taskRow" key={item.label}><span>{item.label}</span><strong>${item.total.toLocaleString("es-MX")}</strong></div>)}</div></article>
     </section>
+    <article className="panelCard"><div className="sectionHead"><div><h2>Presupuesto contra gasto real</h2><span>{month} · {branch}</span></div><strong>Presupuesto ${totalBudget.toLocaleString("es-MX")}</strong></div><div className="operationTable budgetTable"><div className="operationRow head"><span>Categoría</span><span>Presupuesto</span><span>Real</span><span>Disponible</span><span>Uso</span></div>{budgetRows.map((item)=><div className="operationRow" key={item.category}><strong>{item.category}</strong><span>${item.budget.toLocaleString("es-MX")}</span><span>${item.actual.toLocaleString("es-MX")}</span><span className={item.variance<0?"danger":"ok"}>${item.variance.toLocaleString("es-MX")}</span><span className={item.percentage>100?"danger":item.percentage>=85?"warn":"ok"}>{item.percentage.toFixed(0)}%</span></div>)}{budgetRows.length===0&&<p className="muted">Aún no hay presupuesto ni gastos clasificados para este periodo.</p>}</div></article>
     <section className="grid two">
       <article className="panelCard"><h2>Saldos por banco</h2><div className="taskList">{bankAccounts.filter((item)=>inBranch(item.branch)).map((item)=><div className="taskRow" key={item.id}><span>{item.bank}<small>{item.accountName} · termina {item.lastFour}</small></span><strong>${accountBalance(item).toLocaleString("es-MX")}</strong></div>)}{bankAccounts.filter((item)=>inBranch(item.branch)).length===0&&<p className="muted">Primero registra las cuentas en Bancos.</p>}</div></article>
       <article className="panelCard"><h2>Alertas de pago</h2><div className="taskList">{overdue.slice(0,8).map((item)=><div className="taskRow" key={item.id}><span>{suppliers.find((supplier)=>supplier.id===item.supplierId)?.name||"Proveedor"}<small>{item.invoice} · venció {item.dueDate}</small></span><strong className="danger">${Math.max(0,item.amount-item.paidAmount).toLocaleString("es-MX")}</strong></div>)}{overdue.length===0&&<p className="muted">Sin facturas vencidas.</p>}</div></article>
@@ -4053,6 +4092,11 @@ function ReportsView({
   processInstances,
   internalRequests,
   activityRuns,
+  suppliers,
+  payables,
+  bankAccounts,
+  bankTransactions,
+  monthlyBudgets,
 }: {
   user: Employee;
   collaborators: Employee[];
@@ -4065,6 +4109,11 @@ function ReportsView({
   processInstances: ProcessInstance[];
   internalRequests: InternalRequest[];
   activityRuns: ActivityRun[];
+  suppliers: Supplier[];
+  payables: Payable[];
+  bankAccounts: BankAccount[];
+  bankTransactions: BankTransaction[];
+  monthlyBudgets: MonthlyBudget[];
 }) {
   const [period, setPeriod] = useState<"day" | "week" | "month">("day");
   const [baseDate, setBaseDate] = useState(todayKey());
@@ -4079,11 +4128,17 @@ function ReportsView({
   const filteredProcesses = processInstances.filter((entry) => inRange(entry.date));
   const filteredRequests = internalRequests.filter((entry) => inRange(entry.date));
   const filteredActivityRuns = activityRuns.filter((entry) => inRange(entry.date));
+  const filteredBankTransactions = bankTransactions.filter((entry) => inRange(entry.date));
+  const filteredBudgets = monthlyBudgets.filter((entry) => entry.month >= start.slice(0,7) && entry.month <= end.slice(0,7));
   const slaOnTime = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada").length;
   const slaLate = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada con retraso").length;
   const slaBreached = filteredActivityRuns.filter((entry) => !entry.completedAt && slaStatus(entry) === "Vencida").length;
   const sales = filteredCuts.reduce((sum, cut) => sum + cut.erpSales, 0);
   const difference = filteredCuts.reduce((sum, cut) => sum + cut.difference, 0);
+  const deposits = filteredBankTransactions.filter((item)=>item.type==="Deposito").reduce((sum,item)=>sum+item.amount,0);
+  const financialOutflow = filteredBankTransactions.filter((item)=>item.type!=="Deposito" && item.type!=="Transferencia").reduce((sum,item)=>sum+item.amount,0);
+  const payableBalance = payables.reduce((sum,item)=>sum+Math.max(0,item.amount-item.paidAmount),0);
+  const budgetTotal = filteredBudgets.reduce((sum,item)=>sum+item.amount,0);
   const avgEval =
     filteredEvaluations.length === 0
       ? 0
@@ -4149,7 +4204,22 @@ function ReportsView({
               {slaOnTime} / {slaLate} / {slaBreached}
             </strong>
           </div>
+          <div><span>Flujo financiero</span><strong>${(deposits-financialOutflow).toLocaleString("es-MX")}</strong></div>
+          <div><span>Cuentas por pagar</span><strong>${payableBalance.toLocaleString("es-MX")}</strong></div>
+          <div><span>Presupuesto del periodo</span><strong>${budgetTotal.toLocaleString("es-MX")}</strong></div>
         </div>
+
+        <ReportSection title="Finanzas, bancos y comprobación fiscal">
+          {bankAccounts.map((account)=><ReportLine key={account.id} left={`${account.bank} · ${account.accountName} · termina ${account.lastFour}`} right={`${account.branch} · saldo inicial $${account.openingBalance.toLocaleString("es-MX")}`} />)}
+          {filteredBankTransactions.map((item)=><ReportLine key={item.id} left={`${item.date} · ${item.type} · ${item.counterparty}`} right={`$${item.amount.toLocaleString("es-MX")} · ${item.category||"Sin clasificar"} · ${item.invoice||"Sin factura"} · ${item.deductible?"Deducible":"No deducible"} · ${item.reconciled?"Conciliado":"Pendiente de conciliar"}`} />)}
+          {payables.filter((item)=>item.status!=="Pagada").map((item)=><ReportLine key={item.id} left={`${suppliers.find((supplier)=>supplier.id===item.supplierId)?.name||"Proveedor"} · ${item.invoice}`} right={`Vence ${item.dueDate} · saldo $${Math.max(0,item.amount-item.paidAmount).toLocaleString("es-MX")} · ${item.hasInvoice?"Con factura":"Sin factura"}`} />)}
+          {filteredBankTransactions.length===0&&payables.filter((item)=>item.status!=="Pagada").length===0&&<p>Sin información financiera en el periodo.</p>}
+        </ReportSection>
+
+        <ReportSection title="Presupuesto contra gasto real">
+          {filteredBudgets.map((budget)=>{const actual=filteredBankTransactions.filter((item)=>item.type!=="Deposito"&&item.category===budget.category&&item.branch===budget.branch).reduce((sum,item)=>sum+item.amount,0);return <ReportLine key={budget.id} left={`${budget.month} · ${budget.branch} · ${budget.category}`} right={`Presupuesto $${budget.amount.toLocaleString("es-MX")} · real $${actual.toLocaleString("es-MX")} · diferencia $${(budget.amount-actual).toLocaleString("es-MX")}`} />;})}
+          {filteredBudgets.length===0&&<p>Sin presupuestos registrados para el periodo.</p>}
+        </ReportSection>
 
         <ReportSection title="Asistencia">
           {filteredAttendance.map((entry) => (

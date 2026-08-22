@@ -1050,6 +1050,16 @@ h2 {
   margin: 14px 0;
 }
 
+.budgetFormGrid {
+  display: grid;
+  grid-template-columns: 160px 1.5fr 150px 170px auto;
+  gap: 10px;
+}
+
+.budgetTable .operationRow {
+  grid-template-columns: 1.6fr repeat(4, minmax(110px, 1fr));
+}
+
 .reconciliationRow > span:last-child {
   display: flex;
   align-items: flex-end;
