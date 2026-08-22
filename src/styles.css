@@ -1043,6 +1043,20 @@ h2 {
   width: auto;
 }
 
+.statementFilters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.reconciliationRow > span:last-child {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  flex-direction: column;
+}
+
 .cashRow.head {
   border-top: 0;
   color: var(--text-muted);

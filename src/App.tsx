@@ -118,6 +118,7 @@ type BankTransaction = {
   bankAccountId: string; destinationBankAccountId?: string; amount: number; supplierId?: string;
   payableId?: string; invoice: string; concept: string; hasInvoice: boolean; deductible: boolean;
   counterparty: string; reference: string; branch: string; ownerId: string; createdAt: string;
+  category: string; reconciled: boolean; reconciledAt?: string; reconciledById?: string;
 };
 
 type CashSession = {
@@ -790,6 +791,7 @@ function App() {
           hasInvoice: payable?.hasInvoice ?? true, deductible: payable?.deductible ?? false,
           counterparty: reviewed.recipient || "Proveedor", reference: reviewed.folio,
           branch: reviewed.branch, ownerId: user.id, createdAt: new Date().toISOString(),
+          category: "Pago a proveedores", reconciled: false,
         };
         const nextTransactions = [...bankTransactions, transaction];
         setBankTransactions(nextTransactions); save("xoxo.bankTransactions", nextTransactions);
@@ -869,6 +871,7 @@ function App() {
       hasInvoice: form.get("hasInvoice") === "on", deductible: form.get("deductible") === "on",
       counterparty: String(form.get("counterparty")), reference: String(form.get("reference")),
       branch: String(form.get("branch") || user.branch), ownerId: user.id, createdAt: new Date().toISOString(),
+      category: String(form.get("category") || "Sin clasificar"), reconciled: false,
     }, ...bankTransactions];
     setBankTransactions(next); save("xoxo.bankTransactions", next); event.currentTarget.reset();
   };
@@ -894,9 +897,20 @@ function App() {
         counterparty: valueAt(values, "proveedor") || valueAt(values, "contraparte"),
         reference: valueAt(values, "referencia"), branch: valueAt(values, "sucursal") || user.branch,
         ownerId: user.id, createdAt: new Date().toISOString(),
+        category: valueAt(values, "categoria") || "Sin clasificar",
+        reconciled: ["si","sí","true","1"].includes(valueAt(values, "conciliado").toLowerCase()),
       };
     }).filter((item) => item.date && item.amount > 0 && item.bankAccountId !== "sin-cuenta");
     const next = [...imported, ...bankTransactions]; setBankTransactions(next); save("xoxo.bankTransactions", next);
+  };
+
+  const toggleBankReconciliation = (transactionId: string) => {
+    const next = bankTransactions.map((item) => item.id === transactionId ? {
+      ...item, reconciled: !item.reconciled,
+      reconciledAt: !item.reconciled ? new Date().toISOString() : undefined,
+      reconciledById: !item.reconciled ? user.id : undefined,
+    } : item);
+    setBankTransactions(next); save("xoxo.bankTransactions", next);
   };
 
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1303,6 +1317,7 @@ function App() {
             bankAccounts={bankAccounts} bankTransactions={bankTransactions}
             addBankAccount={addBankAccount} addBankTransaction={addBankTransaction}
             importBankTransactions={importBankTransactions}
+            toggleBankReconciliation={toggleBankReconciliation}
           />
         )}
         {view === "garantias" && <WarrantyView user={user} addWarranty={addWarranty} warranties={warranties} />}
@@ -3529,7 +3544,7 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
   </section>;
 }
 
-function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment, bankAccounts, bankTransactions, addBankAccount, addBankTransaction, importBankTransactions }: {
+function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment, bankAccounts, bankTransactions, addBankAccount, addBankTransaction, importBankTransactions, toggleBankReconciliation }: {
   user: Employee;
   suppliers: Supplier[];
   payables: Payable[];
@@ -3541,9 +3556,12 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
   addBankAccount: (event: React.FormEvent<HTMLFormElement>) => void;
   addBankTransaction: (event: React.FormEvent<HTMLFormElement>) => void;
   importBankTransactions: (file: File) => Promise<void>;
+  toggleBankReconciliation: (transactionId: string) => void;
 }) {
   const canManage = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
   const today = todayKey();
+  const [statementAccount, setStatementAccount] = useState("Todas");
+  const [statementStatus, setStatementStatus] = useState("Todos");
   const open = payables.filter((item) => item.status !== "Pagada");
   const outstanding = open.reduce((sum, item) => sum + item.amount - item.paidAmount, 0);
   const overdue = open.filter((item) => item.dueDate < today && item.status !== "Pago pendiente");
@@ -3555,6 +3573,17 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
   const operatingExpenses = bankTransactions.filter((item) => item.type === "Gasto operativo").reduce((sum, item) => sum + item.amount, 0);
   const deductibleExpenses = bankTransactions.filter((item) => item.deductible).reduce((sum, item) => sum + item.amount, 0);
   const withoutInvoice = bankTransactions.filter((item) => !item.hasInvoice && ["Gasto operativo","Pago a proveedor"].includes(item.type)).reduce((sum, item) => sum + item.amount, 0);
+  const visibleTransactions = bankTransactions.filter((item) =>
+    (statementAccount === "Todas" || item.bankAccountId === statementAccount || item.destinationBankAccountId === statementAccount) &&
+    (statementStatus === "Todos" || (statementStatus === "Conciliados" ? item.reconciled : !item.reconciled))
+  );
+  const pendingReconciliation = bankTransactions.filter((item) => !item.reconciled).reduce((sum, item) => sum + item.amount, 0);
+  const exportStatement = () => {
+    const header = ["fecha","tipo","banco","monto","categoria","proveedor_contraparte","factura","tiene_factura","deducible","referencia","conciliado","sucursal"];
+    const rows = visibleTransactions.map((item) => [item.date,item.type,bankAccounts.find((bank)=>bank.id===item.bankAccountId)?.bank||"",item.amount,item.category||"Sin clasificar",item.counterparty,item.invoice,item.hasInvoice?"Si":"No",item.deductible?"Si":"No",item.reference,item.reconciled?"Si":"No",item.branch]);
+    const csv = [header,...rows].map((row)=>row.map((value)=>`"${String(value).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([`\uFEFF${csv}`],{type:"text/csv;charset=utf-8"})); link.download = `estado-cuenta-${today}.csv`; link.click(); URL.revokeObjectURL(link.href);
+  };
   const balanceFor = (accountId: string) => {
     const account = bankAccounts.find((item) => item.id === accountId);
     return (account?.openingBalance || 0) + bankTransactions.reduce((sum, item) => {
@@ -3576,6 +3605,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
       <Metric label="Gasto operativo" value={`$${operatingExpenses.toLocaleString("es-MX")}`} icon={<BriefcaseBusiness />} />
       <Metric label="Deducible" value={`$${deductibleExpenses.toLocaleString("es-MX")}`} icon={<FileCheck2 />} />
       <Metric label="Sin factura" value={`$${withoutInvoice.toLocaleString("es-MX")}`} icon={<AlertTriangle />} />
+      <Metric label="Pendiente de conciliar" value={`$${pendingReconciliation.toLocaleString("es-MX")}`} icon={<FileCheck2 />} />
     </div>
     {canManage && <section className="grid two" id="bancos">
       <form className="panelCard form" onSubmit={addSupplier}>
@@ -3631,6 +3661,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <div className="moneyInputs"><input name="amount" type="number" min="0.01" step="0.01" placeholder="Monto" required /><input name="reference" placeholder="Referencia bancaria" required /></div>
         <input name="counterparty" placeholder="Depositante, beneficiario o comercio" required />
         <input name="concept" placeholder="Concepto" required />
+        <select name="category" required><option value="">Categoría contable</option><option>Compra de mercancía</option><option>Pago a proveedores</option><option>Nómina</option><option>Renta</option><option>Servicios</option><option>Impuestos</option><option>Mantenimiento</option><option>Publicidad</option><option>Flete</option><option>Viáticos</option><option>Comisiones bancarias</option><option>Otros gastos</option><option>Ingreso por venta</option><option>Aportación de capital</option></select>
         <input name="invoice" placeholder="Factura, si existe" />
         <select name="supplierId"><option value="">Sin proveedor relacionado</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <div className="checkRow"><label><input name="hasInvoice" type="checkbox" /> Tiene factura</label><label><input name="deductible" type="checkbox" /> Es deducible</label></div>
@@ -3640,12 +3671,12 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
     </section>}
     {canManage && <article className="panelCard form">
       <h2>Carga masiva de movimientos</h2>
-      <p className="muted">CSV: fecha,tipo,banco,monto,proveedor,factura,concepto,tiene_factura,deducible,referencia,sucursal</p>
+      <p className="muted">CSV: fecha,tipo,banco,monto,proveedor,factura,concepto,categoria,tiene_factura,deducible,referencia,conciliado,sucursal</p>
       <input type="file" accept=".csv,text/csv" onChange={(event) => { const file=event.target.files?.[0]; if(file) void importBankTransactions(file); }} />
     </article>}
     <section className="grid two">
       <article className="panelCard"><h2>Saldos bancarios</h2><div className="taskList">{bankAccounts.length===0&&<p className="muted">Sin cuentas bancarias.</p>}{bankAccounts.map((b)=><div className="taskRow" key={b.id}><span>{b.bank}<small>{b.accountName} · termina {b.lastFour} · {b.branch}</small></span><strong>${balanceFor(b.id).toLocaleString("es-MX")}</strong></div>)}</div></article>
-      <article className="panelCard"><h2>Estado de cuenta</h2><div className="taskList">{bankTransactions.length===0&&<p className="muted">Sin movimientos bancarios.</p>}{bankTransactions.map((t)=><div className="taskRow" key={t.id}><span>{t.type} · {t.counterparty}<small>{t.date} · {bankAccounts.find((b)=>b.id===t.bankAccountId)?.bank || "Banco"} · {t.invoice||"Sin factura"} · {t.deductible?"Deducible":"No deducible"}</small></span><strong className={t.type==="Deposito"?"ok":""}>{t.type==="Deposito"?"+":"-"}${t.amount.toLocaleString("es-MX")}</strong></div>)}</div></article>
+      <article className="panelCard"><div className="sectionHead"><div><h2>Estado de cuenta</h2><span>Con conciliación bancaria</span></div><button type="button" className="ghost compact" onClick={exportStatement}>Exportar CSV</button></div><div className="statementFilters"><select value={statementAccount} onChange={(event)=>setStatementAccount(event.target.value)}><option>Todas</option>{bankAccounts.map((bank)=><option key={bank.id} value={bank.id}>{bank.bank} · {bank.lastFour}</option>)}</select><select value={statementStatus} onChange={(event)=>setStatementStatus(event.target.value)}><option>Todos</option><option>Conciliados</option><option>Pendientes</option></select></div><div className="taskList">{visibleTransactions.length===0&&<p className="muted">Sin movimientos con estos filtros.</p>}{visibleTransactions.map((t)=><div className="taskRow reconciliationRow" key={t.id}><span>{t.type} · {t.counterparty}<small>{t.date} · {bankAccounts.find((b)=>b.id===t.bankAccountId)?.bank || "Banco"} · {t.category||"Sin clasificar"} · {t.invoice||"Sin factura"} · {t.deductible?"Deducible":"No deducible"}</small></span><span><strong className={t.type==="Deposito"?"ok":""}>{t.type==="Deposito"?"+":"-"}${t.amount.toLocaleString("es-MX")}</strong>{canManage&&<button type="button" className={`ghost compact ${t.reconciled?"":"danger"}`} onClick={()=>toggleBankReconciliation(t.id)}>{t.reconciled?"Conciliado":"Conciliar"}</button>}</span></div>)}</div></article>
     </section>
   </section>;
 }
