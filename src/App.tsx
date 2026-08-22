@@ -126,6 +126,13 @@ type MonthlyBudget = {
   branch: string; ownerId: string; createdAt: string;
 };
 
+type KpiRecord = {
+  id: string; date: string; month: string; name: string; area: string; role: Role | "TODOS";
+  employeeId?: string; branch: string; target: number; actual: number; unit: string;
+  direction: "Mayor es mejor" | "Menor es mejor"; frequency: "Diario" | "Semanal" | "Mensual";
+  ownerId: string; notes: string; createdAt: string;
+};
+
 type CashSession = {
   id: string;
   branch: string;
@@ -472,6 +479,7 @@ function App() {
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => load("xoxo.bankAccounts", []));
   const [bankTransactions, setBankTransactions] = useState<BankTransaction[]>(() => load("xoxo.bankTransactions", []));
   const [monthlyBudgets, setMonthlyBudgets] = useState<MonthlyBudget[]>(() => load("xoxo.monthlyBudgets", []));
+  const [kpiRecords, setKpiRecords] = useState<KpiRecord[]>(() => load("xoxo.kpiRecords", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -528,6 +536,7 @@ function App() {
         cloudBankAccounts,
         cloudBankTransactions,
         cloudMonthlyBudgets,
+        cloudKpiRecords,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -548,6 +557,7 @@ function App() {
         cloudLoad("xoxo.bankAccounts", bankAccounts),
         cloudLoad("xoxo.bankTransactions", bankTransactions),
         cloudLoad("xoxo.monthlyBudgets", monthlyBudgets),
+        cloudLoad("xoxo.kpiRecords", kpiRecords),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -568,6 +578,7 @@ function App() {
       setBankAccounts(cloudBankAccounts);
       setBankTransactions(cloudBankTransactions);
       setMonthlyBudgets(cloudMonthlyBudgets);
+      setKpiRecords(cloudKpiRecords);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -931,6 +942,21 @@ function App() {
     setMonthlyBudgets(next); save("xoxo.monthlyBudgets", next); event.currentTarget.reset();
   };
 
+  const saveKpiRecord = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const month = String(form.get("month")); const name = String(form.get("name")); const employeeId = String(form.get("employeeId")) || undefined; const branch = String(form.get("branch") || user.branch);
+    const existing = kpiRecords.find((item) => item.month === month && item.name === name && item.employeeId === employeeId && item.branch === branch);
+    const record: KpiRecord = {
+      id: existing?.id || crypto.randomUUID(), date: `${month}-01`, month, name, area: String(form.get("area")),
+      role: String(form.get("role")) as KpiRecord["role"], employeeId, branch,
+      target: Number(form.get("target")), actual: Number(form.get("actual")), unit: String(form.get("unit")),
+      direction: String(form.get("direction")) as KpiRecord["direction"], frequency: String(form.get("frequency")) as KpiRecord["frequency"],
+      ownerId: user.id, notes: String(form.get("notes")), createdAt: existing?.createdAt || new Date().toISOString(),
+    };
+    const next = existing ? kpiRecords.map((item) => item.id === existing.id ? record : item) : [record, ...kpiRecords];
+    setKpiRecords(next); save("xoxo.kpiRecords", next); event.currentTarget.reset();
+  };
+
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1163,6 +1189,9 @@ function App() {
           <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => setView("tableroFinanciero")}>
             <WalletCards size={18} /> Tablero financiero
           </button>
+          <button className={view === "kpis" ? "active" : ""} onClick={() => setView("kpis")}>
+            <BarChart3 size={18} /> KPIs
+          </button>
           <button className={view === "asistencia" ? "active" : ""} onClick={() => setView("asistencia")}>
             <Clock size={18} /> Registro diario
           </button>
@@ -1330,6 +1359,7 @@ function App() {
             addMonthlyBudget={addMonthlyBudget}
           />
         )}
+        {view === "kpis" && <KpiDashboard user={user} collaborators={collaborators} records={kpiRecords} saveRecord={saveKpiRecord} />}
         {(view === "finanzas" || view === "bancos") && (
           <FinanceView
             user={user} suppliers={suppliers} payables={payables}
@@ -1400,6 +1430,7 @@ function titleFor(view: string) {
     {
       panel: "Panel de control",
       tableroFinanciero: "Tablero financiero gerencial",
+      kpis: "Indicadores por puesto y sucursal",
       asistencia: "Registro diario",
       equipo: "Colaboradores y directorio",
       organigrama: "Organigrama",
@@ -3485,6 +3516,26 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function KpiDashboard({ user, collaborators, records, saveRecord }: {
+  user: Employee; collaborators: Employee[]; records: KpiRecord[];
+  saveRecord: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const currentMonth = todayKey().slice(0,7);
+  const [month, setMonth] = useState(currentMonth); const [branch, setBranch] = useState("Todas"); const [role, setRole] = useState("TODOS");
+  const visible = records.filter((item)=>item.month===month&&(branch==="Todas"||item.branch===branch)&&(role==="TODOS"||item.role===role));
+  const compliance = (item: KpiRecord) => item.target <= 0 ? 0 : Math.max(0, Math.min(200, item.direction==="Mayor es mejor" ? item.actual/item.target*100 : item.actual<=0 ? 200 : item.target/item.actual*100));
+  const average = visible.length ? visible.reduce((sum,item)=>sum+compliance(item),0)/visible.length : 0;
+  const green = visible.filter((item)=>compliance(item)>=100).length; const yellow = visible.filter((item)=>compliance(item)>=85&&compliance(item)<100).length; const red = visible.filter((item)=>compliance(item)<85).length;
+  const canManage = canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);
+  const suggestions = ["Ventas","Margen bruto","Ticket promedio","Exactitud de inventario","Diferencias de inventario","Productos agotados","Rotación de inventario","Gastos sobre ventas","Cotizaciones convertidas","Clientes nuevos","Asistencia","Tareas cumplidas","SLA cumplido","Garantías resueltas","Cuentas vencidas","Conciliación bancaria"];
+  return <section className="stack">
+    <article className="panelCard"><div className="sectionHead"><div><h2>Tablero de cumplimiento</h2><span>Meta contra resultado real por responsable.</span></div></div><div className="reportFilters"><label>Mes<input type="month" value={month} onChange={(event)=>setMonth(event.target.value)}/></label><label>Sucursal<select value={branch} onChange={(event)=>setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Puesto<select value={role} onChange={(event)=>setRole(event.target.value)}><option value="TODOS">Todos</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label></div></article>
+    <div className="grid"><Metric label="Cumplimiento promedio" value={`${average.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
+    {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><div className="kpiFormGrid"><label>Mes<input name="month" type="month" defaultValue={currentMonth} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" defaultValue="0" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
+    <article className="panelCard"><div className="sectionHead"><div><h2>Matriz de KPIs</h2><span>{month} · {branch} · {role==="TODOS"?"Todos los puestos":roleLabel(role as Role)}</span></div><strong>{visible.length} indicadores</strong></div><div className="operationTable kpiTable"><div className="operationRow head"><span>Indicador</span><span>Responsable</span><span>Meta</span><span>Real</span><span>Cumplimiento</span><span>Semáforo</span></div>{visible.map((item)=>{const percent=compliance(item);return <div className="operationRow" key={item.id}><span><strong>{item.name}</strong><small>{item.area} · {item.frequency}</small></span><span>{item.employeeId?collaborators.find((employee)=>employee.id===item.employeeId)?.name||item.employeeId:item.role==="TODOS"?item.branch:roleLabel(item.role)}</span><span>{item.unit==="$"?"$":""}{item.target.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><span>{item.unit==="$"?"$":""}{item.actual.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><strong>{percent.toFixed(0)}%</strong><span className={`statusPill ${percent>=100?"success":percent>=85?"warning":"danger"}`}>{percent>=100?"Correcto":percent>=85?"Atención":"Intervención"}</span></div>})}{visible.length===0&&<p className="muted">No hay indicadores capturados para estos filtros.</p>}</div></article>
+  </section>;
 }
 
 function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTransactions, monthlyBudgets, addMonthlyBudget }: {
