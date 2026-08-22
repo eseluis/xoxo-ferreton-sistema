@@ -55,6 +55,8 @@ const moduleTables: Record<string, string> = {
   "xoxo.cashCuts": "cash_cut_records",
   "xoxo.suppliers": "supplier_records",
   "xoxo.payables": "payable_records",
+  "xoxo.bankAccounts": "bank_account_records",
+  "xoxo.bankTransactions": "bank_transaction_records",
   "xoxo.warranties": "warranty_records",
   "xoxo.dailyTasks": "daily_task_records",
   "xoxo.processInstances": "process_instance_records",

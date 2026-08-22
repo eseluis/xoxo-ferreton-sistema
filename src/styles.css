@@ -1027,6 +1027,22 @@ h2 {
   gap: 10px;
 }
 
+.checkRow {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.checkRow label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkRow input {
+  width: auto;
+}
+
 .cashRow.head {
   border-top: 0;
   color: var(--text-muted);

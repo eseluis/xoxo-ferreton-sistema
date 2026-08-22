@@ -91,6 +91,7 @@ type CashIncident = {
   approvedAt?: string;
   createdAt: string;
   payableId?: string;
+  bankAccountId?: string;
 };
 
 type Supplier = {
@@ -104,6 +105,19 @@ type Payable = {
   issueDate: string; dueDate: string; amount: number; paidAmount: number;
   status: "Pendiente" | "Pago pendiente" | "Parcial" | "Pagada" | "Vencida";
   ownerId: string; notes: string; createdAt: string;
+  hasInvoice: boolean; deductible: boolean; creditDays: number;
+};
+
+type BankAccount = {
+  id: string; bank: string; accountName: string; lastFour: string; openingBalance: number;
+  branch: string; status: "Activa" | "Inactiva"; createdById: string; createdAt: string;
+};
+
+type BankTransaction = {
+  id: string; date: string; type: "Deposito" | "Pago a proveedor" | "Gasto operativo" | "Transferencia";
+  bankAccountId: string; destinationBankAccountId?: string; amount: number; supplierId?: string;
+  payableId?: string; invoice: string; concept: string; hasInvoice: boolean; deductible: boolean;
+  counterparty: string; reference: string; branch: string; ownerId: string; createdAt: string;
 };
 
 type CashSession = {
@@ -449,6 +463,8 @@ function App() {
   const [cashCuts, setCashCuts] = useState<CashCut[]>(() => load("xoxo.cashCuts", []));
   const [suppliers, setSuppliers] = useState<Supplier[]>(() => load("xoxo.suppliers", []));
   const [payables, setPayables] = useState<Payable[]>(() => load("xoxo.payables", []));
+  const [bankAccounts, setBankAccounts] = useState<BankAccount[]>(() => load("xoxo.bankAccounts", []));
+  const [bankTransactions, setBankTransactions] = useState<BankTransaction[]>(() => load("xoxo.bankTransactions", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -502,6 +518,8 @@ function App() {
         cloudCashCuts,
         cloudSuppliers,
         cloudPayables,
+        cloudBankAccounts,
+        cloudBankTransactions,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -519,6 +537,8 @@ function App() {
         cloudLoad("xoxo.cashCuts", cashCuts),
         cloudLoad("xoxo.suppliers", suppliers),
         cloudLoad("xoxo.payables", payables),
+        cloudLoad("xoxo.bankAccounts", bankAccounts),
+        cloudLoad("xoxo.bankTransactions", bankTransactions),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -536,6 +556,8 @@ function App() {
       setCashCuts(cloudCashCuts);
       setSuppliers(cloudSuppliers);
       setPayables(cloudPayables);
+      setBankAccounts(cloudBankAccounts);
+      setBankTransactions(cloudBankTransactions);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -758,6 +780,20 @@ function App() {
       });
       setPayables(nextPayables);
       save("xoxo.payables", nextPayables);
+      if (status === "Aprobado" && reviewed.bankAccountId) {
+        const payable = payables.find((item) => item.id === reviewed.payableId);
+        const transaction: BankTransaction = {
+          id: crypto.randomUUID(), date: reviewed.date, type: "Pago a proveedor",
+          bankAccountId: reviewed.bankAccountId, amount: reviewed.amount,
+          supplierId: payable?.supplierId, payableId: reviewed.payableId,
+          invoice: payable?.invoice || reviewed.folio, concept: payable?.concept || reviewed.purpose || "Pago a proveedor",
+          hasInvoice: payable?.hasInvoice ?? true, deductible: payable?.deductible ?? false,
+          counterparty: reviewed.recipient || "Proveedor", reference: reviewed.folio,
+          branch: reviewed.branch, ownerId: user.id, createdAt: new Date().toISOString(),
+        };
+        const nextTransactions = [...bankTransactions, transaction];
+        setBankTransactions(nextTransactions); save("xoxo.bankTransactions", nextTransactions);
+      }
     }
   };
 
@@ -776,13 +812,19 @@ function App() {
   const addPayable = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const dueDate = String(form.get("dueDate"));
+    const issueDate = String(form.get("issueDate"));
+    const creditDays = Number(form.get("creditDays"));
+    const explicitDueDate = String(form.get("dueDate"));
+    const calculatedDue = new Date(`${issueDate}T12:00:00`);
+    calculatedDue.setDate(calculatedDue.getDate() + creditDays);
+    const dueDate = explicitDueDate || calculatedDue.toISOString().slice(0, 10);
     const next: Payable[] = [{
       id: crypto.randomUUID(), supplierId: String(form.get("supplierId")), invoice: String(form.get("invoice")),
       concept: String(form.get("concept")), branch: String(form.get("branch") || user.branch),
-      issueDate: String(form.get("issueDate")), dueDate, amount: Number(form.get("amount")), paidAmount: 0,
+      issueDate, dueDate, amount: Number(form.get("amount")), paidAmount: 0,
       status: dueDate < today ? "Vencida" : "Pendiente", ownerId: user.id,
       notes: String(form.get("notes")), createdAt: new Date().toISOString(),
+      hasInvoice: form.get("hasInvoice") === "on", deductible: form.get("deductible") === "on", creditDays,
     }, ...payables];
     setPayables(next); save("xoxo.payables", next); event.currentTarget.reset();
   };
@@ -800,10 +842,61 @@ function App() {
       purpose: payable.concept, paymentMethod: String(form.get("paymentMethod")),
       note: String(form.get("note")), ownerId: user.id, date: today, folio: String(form.get("folio")),
       status: "Pendiente", createdAt: new Date().toISOString(), payableId,
+      bankAccountId: String(form.get("bankAccountId")),
     };
     const nextCash = [...cashIncidents, incident]; setCashIncidents(nextCash); save("xoxo.cash", nextCash);
     const nextPayables: Payable[] = payables.map((item) => item.id === payableId ? { ...item, status: "Pago pendiente" } : item);
     setPayables(nextPayables); save("xoxo.payables", nextPayables); event.currentTarget.reset();
+  };
+
+  const addBankAccount = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const next: BankAccount[] = [...bankAccounts, {
+      id: crypto.randomUUID(), bank: String(form.get("bank")), accountName: String(form.get("accountName")),
+      lastFour: String(form.get("lastFour")), openingBalance: Number(form.get("openingBalance")),
+      branch: String(form.get("branch") || user.branch), status: "Activa", createdById: user.id, createdAt: new Date().toISOString(),
+    }];
+    setBankAccounts(next); save("xoxo.bankAccounts", next); event.currentTarget.reset();
+  };
+
+  const addBankTransaction = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    const next: BankTransaction[] = [{
+      id: crypto.randomUUID(), date: String(form.get("date")), type: String(form.get("type")) as BankTransaction["type"],
+      bankAccountId: String(form.get("bankAccountId")), destinationBankAccountId: String(form.get("destinationBankAccountId")) || undefined,
+      amount: Number(form.get("amount")), supplierId: String(form.get("supplierId")) || undefined,
+      invoice: String(form.get("invoice")), concept: String(form.get("concept")),
+      hasInvoice: form.get("hasInvoice") === "on", deductible: form.get("deductible") === "on",
+      counterparty: String(form.get("counterparty")), reference: String(form.get("reference")),
+      branch: String(form.get("branch") || user.branch), ownerId: user.id, createdAt: new Date().toISOString(),
+    }, ...bankTransactions];
+    setBankTransactions(next); save("xoxo.bankTransactions", next); event.currentTarget.reset();
+  };
+
+  const importBankTransactions = async (file: File) => {
+    const text = await file.text();
+    const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter(Boolean);
+    if (lines.length < 2) return;
+    const headers = lines[0].split(",").map((value) => value.trim().toLowerCase());
+    const valueAt = (values: string[], name: string) => values[headers.indexOf(name)]?.trim() || "";
+    const imported: BankTransaction[] = lines.slice(1).map((line) => {
+      const values = line.split(",").map((value) => value.replace(/^"|"$/g, ""));
+      const bankName = valueAt(values, "banco");
+      const account = bankAccounts.find((item) => `${item.bank} ${item.lastFour}`.toLowerCase().includes(bankName.toLowerCase()));
+      return {
+        id: crypto.randomUUID(), date: valueAt(values, "fecha"),
+        type: (valueAt(values, "tipo") || "Gasto operativo") as BankTransaction["type"],
+        bankAccountId: account?.id || "sin-cuenta", amount: Number(valueAt(values, "monto")),
+        supplierId: suppliers.find((item) => item.name.toLowerCase() === valueAt(values, "proveedor").toLowerCase())?.id,
+        invoice: valueAt(values, "factura"), concept: valueAt(values, "concepto"),
+        hasInvoice: ["si","sí","true","1"].includes(valueAt(values, "tiene_factura").toLowerCase()),
+        deductible: ["si","sí","true","1"].includes(valueAt(values, "deducible").toLowerCase()),
+        counterparty: valueAt(values, "proveedor") || valueAt(values, "contraparte"),
+        reference: valueAt(values, "referencia"), branch: valueAt(values, "sucursal") || user.branch,
+        ownerId: user.id, createdAt: new Date().toISOString(),
+      };
+    }).filter((item) => item.date && item.amount > 0 && item.bankAccountId !== "sin-cuenta");
+    const next = [...imported, ...bankTransactions]; setBankTransactions(next); save("xoxo.bankTransactions", next);
   };
 
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1189,6 +1282,9 @@ function App() {
           <FinanceView
             user={user} suppliers={suppliers} payables={payables}
             addSupplier={addSupplier} addPayable={addPayable} requestPayablePayment={requestPayablePayment}
+            bankAccounts={bankAccounts} bankTransactions={bankTransactions}
+            addBankAccount={addBankAccount} addBankTransaction={addBankTransaction}
+            importBankTransactions={importBankTransactions}
           />
         )}
         {view === "garantias" && <WarrantyView user={user} addWarranty={addWarranty} warranties={warranties} />}
@@ -3332,13 +3428,18 @@ function roleLabel(role: Role) {
   )[role];
 }
 
-function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment }: {
+function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment, bankAccounts, bankTransactions, addBankAccount, addBankTransaction, importBankTransactions }: {
   user: Employee;
   suppliers: Supplier[];
   payables: Payable[];
   addSupplier: (event: React.FormEvent<HTMLFormElement>) => void;
   addPayable: (event: React.FormEvent<HTMLFormElement>) => void;
   requestPayablePayment: (event: React.FormEvent<HTMLFormElement>) => void;
+  bankAccounts: BankAccount[];
+  bankTransactions: BankTransaction[];
+  addBankAccount: (event: React.FormEvent<HTMLFormElement>) => void;
+  addBankTransaction: (event: React.FormEvent<HTMLFormElement>) => void;
+  importBankTransactions: (file: File) => Promise<void>;
 }) {
   const canManage = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
   const today = todayKey();
@@ -3349,12 +3450,31 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
     const days = (new Date(item.dueDate).getTime() - new Date(today).getTime()) / 86400000;
     return days >= 0 && days <= 7;
   });
+  const totalDeposits = bankTransactions.filter((item) => item.type === "Deposito").reduce((sum, item) => sum + item.amount, 0);
+  const operatingExpenses = bankTransactions.filter((item) => item.type === "Gasto operativo").reduce((sum, item) => sum + item.amount, 0);
+  const deductibleExpenses = bankTransactions.filter((item) => item.deductible).reduce((sum, item) => sum + item.amount, 0);
+  const withoutInvoice = bankTransactions.filter((item) => !item.hasInvoice && ["Gasto operativo","Pago a proveedor"].includes(item.type)).reduce((sum, item) => sum + item.amount, 0);
+  const balanceFor = (accountId: string) => {
+    const account = bankAccounts.find((item) => item.id === accountId);
+    return (account?.openingBalance || 0) + bankTransactions.reduce((sum, item) => {
+      if (item.type === "Deposito" && item.bankAccountId === accountId) return sum + item.amount;
+      if (item.type === "Transferencia" && item.destinationBankAccountId === accountId) return sum + item.amount;
+      if (item.bankAccountId === accountId && item.type !== "Deposito") return sum - item.amount;
+      return sum;
+    }, 0);
+  };
   return <section className="stack">
     <div className="grid">
       <Metric label="Saldo por pagar" value={`$${outstanding.toLocaleString("es-MX")}`} icon={<WalletCards />} />
       <Metric label="Facturas abiertas" value={String(open.length)} icon={<FileText />} />
       <Metric label="Vencidas" value={String(overdue.length)} icon={<AlertTriangle />} />
       <Metric label="Vencen en 7 dias" value={String(dueSoon.length)} icon={<CalendarCheck />} />
+    </div>
+    <div className="grid">
+      <Metric label="Depositos registrados" value={`$${totalDeposits.toLocaleString("es-MX")}`} icon={<WalletCards />} />
+      <Metric label="Gasto operativo" value={`$${operatingExpenses.toLocaleString("es-MX")}`} icon={<BriefcaseBusiness />} />
+      <Metric label="Deducible" value={`$${deductibleExpenses.toLocaleString("es-MX")}`} icon={<FileCheck2 />} />
+      <Metric label="Sin factura" value={`$${withoutInvoice.toLocaleString("es-MX")}`} icon={<AlertTriangle />} />
     </div>
     {canManage && <section className="grid two">
       <form className="panelCard form" onSubmit={addSupplier}>
@@ -3370,7 +3490,9 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <select name="supplierId" required><option value="">Selecciona proveedor</option>{suppliers.filter((s) => s.status === "Activo").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <div className="moneyInputs"><input name="invoice" placeholder="Factura / folio" required /><input name="amount" type="number" min="0.01" step="0.01" placeholder="Importe" required /></div>
         <input name="concept" placeholder="Concepto" required />
-        <div className="moneyInputs"><label>Emision<input name="issueDate" type="date" defaultValue={today} required /></label><label>Vencimiento<input name="dueDate" type="date" required /></label></div>
+        <div className="moneyInputs"><label>Emision<input name="issueDate" type="date" defaultValue={today} required /></label><label>Dias de credito<input name="creditDays" type="number" min="0" defaultValue="30" required /></label></div>
+        <label>Vencimiento manual (opcional)<input name="dueDate" type="date" /></label>
+        <div className="checkRow"><label><input name="hasInvoice" type="checkbox" defaultChecked /> Tiene factura</label><label><input name="deductible" type="checkbox" /> Es deducible</label></div>
         <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
         <textarea name="notes" placeholder="Orden de compra, recepcion o aclaraciones" />
         <button className="primary">Registrar obligación</button>
@@ -3381,7 +3503,8 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
       <div className="financePaymentGrid">
         <select name="payableId" required><option value="">Cuenta por pagar</option>{open.filter((p) => p.status !== "Pago pendiente").map((p) => <option key={p.id} value={p.id}>{suppliers.find((s) => s.id === p.supplierId)?.name} · {p.invoice} · ${Math.max(0,p.amount-p.paidAmount).toLocaleString("es-MX")}</option>)}</select>
         <input name="amount" type="number" min="0.01" step="0.01" placeholder="Monto" required />
-        <select name="paymentMethod"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option></select>
+        <select name="paymentMethod"><option>Transferencia</option><option>Efectivo</option><option>Tarjeta</option></select>
+        <select name="bankAccountId" required><option value="">Banco de origen</option>{bankAccounts.filter((b) => b.status === "Activa").map((b) => <option key={b.id} value={b.id}>{b.bank} · {b.lastFour}</option>)}</select>
         <input name="folio" placeholder="Folio de autorización" required />
       </div>
       <textarea name="note" placeholder="Motivo y observaciones del pago" required />
@@ -3390,6 +3513,38 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
     <section className="grid two">
       <article className="panelCard"><h2>Proveedores</h2><div className="taskList">{suppliers.length === 0 && <p className="muted">Sin proveedores registrados.</p>}{suppliers.map((s) => <div className="taskRow" key={s.id}><span>{s.name}<small>{s.taxId || "Sin RFC"} · {s.paymentTermsDays} dias de credito · {s.branch}</small></span><strong>{s.status}</strong></div>)}</div></article>
       <article className="panelCard"><h2>Cuentas por pagar</h2><div className="taskList">{payables.length === 0 && <p className="muted">Sin cuentas por pagar.</p>}{payables.map((p) => <div className="taskRow" key={p.id}><span>{suppliers.find((s) => s.id === p.supplierId)?.name || "Proveedor"}<small>{p.invoice} · vence {p.dueDate} · pagado ${p.paidAmount.toLocaleString("es-MX")}</small></span><span><strong>${(p.amount-p.paidAmount).toLocaleString("es-MX")}</strong><small className={p.status === "Pagada" ? "ok" : p.dueDate < today ? "danger" : "warn"}>{p.status}</small></span></div>)}</div></article>
+    </section>
+    {canManage && <section className="grid two">
+      <form className="panelCard form" onSubmit={addBankAccount}>
+        <h2>Cuenta bancaria</h2>
+        <div className="moneyInputs"><input name="bank" placeholder="Banco" required /><input name="accountName" placeholder="Nombre de la cuenta" required /></div>
+        <div className="moneyInputs"><input name="lastFour" maxLength={4} placeholder="Ultimos 4 digitos" required /><input name="openingBalance" type="number" step="0.01" defaultValue="0" placeholder="Saldo inicial" required /></div>
+        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <button className="primary">Guardar cuenta</button>
+      </form>
+      <form className="panelCard form" onSubmit={addBankTransaction}>
+        <h2>Deposito o gasto bancario</h2>
+        <div className="moneyInputs"><label>Fecha<input name="date" type="date" defaultValue={today} required /></label><select name="type"><option>Deposito</option><option>Gasto operativo</option><option>Transferencia</option></select></div>
+        <select name="bankAccountId" required><option value="">Banco origen o receptor</option>{bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.bank} · {b.lastFour}</option>)}</select>
+        <select name="destinationBankAccountId"><option value="">Banco destino, sólo transferencias</option>{bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.bank} · {b.lastFour}</option>)}</select>
+        <div className="moneyInputs"><input name="amount" type="number" min="0.01" step="0.01" placeholder="Monto" required /><input name="reference" placeholder="Referencia bancaria" required /></div>
+        <input name="counterparty" placeholder="Depositante, beneficiario o comercio" required />
+        <input name="concept" placeholder="Concepto" required />
+        <input name="invoice" placeholder="Factura, si existe" />
+        <select name="supplierId"><option value="">Sin proveedor relacionado</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <div className="checkRow"><label><input name="hasInvoice" type="checkbox" /> Tiene factura</label><label><input name="deductible" type="checkbox" /> Es deducible</label></div>
+        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <button className="primary">Registrar movimiento</button>
+      </form>
+    </section>}
+    {canManage && <article className="panelCard form">
+      <h2>Carga masiva de movimientos</h2>
+      <p className="muted">CSV: fecha,tipo,banco,monto,proveedor,factura,concepto,tiene_factura,deducible,referencia,sucursal</p>
+      <input type="file" accept=".csv,text/csv" onChange={(event) => { const file=event.target.files?.[0]; if(file) void importBankTransactions(file); }} />
+    </article>}
+    <section className="grid two">
+      <article className="panelCard"><h2>Saldos bancarios</h2><div className="taskList">{bankAccounts.length===0&&<p className="muted">Sin cuentas bancarias.</p>}{bankAccounts.map((b)=><div className="taskRow" key={b.id}><span>{b.bank}<small>{b.accountName} · termina {b.lastFour} · {b.branch}</small></span><strong>${balanceFor(b.id).toLocaleString("es-MX")}</strong></div>)}</div></article>
+      <article className="panelCard"><h2>Estado de cuenta</h2><div className="taskList">{bankTransactions.length===0&&<p className="muted">Sin movimientos bancarios.</p>}{bankTransactions.map((t)=><div className="taskRow" key={t.id}><span>{t.type} · {t.counterparty}<small>{t.date} · {bankAccounts.find((b)=>b.id===t.bankAccountId)?.bank || "Banco"} · {t.invoice||"Sin factura"} · {t.deductible?"Deducible":"No deducible"}</small></span><strong className={t.type==="Deposito"?"ok":""}>{t.type==="Deposito"?"+":"-"}${t.amount.toLocaleString("es-MX")}</strong></div>)}</div></article>
     </section>
   </section>;
 }
