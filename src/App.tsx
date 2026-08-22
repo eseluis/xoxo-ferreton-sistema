@@ -190,9 +190,14 @@ type Warranty = {
   provider: string;
   product: string;
   reason: string;
-  status: string;
+  status: "Recibida" | "En inspección" | "Esperando proveedor" | "Solución autorizada" | "Resuelta" | "Rechazada";
   ownerId: string;
   date: string;
+  branch: string; customer: string; phone: string; ticket: string; purchaseDate: string;
+  defectType: string; eligible: "Pendiente" | "Sí" | "No"; supplierFolio: string;
+  solution: "Pendiente" | "Reposición" | "Nota de crédito" | "Reparación" | "Cambio equivalente" | "Devolución" | "Rechazo";
+  resolutionReference: string; resolutionAmount: number; replacementProduct: string; resolvedAt?: string;
+  timeline: { at: string; byId: string; action: string; note: string }[];
 };
 
 type EvidenceCapture = {
@@ -587,7 +592,14 @@ function App() {
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
       ]);
-      setCollaborators(cloudCollaborators);
+      const organizationOverrides: Record<string, Partial<Employee>> = {
+        "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
+        "008": { branch: "Matriz", shift: "A", supervisorId: "003" }, "009": { branch: "Matriz", shift: "A", supervisorId: "003" },
+        "010": { branch: "Matriz", shift: "A", supervisorId: "003" }, "007": { branch: "Matriz", shift: "B", supervisorId: "003" },
+        "011": { branch: "Matriz", shift: "B", supervisorId: "003" }, "012": { branch: "Matriz", shift: "B", supervisorId: "003" },
+      };
+      const normalizedCollaborators = cloudCollaborators.map((employee) => ({ ...employee, ...(organizationOverrides[employee.id] || {}) }));
+      setCollaborators(normalizedCollaborators);
       setAttendance(cloudAttendance);
       setEvaluations(cloudEvaluations);
       setCashIncidents(cloudCashIncidents);
@@ -607,8 +619,11 @@ function App() {
       setInternalRequests(cloudInternalRequests);
       setActivityRuns(cloudActivityRuns);
       setShiftConfigs(cloudShiftConfigs);
-      setActivitySchedules(cloudActivitySchedules);
+      const mergedActivitySchedules = [...cloudActivitySchedules, ...defaultActivitySchedules.filter((preset) => !cloudActivitySchedules.some((item) => item.id === preset.id))];
+      setActivitySchedules(mergedActivitySchedules);
       setCleaningRole(cloudCleaningRole);
+      if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
+      if (mergedActivitySchedules.length !== cloudActivitySchedules.length) save("xoxo.activitySchedules", mergedActivitySchedules);
     };
     void hydrate();
   }, [isAuthenticated]);
@@ -1009,21 +1024,25 @@ function App() {
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const next = [
-      ...warranties,
-      {
+    const created: Warranty = {
         id: crypto.randomUUID(),
         provider: String(form.get("provider")),
         product: String(form.get("product")),
         reason: String(form.get("reason")),
-        status: "Abierta",
+        status: "Recibida",
         ownerId: user.id,
         date: today,
-      },
-    ];
+        branch: String(form.get("branch")||user.branch), customer:String(form.get("customer")),phone:String(form.get("phone")),ticket:String(form.get("ticket")),purchaseDate:String(form.get("purchaseDate")),defectType:String(form.get("defectType")),eligible:"Pendiente",supplierFolio:"",solution:"Pendiente",resolutionReference:"",resolutionAmount:0,replacementProduct:"",timeline:[{at:new Date().toISOString(),byId:user.id,action:"Garantía recibida",note:String(form.get("reason"))}],
+      };
+    const next = [...warranties, created];
     setWarranties(next);
     save("xoxo.warranties", next);
     event.currentTarget.reset();
+  };
+
+  const updateWarranty = (warranty: Warranty, action: string, note: string) => {
+    const terminal=["Resuelta","Rechazada"].includes(warranty.status); const updated={...warranty,resolvedAt:terminal?warranty.resolvedAt||new Date().toISOString():undefined,timeline:[...(warranty.timeline||[]),{at:new Date().toISOString(),byId:user.id,action,note}]};
+    const next=warranties.map((item)=>item.id===updated.id?updated:item);setWarranties(next);save("xoxo.warranties",next);
   };
 
   const addInternalRequest = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1427,7 +1446,7 @@ function App() {
             toggleBankReconciliation={toggleBankReconciliation}
           />
         )}
-        {view === "garantias" && <WarrantyView user={user} addWarranty={addWarranty} warranties={warranties} />}
+        {view === "garantias" && <WarrantyView user={user} collaborators={collaborators} addWarranty={addWarranty} updateWarranty={updateWarranty} warranties={warranties} />}
         {view === "tareas" && (
           <TasksView
             user={user}
@@ -1636,7 +1655,7 @@ function Dashboard({
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
-      <Metric label="Garantias abiertas" value={warranties.filter((item) => item.status === "Abierta").length.toString()} icon={<ShieldCheck />} />
+      <Metric label="Garantias abiertas" value={warranties.filter((item) => !["Resuelta", "Rechazada"].includes(item.status)).length.toString()} icon={<ShieldCheck />} />
       <Metric label="En tiempo libre ahora" value={idleNow.toString()} icon={<Clock />} />
       <Metric label="SLA vencidos ahora" value={breachedNow.toString()} icon={<AlertTriangle />} />
 
@@ -1806,7 +1825,10 @@ function AttendanceView({
   completeActivityRun: (id: string) => void;
   setActivityEvidence: (id: string, evidence: EvidenceCapture | undefined) => void;
 }) {
-  const userActivities = activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role));
+  const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id));
+  const userActivities = targetedActivities.length
+    ? targetedActivities
+    : activitySchedules.filter((activity) => !activity.employeeIds?.length && activity.ownerRoles.includes(user.role) && (!activity.branch || activity.branch === user.branch));
   const today = todayKey();
   const runFor = (itemType: ActivityRun["itemType"], itemId: string) =>
     activityRuns.find((run) => run.id === `${user.id}-${today}-${itemType}-${itemId}`);
@@ -1881,8 +1903,8 @@ function AttendanceView({
         </div>
         <div className="taskList liveList">
           {userActivities.map((activity) => (
+            <div className="scheduledMission" key={activity.id}>
             <LiveActivityCard
-              key={activity.id}
               title={activity.name}
               scheduledStart={activity.start}
               scheduledEnd={activity.end}
@@ -1904,6 +1926,8 @@ function AttendanceView({
               onCaptureEvidence={(evidence) => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, evidence)}
               onClearEvidence={() => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, undefined)}
             />
+            {activity.instructions && <p className="muted"><strong>Instrucciones:</strong> {activity.instructions}</p>}
+            </div>
           ))}
         </div>
       </article>
@@ -3396,23 +3420,34 @@ function TasksView({
   setDailyTasks: (value: DailyTask[]) => void;
 }) {
   const today = todayKey();
+  const [taskError, setTaskError] = useState("");
   const assignable = collaborators.filter((employee) => canAssign(user, employee));
   const addTask = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    const employeeId=String(form.get("employeeId"));const start=String(form.get("start"));const end=String(form.get("end"));const notes=String(form.get("notes")).trim();
+    if(timeToMinutes(end)<=timeToMinutes(start)){setTaskError("La hora final debe ser posterior a la hora inicial.");return;}
+    if(notes.length<20){setTaskError("La misión necesita instrucciones completas de al menos 20 caracteres.");return;}
+    const overlap=dailyTasks.find((task)=>task.employeeId===employeeId&&task.date===today&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
+    if(overlap){setTaskError(`Horario ocupado por: ${overlap.title} (${overlap.start}-${overlap.end}).`);return;}
+    const targetEmployee=collaborators.find((employee)=>employee.id===employeeId);
+    const targetedSchedule=defaultActivitySchedules.filter((activity)=>activity.employeeIds?.includes(employeeId));
+    const fixedConflict=targetEmployee&&(targetedSchedule.length?targetedSchedule:defaultActivitySchedules.filter((activity)=>!activity.employeeIds?.length&&activity.ownerRoles.includes(targetEmployee.role))).find((activity)=>activity.area!=="Operación"&&timeToMinutes(start)<timeToMinutes(activity.end)&&timeToMinutes(end)>timeToMinutes(activity.start));
+    if(fixedConflict){setTaskError(`Ese horario choca con una actividad fija: ${fixedConflict.name} (${fixedConflict.start}-${fixedConflict.end}).`);return;}
+    setTaskError("");
     const next: DailyTask[] = [
       ...dailyTasks,
       {
         id: crypto.randomUUID(),
         title: String(form.get("title")),
-        employeeId: String(form.get("employeeId")),
+        employeeId,
         assignedById: user.id,
         date: today,
-        start: String(form.get("start")),
-        end: String(form.get("end")),
+        start,
+        end,
         status: "Pendiente",
         priority: String(form.get("priority")) as DailyTask["priority"],
-        notes: String(form.get("notes")),
+        notes,
         currentStep: "Asignada",
         employeeComment: "",
         supervisorComment: "",
@@ -3475,11 +3510,11 @@ function TasksView({
         <div className="moneyInputs">
           <label>
             Inicio
-            <input name="start" defaultValue="10:00" required />
+            <input name="start" type="time" defaultValue="10:00" required />
           </label>
           <label>
             Fin
-            <input name="end" defaultValue="11:00" required />
+            <input name="end" type="time" defaultValue="11:00" required />
           </label>
         </div>
         <select name="priority">
@@ -3487,7 +3522,8 @@ function TasksView({
           <option>Alta</option>
           <option>Baja</option>
         </select>
-        <textarea name="notes" placeholder="Indicaciones, evidencia requerida o comentario" />
+        <textarea name="notes" placeholder="Misión bien redactada: objetivo, pasos, resultado esperado y evidencia" required />
+        {taskError&&<p className="loginError">{taskError}</p>}
         <button className="primary">Asignar</button>
       </form>
 
@@ -4590,39 +4626,49 @@ function dateKey(date: Date) {
 
 function WarrantyView({
   user,
+  collaborators,
   addWarranty,
+  updateWarranty,
   warranties,
 }: {
   user: Employee;
+  collaborators: Employee[];
   addWarranty: (event: React.FormEvent<HTMLFormElement>) => void;
+  updateWarranty: (warranty: Warranty, action: string, note: string) => void;
   warranties: Warranty[];
 }) {
+  const canResolve=canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role); const visible=canViewAll(user)?warranties:warranties.filter((item)=>item.branch===user.branch||item.ownerId===user.id);
   return (
-    <section className="grid two">
+    <section className="stack">
+      <div className="grid"><Metric label="Casos abiertos" value={String(visible.filter((item)=>!["Resuelta","Rechazada"].includes(item.status)).length)} icon={<ShieldCheck/>}/><Metric label="Esperando proveedor" value={String(visible.filter((item)=>item.status==="Esperando proveedor").length)} icon={<Clock/>}/><Metric label="Soluciones autorizadas" value={String(visible.filter((item)=>item.status==="Solución autorizada").length)} icon={<CheckCircle2/>}/><Metric label="Casos resueltos" value={String(visible.filter((item)=>item.status==="Resuelta").length)} icon={<FileCheck2/>}/></div>
+      <section className="grid two">
       <form className="panelCard form" onSubmit={addWarranty}>
-        <h2>Control de garantia</h2>
+        <h2>Recibir garantía</h2>
+        <div className="moneyInputs"><input name="customer" placeholder="Cliente" required/><input name="phone" placeholder="Teléfono" required/></div>
+        <div className="moneyInputs"><input name="ticket" placeholder="Ticket de compra" required/><label>Fecha de compra<input name="purchaseDate" type="date" required/></label></div>
         <input name="provider" placeholder="Proveedor" required />
         <input name="product" placeholder="Producto / codigo" required />
-        <textarea name="reason" placeholder="Que salio mal y que se debe devolver" required />
+        <select name="defectType" required><option value="">Tipo de defecto</option><option>Defecto de fábrica</option><option>Pieza faltante</option><option>Pieza rota o fragmentada</option><option>Deformación</option><option>Fragilidad anormal</option><option>Posible mal uso</option><option>Instalación incorrecta</option><option>Desgaste natural</option><option>Otro</option></select>
+        <textarea name="reason" placeholder="Descripción completa del problema y condición física" required />
+        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
         <button className="primary">Abrir garantia</button>
-        <p className="muted">Este modulo queda separado para Celina y gerencia.</p>
+        <p className="muted">Jefe de área recibe e inspecciona. Gerencia autoriza la solución. Caja no autoriza garantías.</p>
       </form>
       <article className="panelCard">
-        <h2>Garantias abiertas</h2>
+        <h2>Ruta obligatoria</h2>
         <div className="taskList">
-          {warranties.map((item) => (
-            <div className="taskRow" key={item.id}>
-              <span>
-                {item.product} · {item.provider}
-              </span>
-              <strong>{item.status}</strong>
-            </div>
-          ))}
+          {["1. Recibir sin discutir ni culpar","2. Inspeccionar y clasificar el defecto","3. Registrar antes de cualquier acción","4. Notificar internamente a gerencia","5. Dar respuesta inicial al cliente","6. Notificar al proveedor con evidencia","7. Resguardar y etiquetar el producto","8. Cerrar sólo con reposición, nota de crédito, reparación, cambio, devolución o rechazo documentado"].map((item)=><div className="taskRow" key={item}><span>{item}</span></div>)}
         </div>
-        <p className="muted">Registrado por: {user.name}</p>
       </article>
+      </section>
+      <div className="stack">{visible.map((item)=><WarrantyEditor key={item.id} warranty={item} collaborators={collaborators} canResolve={canResolve} canWork={canResolve||item.ownerId===user.id||user.id==="010"} onSave={updateWarranty}/>)}{visible.length===0&&<article className="panelCard"><p className="muted">Sin garantías registradas.</p></article>}</div>
     </section>
   );
+}
+
+function WarrantyEditor({warranty,collaborators,canResolve,canWork,onSave}:{warranty:Warranty;collaborators:Employee[];canResolve:boolean;canWork:boolean;onSave:(warranty:Warranty,action:string,note:string)=>void}) {
+  const [draft,setDraft]=useState(warranty);const [note,setNote]=useState("");useEffect(()=>setDraft(warranty),[warranty]);const terminal=["Resuelta","Rechazada"].includes(draft.status);
+  return <article className="panelCard"><div className="sectionHead"><div><h2>{draft.product} · {draft.customer}</h2><span>{draft.ticket} · {draft.provider} · {draft.branch} · abierto por {collaborators.find((person)=>person.id===draft.ownerId)?.name||draft.ownerId}</span></div><span className={`statusPill ${terminal?"ok":draft.status==="Esperando proveedor"?"warn":"muted"}`}>{draft.status}</span></div><div className="warrantyGrid"><label>Procede<select disabled={!canResolve||terminal} value={draft.eligible} onChange={(event)=>setDraft({...draft,eligible:event.target.value as Warranty["eligible"]})}><option>Pendiente</option><option>Sí</option><option>No</option></select></label><label>Estado<select disabled={!canWork||terminal} value={draft.status} onChange={(event)=>setDraft({...draft,status:event.target.value as Warranty["status"]})}><option>Recibida</option><option>En inspección</option><option>Esperando proveedor</option><option>Solución autorizada</option>{canResolve&&<option>Resuelta</option>}{canResolve&&<option>Rechazada</option>}</select></label><label>Folio proveedor<input disabled={!canWork||terminal} value={draft.supplierFolio} onChange={(event)=>setDraft({...draft,supplierFolio:event.target.value})}/></label><label>Solución<select disabled={!canResolve||terminal} value={draft.solution} onChange={(event)=>setDraft({...draft,solution:event.target.value as Warranty["solution"]})}><option>Pendiente</option><option>Reposición</option><option>Nota de crédito</option><option>Reparación</option><option>Cambio equivalente</option><option>Devolución</option><option>Rechazo</option></select></label><label>Referencia de solución<input disabled={!canResolve||terminal} value={draft.resolutionReference} onChange={(event)=>setDraft({...draft,resolutionReference:event.target.value})} placeholder="Folio nota/crédito/reposición"/></label><label>Monto<input disabled={!canResolve||terminal} type="number" min="0" step="0.01" value={draft.resolutionAmount} onChange={(event)=>setDraft({...draft,resolutionAmount:Number(event.target.value)})}/></label><label>Producto de reemplazo<input disabled={!canResolve||terminal} value={draft.replacementProduct} onChange={(event)=>setDraft({...draft,replacementProduct:event.target.value})}/></label></div><p><strong>Defecto:</strong> {draft.defectType} · {draft.reason}</p>{canWork&&!terminal&&<div className="warrantyAction"><textarea value={note} onChange={(event)=>setNote(event.target.value)} placeholder="Seguimiento, respuesta del proveedor o explicación de la solución"/><button className="primary compact" disabled={!note.trim()||(["Resuelta","Rechazada"].includes(draft.status)&&draft.solution==="Pendiente")} onClick={()=>{onSave(draft,"Actualización de garantía",note);setNote("");}}>Guardar seguimiento</button></div>}<div className="taskList warrantyTimeline">{(draft.timeline||[]).slice().reverse().map((event,index)=><div className="taskRow" key={`${event.at}-${index}`}><span>{event.action}<small>{new Date(event.at).toLocaleString("es-MX")} · {collaborators.find((person)=>person.id===event.byId)?.name||event.byId}</small></span><strong>{event.note}</strong></div>)}</div></article>;
 }
 
 function Metric({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) {

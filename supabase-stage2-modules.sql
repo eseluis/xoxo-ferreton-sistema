@@ -9,7 +9,8 @@ $$;
 create or replace function public.can_manage_all()
 returns boolean language sql stable security definer set search_path=public as $$
   select coalesce((public.current_profile()).role in
-    ('APODERADA_LEGAL','DIRECTOR','GERENTE_GENERAL','ADMIN_GENERAL'), false)
+    ('APODERADA_LEGAL','DIRECTOR','GERENTE_GENERAL','ADMIN_GENERAL')
+    or (public.current_profile()).employee_number in ('001','002','003','005'), false)
 $$;
 
 create or replace function public.can_manage_branch(target_branch text)

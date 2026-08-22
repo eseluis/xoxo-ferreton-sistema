@@ -82,6 +82,9 @@ export type ActivitySchedule = {
   evidence: "none" | "photo" | "signature" | "ticket";
   assignedBy: string;
   editableBy: Role[];
+  employeeIds?: string[];
+  branch?: "Corporativo" | "Matriz" | "Sucursal Centro";
+  instructions?: string;
 };
 
 export type CleaningRole = {
@@ -194,7 +197,7 @@ export const defaultEmployees: Employee[] = [
     name: "Jan Leobec",
     role: "JEFE_AREA",
     roleLabel: "Jefe de area",
-    branch: "Matriz",
+    branch: "Sucursal Centro",
     area: "Plomeria",
     supervisorId: "003",
     shift: "A",
@@ -221,7 +224,7 @@ export const defaultEmployees: Employee[] = [
     branch: "Matriz",
     area: "Electricidad",
     supervisorId: "003",
-    shift: "B",
+    shift: "A",
     salaryMin: 4200,
     salaryMax: 4500,
     commissionBase: "Ventas personales del area 1% a 3%",
@@ -247,7 +250,7 @@ export const defaultEmployees: Employee[] = [
     branch: "Matriz",
     area: "Refacciones para electrodomesticos",
     supervisorId: "003",
-    shift: "B",
+    shift: "A",
     salaryMin: 4200,
     salaryMax: 4500,
     commissionBase: "Ventas personales y control de garantias",
@@ -260,7 +263,7 @@ export const defaultEmployees: Employee[] = [
     branch: "Matriz",
     area: "Herramientas",
     supervisorId: "003",
-    shift: "A",
+    shift: "B",
     salaryMin: 4200,
     salaryMax: 4500,
     commissionBase: "Ventas personales del area 1% a 3%",
@@ -771,6 +774,25 @@ export const defaultActivitySchedules: ActivitySchedule[] = [
     assignedBy: "Administrador / Gerente",
     editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"],
   },
+  { id:"matriz-celina-apertura-caja",name:"Verificar fondo, abrir caja y dejarla lista",area:"Caja",start:"08:00",end:"08:10",durationMinutes:10,ownerRoles:["JEFE_AREA"],employeeIds:["010"],branch:"Matriz",evidence:"signature",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Contar fondo, encender sistema y documentar cualquier diferencia. La atención al cliente conserva prioridad." },
+  { id:"matriz-turno1-exhibicion",name:"Limpiar mostrador, acomodar mercancía y atender clientes",area:"Exhibición",start:"08:30",end:"09:00",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["009","010"],branch:"Matriz",evidence:"photo",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Trabajar por zona pequeña y suspender la actividad para recibir de inmediato a cualquier cliente." },
+  { id:"matriz-sabina-bloque1",name:"Aseo asignado y atención prioritaria al cliente",area:"Aseo",start:"08:30",end:"09:00",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["008"],branch:"Matriz",evidence:"photo",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Cumplir el rol de aseo sin dejar de saludar, orientar o canalizar clientes." },
+  { id:"matriz-turno1-bloque2",name:"Aseo Celina, limpieza Sabina y orden de isla de tornillería Julio",area:"Aseo y exhibición",start:"09:00",end:"09:30",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["008","009","010"],branch:"Matriz",evidence:"photo",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Celina realiza aseo; Sabina limpia su área; Julio ordena y acomoda la isla de tornillería." },
+  { id:"matriz-anubis-caja",name:"Recibir y verificar caja del turno",area:"Caja",start:"09:30",end:"10:00",durationMinutes:30,ownerRoles:["CAJERO"],employeeIds:["007"],branch:"Matriz",evidence:"signature",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Confirmar fondo, sistema, pendientes y condiciones de entrega de caja con Celina." },
+  { id:"matriz-turno2-aseo",name:"Aseo de turno 2 por zona pequeña",area:"Aseo",start:"09:30",end:"10:00",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["011","012"],branch:"Matriz",evidence:"photo",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Ruben e Itzai realizan el aseo asignado. Detenerse y atender al cliente cuando ingrese." },
+  { id:"matriz-ruben-area",name:"Orden, limpieza y surtido del área de herramientas",area:"Herramientas",start:"10:00",end:"10:30",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["011"],branch:"Matriz",evidence:"photo",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Trabajar una zona pequeña, llenar faltantes visibles y conservar segura la exhibición." },
+  { id:"matriz-aprendizaje-productos",name:"Investigar 5 productos y documentar uso, datos técnicos y estrategia de venta",area:"Capacitación",start:"10:30",end:"11:00",durationMinutes:30,ownerRoles:["JEFE_AREA"],employeeIds:["008","009","010","011","012"],branch:"Matriz",evidence:"photo",assignedBy:"Gerente de tienda",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Buscar uno o dos videos por producto y redactar una ficha breve. La atención al cliente siempre interrumpe esta actividad." },
+  { id:"matriz-operacion-programada",name:"Actividades programadas: mercancía, exhibición, inventario o tarea asignada",area:"Operación",start:"11:00",end:"16:30",durationMinutes:330,ownerRoles:["JEFE_AREA"],employeeIds:["008","009","010","011","012"],branch:"Matriz",evidence:"photo",assignedBy:"Gerente / Jefe de área",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Ejecutar una misión a la vez, con instrucciones completas y sin traslapes. Atender clientes de inmediato." },
+  { id:"matriz-turno1-cierre",name:"Concluir tareas, ordenar área y cerrar el día en sistema",area:"Cierre",start:"16:30",end:"17:30",durationMinutes:60,ownerRoles:["JEFE_AREA"],employeeIds:["008","009","010"],branch:"Matriz",evidence:"signature",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Cerrar actividades pendientes, dejar orden, registrar avance y reportar incidencias antes de salida." },
+  { id:"matriz-turno2-cierre",name:"Ordenar área, concluir actividades y cierre operativo",area:"Cierre",start:"18:00",end:"19:00",durationMinutes:60,ownerRoles:["JEFE_AREA"],employeeIds:["011","012"],branch:"Matriz",evidence:"signature",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Dejar área, exhibición y pendientes documentados para el día siguiente." },
+  { id:"matriz-anubis-facturas-corte",name:"Facturas del día, retiros uno a uno y corte de caja",area:"Caja",start:"18:00",end:"19:20",durationMinutes:80,ownerRoles:["CAJERO"],employeeIds:["007"],branch:"Matriz",evidence:"signature",assignedBy:"Gerencia",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Capturar ventas ERP, efectivo, tarjeta, transferencia, MSI, retiros con destino y diferencias hasta cuadrar." },
+  { id:"centro-traslado-apertura",name:"Traslado, encendido de equipos, luces y apertura segura",area:"Apertura Centro",start:"08:00",end:"09:00",durationMinutes:60,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Salir 8:15, llegar 8:45, encender equipos y luces, verificar seguridad y abrir al público a más tardar 8:55." },
+  { id:"centro-limpieza",name:"Limpieza completa de tienda y baños por responsabilidad asignada",area:"Aseo Centro",start:"09:00",end:"10:00",durationMinutes:60,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Daniel barre, limpia mostradores y trapos; Jan trapea, ordena basura; cada uno atiende un baño. Ambos vigilan la entrada." },
+  { id:"centro-inventario-zonas",name:"Limpieza, reorganización e inventario por zonas",area:"Inventario Centro",start:"10:00",end:"12:00",durationMinutes:120,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"10-11 Daniel bombas/mostrador 1; Jan herramientas eléctricas y seguridad. 11-12 herramienta de taller. Registrar diferencias." },
+  { id:"centro-productos-redes",name:"Investigar 3 productos y redactar estrategia para redes o ecommerce",area:"Capacitación Centro",start:"12:00",end:"13:00",durationMinutes:60,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Entregar reporte escrito con aplicación, solución, argumentos de venta y propuesta de contenido." },
+  { id:"centro-reparaciones",name:"Reparaciones agendadas",area:"Taller Centro",start:"13:00",end:"15:00",durationMinutes:120,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Gerente",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],instructions:"Atender reparaciones registradas, documentar diagnóstico, avance y entrega. Vigilar siempre la entrada." },
+  { id:"centro-aprendizaje5",name:"Aprender 5 productos: uso, solución y estrategia de venta",area:"Capacitación Centro",start:"15:00",end:"17:00",durationMinutes:120,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Documentar por escrito cada producto y suspender la actividad para recibir al cliente." },
+  { id:"centro-cierre-traslado",name:"Orden, limpieza, facturación, traslado y reporte final",area:"Cierre Centro",start:"17:00",end:"18:30",durationMinutes:90,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Jan ordena mostradores y plantas; Daniel factura y cierra caja. Traslado a Matriz de 18:00 a 18:30 y salida después de reportar." },
 ];
 
 export const evaluationCriteria = [
@@ -1043,15 +1065,16 @@ export function currentSupervisor(employee: Employee, list: Employee[] = employe
 }
 
 export function canAssign(from: Employee, to: Employee) {
+  if (["001", "002", "003", "005"].includes(from.id)) return from.id !== to.id;
   return roleRank[from.role] < roleRank[to.role];
 }
 
 export function canViewAll(employee: Employee) {
-  return ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
+  return ["001", "002", "003", "005"].includes(employee.id) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
 }
 
 export function canGovern(employee: Employee) {
-  return ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
+  return ["001", "002", "003", "005"].includes(employee.id) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
 }
 
 export function commissionRate(score: number, salesGoal: number, personalSales: number) {
