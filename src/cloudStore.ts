@@ -60,6 +60,7 @@ const moduleTables: Record<string, string> = {
   "xoxo.monthlyBudgets": "monthly_budget_records",
   "xoxo.kpiRecords": "kpi_records",
   "xoxo.processAudits": "process_audit_records",
+  "xoxo.branchOpenings": "branch_opening_records",
   "xoxo.warranties": "warranty_records",
   "xoxo.dailyTasks": "daily_task_records",
   "xoxo.processInstances": "process_instance_records",

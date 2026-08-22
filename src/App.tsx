@@ -140,6 +140,13 @@ type ProcessAudit = {
   checks: { title: string; result: "Pendiente" | "Cumple" | "No cumple" | "No aplica"; finding: string; correctiveAction: string; dueDate: string; closed: boolean }[];
 };
 
+type BranchOpening = {
+  id: string; date: string; name: string; city: string; address: string; targetDate: string;
+  managerId: string; ownerId: string; status: "Planeación" | "En ejecución" | "Lista para abrir" | "Abierta" | "Pausada";
+  investmentBudget: number; actualInvestment: number; breakEvenMonthly: number; notes: string; createdAt: string;
+  steps: { stage: string; title: string; responsibleId: string; dueDate: string; budget: number; actual: number; done: boolean; evidence: string }[];
+};
+
 type CashSession = {
   id: string;
   branch: string;
@@ -488,6 +495,7 @@ function App() {
   const [monthlyBudgets, setMonthlyBudgets] = useState<MonthlyBudget[]>(() => load("xoxo.monthlyBudgets", []));
   const [kpiRecords, setKpiRecords] = useState<KpiRecord[]>(() => load("xoxo.kpiRecords", []));
   const [processAudits, setProcessAudits] = useState<ProcessAudit[]>(() => load("xoxo.processAudits", []));
+  const [branchOpenings, setBranchOpenings] = useState<BranchOpening[]>(() => load("xoxo.branchOpenings", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -546,6 +554,7 @@ function App() {
         cloudMonthlyBudgets,
         cloudKpiRecords,
         cloudProcessAudits,
+        cloudBranchOpenings,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -568,6 +577,7 @@ function App() {
         cloudLoad("xoxo.monthlyBudgets", monthlyBudgets),
         cloudLoad("xoxo.kpiRecords", kpiRecords),
         cloudLoad("xoxo.processAudits", processAudits),
+        cloudLoad("xoxo.branchOpenings", branchOpenings),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -590,6 +600,7 @@ function App() {
       setMonthlyBudgets(cloudMonthlyBudgets);
       setKpiRecords(cloudKpiRecords);
       setProcessAudits(cloudProcessAudits);
+      setBranchOpenings(cloudBranchOpenings);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -980,6 +991,21 @@ function App() {
     const next=processAudits.map((item)=>item.id===updated.id?updated:item); setProcessAudits(next); save("xoxo.processAudits",next);
   };
 
+  const startBranchOpening = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form=new FormData(event.currentTarget); const targetDate=String(form.get("targetDate"));
+    const template=[
+      ["Estrategia","Validar estudio de mercado y zona"],["Legal","Constituir permisos, licencias y contratos"],["Local","Firmar contrato y recibir inmueble"],["Local","Completar adecuaciones, señalización y seguridad"],["Tecnología","Instalar internet, POS, ERP, cámaras e impresoras"],["Finanzas","Abrir cuentas, cajas y fondos autorizados"],["Personal","Definir plantilla y contratar responsables"],["Personal","Capacitar puestos, procesos y seguridad"],["Inventario","Definir surtido y presupuesto inicial"],["Inventario","Recibir, contar, etiquetar y acomodar mercancía"],["Proveedores","Activar proveedores y condiciones comerciales"],["Operación","Probar apertura, venta, entrega, devolución y cierre"],["Marketing","Ejecutar campaña de apertura local"],["Auditoría","Realizar auditoría preapertura"],["Dirección","Autorizar apertura al público"]
+    ];
+    const opening:BranchOpening={id:crypto.randomUUID(),date:todayKey(),name:String(form.get("name")),city:String(form.get("city")),address:String(form.get("address")),targetDate,managerId:String(form.get("managerId")),ownerId:user.id,status:"Planeación",investmentBudget:Number(form.get("investmentBudget")),actualInvestment:0,breakEvenMonthly:Number(form.get("breakEvenMonthly")),notes:String(form.get("notes")),createdAt:new Date().toISOString(),steps:template.map(([stage,title])=>({stage,title,responsibleId:"",dueDate:targetDate,budget:0,actual:0,done:false,evidence:""}))};
+    const next=[opening,...branchOpenings];setBranchOpenings(next);save("xoxo.branchOpenings",next);event.currentTarget.reset();
+  };
+
+  const updateBranchOpening = (opening: BranchOpening) => {
+    const actualInvestment=opening.steps.reduce((sum,step)=>sum+step.actual,0); const allDone=opening.steps.every((step)=>step.done);
+    const updated={...opening,actualInvestment,status:(allDone&&opening.status!=="Abierta"?"Lista para abrir":opening.status) as BranchOpening["status"]};
+    const next=branchOpenings.map((item)=>item.id===updated.id?updated:item);setBranchOpenings(next);save("xoxo.branchOpenings",next);
+  };
+
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1230,6 +1256,9 @@ function App() {
           <button className={view === "auditorias" ? "active" : ""} onClick={() => setView("auditorias")}>
             <ShieldCheck size={18} /> Auditorías
           </button>
+          <button className={view === "expansion" ? "active" : ""} onClick={() => setView("expansion")}>
+            <Building2 size={18} /> Expansión
+          </button>
           <button className={view === "evaluacion" ? "active" : ""} onClick={() => setView("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
           </button>
@@ -1330,6 +1359,7 @@ function App() {
         )}
         {view === "organigrama" && <OrgView collaborators={collaborators} />}
         {view === "auditorias" && <AuditDashboard user={user} collaborators={collaborators} audits={processAudits} startAudit={startProcessAudit} updateAudit={updateProcessAudit} />}
+        {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={branchOpenings} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
             user={user}
@@ -1463,6 +1493,7 @@ function titleFor(view: string) {
       organigrama: "Organigrama",
       procesos: "Procesos y protocolos",
       auditorias: "Auditoría de procesos",
+      expansion: "Apertura y expansión de sucursales",
       evaluacion: "Evaluacion diaria",
       caja: "Caja e incidencias",
       finanzas: "Proveedores y cuentas por pagar",
@@ -3544,6 +3575,24 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function ExpansionDashboard({ user, collaborators, openings, startOpening, updateOpening }: {
+  user:Employee; collaborators:Employee[]; openings:BranchOpening[];
+  startOpening:(event:React.FormEvent<HTMLFormElement>)=>void; updateOpening:(opening:BranchOpening)=>void;
+}) {
+  const active=openings.filter((item)=>item.status!=="Abierta"&&item.status!=="Pausada"); const totalBudget=openings.reduce((sum,item)=>sum+item.investmentBudget,0); const totalActual=openings.reduce((sum,item)=>sum+item.actualInvestment,0);
+  const delayed=openings.reduce((sum,item)=>sum+item.steps.filter((step)=>!step.done&&step.dueDate<todayKey()).length,0);
+  return <section className="stack"><div className="grid"><Metric label="Proyectos activos" value={String(active.length)} icon={<Building2/>}/><Metric label="Inversión autorizada" value={`$${totalBudget.toLocaleString("es-MX")}`} icon={<WalletCards/>}/><Metric label="Inversión ejercida" value={`$${totalActual.toLocaleString("es-MX")}`} icon={<BriefcaseBusiness/>}/><Metric label="Actividades vencidas" value={String(delayed)} icon={<AlertTriangle/>}/></div>
+    {canGovern(user)&&<form className="panelCard form" onSubmit={startOpening}><h2>Nuevo proyecto de sucursal</h2><div className="expansionFormGrid"><label>Nombre<input name="name" placeholder="Sucursal Norte" required/></label><label>Ciudad<input name="city" required/></label><label>Dirección<input name="address" required/></label><label>Fecha objetivo<input name="targetDate" type="date" required/></label><label>Gerente responsable<select name="managerId" required><option value="">Selecciona responsable</option>{collaborators.filter((employee)=>["DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA","ADMIN_TIENDA"].includes(employee.role)).map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Inversión autorizada<input name="investmentBudget" type="number" min="0" step="0.01" required/></label><label>Punto de equilibrio mensual<input name="breakEvenMonthly" type="number" min="0" step="0.01" required/></label></div><textarea name="notes" placeholder="Supuestos, alcance y restricciones"/><button className="primary">Crear plan estándar</button></form>}
+    {openings.map((opening)=><ExpansionEditor key={opening.id} opening={opening} collaborators={collaborators} canEdit={canGovern(user)||opening.managerId===user.id} onSave={updateOpening}/>)}{openings.length===0&&<article className="panelCard"><p className="muted">No hay proyectos de apertura. El primer proyecto generará automáticamente el checklist estándar.</p></article>}
+  </section>;
+}
+
+function ExpansionEditor({opening,collaborators,canEdit,onSave}:{opening:BranchOpening;collaborators:Employee[];canEdit:boolean;onSave:(opening:BranchOpening)=>void}) {
+  const [draft,setDraft]=useState(opening);useEffect(()=>setDraft(opening),[opening]); const updateStep=(index:number,changes:Partial<BranchOpening["steps"][number]>)=>setDraft({...draft,steps:draft.steps.map((step,current)=>current===index?{...step,...changes}:step)});
+  const completed=draft.steps.filter((step)=>step.done).length;const progress=draft.steps.length?completed/draft.steps.length*100:0;const actual=draft.steps.reduce((sum,step)=>sum+step.actual,0);const committed=draft.steps.reduce((sum,step)=>sum+step.budget,0);
+  return <article className="panelCard"><div className="sectionHead"><div><h2>{draft.name} · {draft.city}</h2><span>Objetivo {draft.targetDate} · gerente {collaborators.find((employee)=>employee.id===draft.managerId)?.name||draft.managerId}</span></div><span className={`statusPill ${draft.status==="Abierta"||draft.status==="Lista para abrir"?"ok":draft.status==="Pausada"?"danger":"warn"}`}>{draft.status} · {progress.toFixed(0)}%</span></div><div className="expansionSummary"><span>Autorizado <strong>${draft.investmentBudget.toLocaleString("es-MX")}</strong></span><span>Comprometido <strong>${committed.toLocaleString("es-MX")}</strong></span><span>Ejercido <strong>${actual.toLocaleString("es-MX")}</strong></span><span>Punto equilibrio <strong>${draft.breakEvenMonthly.toLocaleString("es-MX")}/mes</strong></span></div>{canEdit&&<label className="openingStatus">Estado<select value={draft.status} onChange={(event)=>setDraft({...draft,status:event.target.value as BranchOpening["status"]})}><option>Planeación</option><option>En ejecución</option><option>Lista para abrir</option><option>Abierta</option><option>Pausada</option></select></label>}<div className="operationTable expansionTable"><div className="operationRow head"><span>Etapa / actividad</span><span>Responsable</span><span>Fecha límite</span><span>Presupuesto</span><span>Ejercido</span><span>Evidencia</span><span>Listo</span></div>{draft.steps.map((step,index)=><div className="operationRow" key={`${step.stage}-${step.title}`}><span><strong>{step.stage}</strong><small>{step.title}</small></span><select disabled={!canEdit} value={step.responsibleId} onChange={(event)=>updateStep(index,{responsibleId:event.target.value})}><option value="">Sin asignar</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select><input disabled={!canEdit} type="date" value={step.dueDate} onChange={(event)=>updateStep(index,{dueDate:event.target.value})}/><input disabled={!canEdit} type="number" min="0" step="0.01" value={step.budget} onChange={(event)=>updateStep(index,{budget:Number(event.target.value)})}/><input disabled={!canEdit} type="number" min="0" step="0.01" value={step.actual} onChange={(event)=>updateStep(index,{actual:Number(event.target.value)})}/><input disabled={!canEdit} value={step.evidence} onChange={(event)=>updateStep(index,{evidence:event.target.value})} placeholder="Folio, liga o nota"/><input disabled={!canEdit} type="checkbox" checked={step.done} onChange={(event)=>updateStep(index,{done:event.target.checked})}/></div>)}</div>{canEdit&&<button className="primary compact" onClick={()=>onSave(draft)}>Guardar avance</button>}</article>;
 }
 
 function AuditDashboard({ user, collaborators, audits, startAudit, updateAudit }: {
