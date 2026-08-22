@@ -12,7 +12,13 @@ const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | unde
 export const isCloudReady = Boolean(supabaseUrl && supabaseAnonKey);
 export const supabase = isCloudReady
   ? createClient(supabaseUrl!, supabaseAnonKey!, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: typeof window !== "undefined" ? window.sessionStorage : undefined,
+        storageKey: "xoxo-session",
+      },
     })
   : null;
 

@@ -652,6 +652,20 @@ function App() {
       delete copy.password;
       return copy;
     });
+    const renamed = sanitized
+      .map((employee) => ({ before: collaborators.find((current) => current.id === employee.id)?.name, after: employee.name }))
+      .filter((item) => item.before && item.before !== item.after) as { before: string; after: string }[];
+    if (renamed.length) {
+      const updatedCleaning = cleaningRole.map((row) => ({
+        ...row,
+        assignments: Object.fromEntries(Object.entries(row.assignments).map(([day, assigned]) => {
+          const names = assigned.split("/").map((name) => name.trim()).filter(Boolean).map((name) => renamed.find((item) => item.before.toLowerCase() === name.toLowerCase())?.after || name);
+          return [day, names.join(" / ")];
+        })),
+      }));
+      setCleaningRole(updatedCleaning);
+      save("xoxo.cleaningRole", updatedCleaning);
+    }
     setCollaborators(sanitized);
     save("xoxo.collaborators", sanitized);
   };
@@ -2609,7 +2623,7 @@ function TeamView({
         </div>
         {visibleEmployees.map((employee, index) => (
           <div className="tr peopleRow" key={employee.id}>
-            <input disabled={!canGovern(user)} value={employee.id} onChange={(event) => updateEmployee(index, "id", event.target.value)} />
+            <input disabled value={employee.id} title="Identificador maestro: no se modifica para conservar todas las relaciones" />
             <input disabled={!canGovern(user)} value={employee.name} onChange={(event) => updateEmployee(index, "name", event.target.value)} />
             <select
               disabled={!canGovern(user)}
