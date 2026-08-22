@@ -90,6 +90,20 @@ type CashIncident = {
   approvedById?: string;
   approvedAt?: string;
   createdAt: string;
+  payableId?: string;
+};
+
+type Supplier = {
+  id: string; name: string; taxId: string; contact: string; phone: string;
+  paymentTermsDays: number; branch: string; status: "Activo" | "Inactivo";
+  createdById: string; createdAt: string;
+};
+
+type Payable = {
+  id: string; supplierId: string; invoice: string; concept: string; branch: string;
+  issueDate: string; dueDate: string; amount: number; paidAmount: number;
+  status: "Pendiente" | "Pago pendiente" | "Parcial" | "Pagada" | "Vencida";
+  ownerId: string; notes: string; createdAt: string;
 };
 
 type CashSession = {
@@ -433,6 +447,8 @@ function App() {
   const [cashIncidents, setCashIncidents] = useState<CashIncident[]>(() => load("xoxo.cash", []));
   const [cashSessions, setCashSessions] = useState<CashSession[]>(() => load("xoxo.cashSessions", []));
   const [cashCuts, setCashCuts] = useState<CashCut[]>(() => load("xoxo.cashCuts", []));
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => load("xoxo.suppliers", []));
+  const [payables, setPayables] = useState<Payable[]>(() => load("xoxo.payables", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -484,6 +500,8 @@ function App() {
         cloudCashIncidents,
         cloudCashSessions,
         cloudCashCuts,
+        cloudSuppliers,
+        cloudPayables,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -499,6 +517,8 @@ function App() {
         cloudLoad("xoxo.cash", cashIncidents),
         cloudLoad("xoxo.cashSessions", cashSessions),
         cloudLoad("xoxo.cashCuts", cashCuts),
+        cloudLoad("xoxo.suppliers", suppliers),
+        cloudLoad("xoxo.payables", payables),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -514,6 +534,8 @@ function App() {
       setCashIncidents(cloudCashIncidents);
       setCashSessions(cloudCashSessions);
       setCashCuts(cloudCashCuts);
+      setSuppliers(cloudSuppliers);
+      setPayables(cloudPayables);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -721,11 +743,67 @@ function App() {
   };
 
   const reviewCashIncident = (id: string, status: "Aprobado" | "Rechazado") => {
+    const reviewed = cashIncidents.find((item) => item.id === id);
     const next = cashIncidents.map((item) => item.id === id
       ? { ...item, status, approvedById: user.id, approvedAt: new Date().toISOString() }
       : item);
     setCashIncidents(next);
     save("xoxo.cash", next);
+    if (reviewed?.payableId) {
+      const nextPayables: Payable[] = payables.map((payable) => {
+        if (payable.id !== reviewed.payableId) return payable;
+        if (status === "Rechazado") return { ...payable, status: payable.paidAmount > 0 ? "Parcial" : "Pendiente" };
+        const paidAmount = Math.min(payable.amount, payable.paidAmount + reviewed.amount);
+        return { ...payable, paidAmount, status: paidAmount >= payable.amount ? "Pagada" : "Parcial" };
+      });
+      setPayables(nextPayables);
+      save("xoxo.payables", nextPayables);
+    }
+  };
+
+  const addSupplier = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const next: Supplier[] = [...suppliers, {
+      id: crypto.randomUUID(), name: String(form.get("name")), taxId: String(form.get("taxId")),
+      contact: String(form.get("contact")), phone: String(form.get("phone")),
+      paymentTermsDays: Number(form.get("paymentTermsDays")), branch: String(form.get("branch") || user.branch),
+      status: "Activo", createdById: user.id, createdAt: new Date().toISOString(),
+    }];
+    setSuppliers(next); save("xoxo.suppliers", next); event.currentTarget.reset();
+  };
+
+  const addPayable = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const dueDate = String(form.get("dueDate"));
+    const next: Payable[] = [{
+      id: crypto.randomUUID(), supplierId: String(form.get("supplierId")), invoice: String(form.get("invoice")),
+      concept: String(form.get("concept")), branch: String(form.get("branch") || user.branch),
+      issueDate: String(form.get("issueDate")), dueDate, amount: Number(form.get("amount")), paidAmount: 0,
+      status: dueDate < today ? "Vencida" : "Pendiente", ownerId: user.id,
+      notes: String(form.get("notes")), createdAt: new Date().toISOString(),
+    }, ...payables];
+    setPayables(next); save("xoxo.payables", next); event.currentTarget.reset();
+  };
+
+  const requestPayablePayment = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const payableId = String(form.get("payableId"));
+    const payable = payables.find((item) => item.id === payableId);
+    if (!payable) return;
+    const amount = Number(form.get("amount"));
+    const incident: CashIncident = {
+      id: crypto.randomUUID(), branch: payable.branch, type: "Pago a proveedor", amount,
+      recipient: suppliers.find((supplier) => supplier.id === payable.supplierId)?.name,
+      purpose: payable.concept, paymentMethod: String(form.get("paymentMethod")),
+      note: String(form.get("note")), ownerId: user.id, date: today, folio: String(form.get("folio")),
+      status: "Pendiente", createdAt: new Date().toISOString(), payableId,
+    };
+    const nextCash = [...cashIncidents, incident]; setCashIncidents(nextCash); save("xoxo.cash", nextCash);
+    const nextPayables: Payable[] = payables.map((item) => item.id === payableId ? { ...item, status: "Pago pendiente" } : item);
+    setPayables(nextPayables); save("xoxo.payables", nextPayables); event.currentTarget.reset();
   };
 
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
@@ -975,6 +1053,9 @@ function App() {
           <button className={view === "caja" ? "active" : ""} onClick={() => setView("caja")}>
             <WalletCards size={18} /> Caja
           </button>
+          <button className={view === "finanzas" ? "active" : ""} onClick={() => setView("finanzas")}>
+            <BriefcaseBusiness size={18} /> Finanzas
+          </button>
           <button className={view === "garantias" ? "active" : ""} onClick={() => setView("garantias")}>
             <ShieldCheck size={18} /> Garantias
           </button>
@@ -1104,6 +1185,12 @@ function App() {
             collaborators={collaborators}
           />
         )}
+        {view === "finanzas" && (
+          <FinanceView
+            user={user} suppliers={suppliers} payables={payables}
+            addSupplier={addSupplier} addPayable={addPayable} requestPayablePayment={requestPayablePayment}
+          />
+        )}
         {view === "garantias" && <WarrantyView user={user} addWarranty={addWarranty} warranties={warranties} />}
         {view === "tareas" && (
           <TasksView
@@ -1164,6 +1251,7 @@ function titleFor(view: string) {
       procesos: "Procesos y protocolos",
       evaluacion: "Evaluacion diaria",
       caja: "Caja e incidencias",
+      finanzas: "Proveedores y cuentas por pagar",
       garantias: "Garantias a proveedores",
       tareas: "Tareas asignadas",
       solicitudes: "Solicitudes y reportes internos",
@@ -3242,6 +3330,68 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function FinanceView({ user, suppliers, payables, addSupplier, addPayable, requestPayablePayment }: {
+  user: Employee;
+  suppliers: Supplier[];
+  payables: Payable[];
+  addSupplier: (event: React.FormEvent<HTMLFormElement>) => void;
+  addPayable: (event: React.FormEvent<HTMLFormElement>) => void;
+  requestPayablePayment: (event: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const canManage = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
+  const today = todayKey();
+  const open = payables.filter((item) => item.status !== "Pagada");
+  const outstanding = open.reduce((sum, item) => sum + item.amount - item.paidAmount, 0);
+  const overdue = open.filter((item) => item.dueDate < today && item.status !== "Pago pendiente");
+  const dueSoon = open.filter((item) => {
+    const days = (new Date(item.dueDate).getTime() - new Date(today).getTime()) / 86400000;
+    return days >= 0 && days <= 7;
+  });
+  return <section className="stack">
+    <div className="grid">
+      <Metric label="Saldo por pagar" value={`$${outstanding.toLocaleString("es-MX")}`} icon={<WalletCards />} />
+      <Metric label="Facturas abiertas" value={String(open.length)} icon={<FileText />} />
+      <Metric label="Vencidas" value={String(overdue.length)} icon={<AlertTriangle />} />
+      <Metric label="Vencen en 7 dias" value={String(dueSoon.length)} icon={<CalendarCheck />} />
+    </div>
+    {canManage && <section className="grid two">
+      <form className="panelCard form" onSubmit={addSupplier}>
+        <h2>Alta de proveedor</h2>
+        <input name="name" placeholder="Razon social o nombre" required />
+        <div className="moneyInputs"><input name="taxId" placeholder="RFC" /><input name="contact" placeholder="Contacto" /></div>
+        <div className="moneyInputs"><input name="phone" placeholder="Telefono" /><input name="paymentTermsDays" type="number" min="0" defaultValue="0" placeholder="Dias de credito" /></div>
+        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <button className="primary">Guardar proveedor</button>
+      </form>
+      <form className="panelCard form" onSubmit={addPayable}>
+        <h2>Registrar cuenta por pagar</h2>
+        <select name="supplierId" required><option value="">Selecciona proveedor</option>{suppliers.filter((s) => s.status === "Activo").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
+        <div className="moneyInputs"><input name="invoice" placeholder="Factura / folio" required /><input name="amount" type="number" min="0.01" step="0.01" placeholder="Importe" required /></div>
+        <input name="concept" placeholder="Concepto" required />
+        <div className="moneyInputs"><label>Emision<input name="issueDate" type="date" defaultValue={today} required /></label><label>Vencimiento<input name="dueDate" type="date" required /></label></div>
+        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <textarea name="notes" placeholder="Orden de compra, recepcion o aclaraciones" />
+        <button className="primary">Registrar obligación</button>
+      </form>
+    </section>}
+    {canManage && <form className="panelCard form" onSubmit={requestPayablePayment}>
+      <h2>Solicitar pago desde caja</h2>
+      <div className="financePaymentGrid">
+        <select name="payableId" required><option value="">Cuenta por pagar</option>{open.filter((p) => p.status !== "Pago pendiente").map((p) => <option key={p.id} value={p.id}>{suppliers.find((s) => s.id === p.supplierId)?.name} · {p.invoice} · ${Math.max(0,p.amount-p.paidAmount).toLocaleString("es-MX")}</option>)}</select>
+        <input name="amount" type="number" min="0.01" step="0.01" placeholder="Monto" required />
+        <select name="paymentMethod"><option>Efectivo</option><option>Transferencia</option><option>Tarjeta</option></select>
+        <input name="folio" placeholder="Folio de autorización" required />
+      </div>
+      <textarea name="note" placeholder="Motivo y observaciones del pago" required />
+      <button className="primary">Enviar a autorización de caja</button>
+    </form>}
+    <section className="grid two">
+      <article className="panelCard"><h2>Proveedores</h2><div className="taskList">{suppliers.length === 0 && <p className="muted">Sin proveedores registrados.</p>}{suppliers.map((s) => <div className="taskRow" key={s.id}><span>{s.name}<small>{s.taxId || "Sin RFC"} · {s.paymentTermsDays} dias de credito · {s.branch}</small></span><strong>{s.status}</strong></div>)}</div></article>
+      <article className="panelCard"><h2>Cuentas por pagar</h2><div className="taskList">{payables.length === 0 && <p className="muted">Sin cuentas por pagar.</p>}{payables.map((p) => <div className="taskRow" key={p.id}><span>{suppliers.find((s) => s.id === p.supplierId)?.name || "Proveedor"}<small>{p.invoice} · vence {p.dueDate} · pagado ${p.paidAmount.toLocaleString("es-MX")}</small></span><span><strong>${(p.amount-p.paidAmount).toLocaleString("es-MX")}</strong><small className={p.status === "Pagada" ? "ok" : p.dueDate < today ? "danger" : "warn"}>{p.status}</small></span></div>)}</div></article>
+    </section>
+  </section>;
 }
 
 function CashView({

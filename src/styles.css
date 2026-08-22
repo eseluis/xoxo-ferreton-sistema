@@ -1021,6 +1021,12 @@ h2 {
   font-size: 11px;
 }
 
+.financePaymentGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr 1.2fr;
+  gap: 10px;
+}
+
 .cashRow.head {
   border-top: 0;
   color: var(--text-muted);
