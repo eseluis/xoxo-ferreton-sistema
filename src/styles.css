@@ -1499,6 +1499,42 @@ h2 {
   grid-template-columns: 1.6fr 1.4fr repeat(4, minmax(105px, 1fr));
 }
 
+.auditFormGrid {
+  display: grid;
+  grid-template-columns: 160px 1.5fr 1.4fr 170px;
+  gap: 10px;
+}
+
+.auditFormGrid label {
+  display: grid;
+  gap: 7px;
+}
+
+.auditChecklist {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.auditCheck {
+  display: grid;
+  grid-template-columns: 1.4fr 130px 1.3fr 1.3fr 145px 105px;
+  gap: 9px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+
+.auditClose {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.auditClose input {
+  width: auto;
+}
+
 .statusPill.danger {
   background: var(--danger-soft);
   color: var(--danger);

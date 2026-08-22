@@ -133,6 +133,13 @@ type KpiRecord = {
   ownerId: string; notes: string; createdAt: string;
 };
 
+type ProcessAudit = {
+  id: string; date: string; processId: string; processName: string; branch: string;
+  auditorId: string; responsibleId: string; status: "Abierta" | "En corrección" | "Cerrada";
+  notes: string; createdAt: string;
+  checks: { title: string; result: "Pendiente" | "Cumple" | "No cumple" | "No aplica"; finding: string; correctiveAction: string; dueDate: string; closed: boolean }[];
+};
+
 type CashSession = {
   id: string;
   branch: string;
@@ -480,6 +487,7 @@ function App() {
   const [bankTransactions, setBankTransactions] = useState<BankTransaction[]>(() => load("xoxo.bankTransactions", []));
   const [monthlyBudgets, setMonthlyBudgets] = useState<MonthlyBudget[]>(() => load("xoxo.monthlyBudgets", []));
   const [kpiRecords, setKpiRecords] = useState<KpiRecord[]>(() => load("xoxo.kpiRecords", []));
+  const [processAudits, setProcessAudits] = useState<ProcessAudit[]>(() => load("xoxo.processAudits", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
@@ -537,6 +545,7 @@ function App() {
         cloudBankTransactions,
         cloudMonthlyBudgets,
         cloudKpiRecords,
+        cloudProcessAudits,
         cloudWarranties,
         cloudDailyTasks,
         cloudProcessInstances,
@@ -558,6 +567,7 @@ function App() {
         cloudLoad("xoxo.bankTransactions", bankTransactions),
         cloudLoad("xoxo.monthlyBudgets", monthlyBudgets),
         cloudLoad("xoxo.kpiRecords", kpiRecords),
+        cloudLoad("xoxo.processAudits", processAudits),
         cloudLoad("xoxo.warranties", warranties),
         cloudLoad("xoxo.dailyTasks", dailyTasks),
         cloudLoad("xoxo.processInstances", processInstances),
@@ -579,6 +589,7 @@ function App() {
       setBankTransactions(cloudBankTransactions);
       setMonthlyBudgets(cloudMonthlyBudgets);
       setKpiRecords(cloudKpiRecords);
+      setProcessAudits(cloudProcessAudits);
       setWarranties(cloudWarranties);
       setDailyTasks(cloudDailyTasks);
       setProcessInstances(cloudProcessInstances);
@@ -957,6 +968,18 @@ function App() {
     setKpiRecords(next); save("xoxo.kpiRecords", next); event.currentTarget.reset();
   };
 
+  const startProcessAudit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); const form = new FormData(event.currentTarget); const process = processes.find((item)=>item.id===String(form.get("processId"))); if(!process) return;
+    const audit: ProcessAudit = { id: crypto.randomUUID(), date: String(form.get("date")), processId: process.id, processName: process.name, branch: String(form.get("branch")||user.branch), auditorId: user.id, responsibleId: String(form.get("responsibleId")), status: "Abierta", notes: String(form.get("notes")), createdAt: new Date().toISOString(), checks: process.steps.map((step)=>({title:step.title,result:"Pendiente",finding:"",correctiveAction:"",dueDate:"",closed:false})) };
+    const next=[audit,...processAudits]; setProcessAudits(next); save("xoxo.processAudits",next); event.currentTarget.reset();
+  };
+
+  const updateProcessAudit = (audit: ProcessAudit) => {
+    const failed = audit.checks.some((check)=>check.result==="No cumple"&&!check.closed); const pending = audit.checks.some((check)=>check.result==="Pendiente");
+    const updated={...audit,status:(pending?"Abierta":failed?"En corrección":"Cerrada") as ProcessAudit["status"]};
+    const next=processAudits.map((item)=>item.id===updated.id?updated:item); setProcessAudits(next); save("xoxo.processAudits",next);
+  };
+
   const addWarranty = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1204,6 +1227,9 @@ function App() {
           <button className={view === "procesos" ? "active" : ""} onClick={() => setView("procesos")}>
             <FileCheck2 size={18} /> Procesos
           </button>
+          <button className={view === "auditorias" ? "active" : ""} onClick={() => setView("auditorias")}>
+            <ShieldCheck size={18} /> Auditorías
+          </button>
           <button className={view === "evaluacion" ? "active" : ""} onClick={() => setView("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
           </button>
@@ -1303,6 +1329,7 @@ function App() {
           />
         )}
         {view === "organigrama" && <OrgView collaborators={collaborators} />}
+        {view === "auditorias" && <AuditDashboard user={user} collaborators={collaborators} audits={processAudits} startAudit={startProcessAudit} updateAudit={updateProcessAudit} />}
         {view === "procesos" && (
           <ProcessesView
             user={user}
@@ -1435,6 +1462,7 @@ function titleFor(view: string) {
       equipo: "Colaboradores y directorio",
       organigrama: "Organigrama",
       procesos: "Procesos y protocolos",
+      auditorias: "Auditoría de procesos",
       evaluacion: "Evaluacion diaria",
       caja: "Caja e incidencias",
       finanzas: "Proveedores y cuentas por pagar",
@@ -3516,6 +3544,27 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function AuditDashboard({ user, collaborators, audits, startAudit, updateAudit }: {
+  user: Employee; collaborators: Employee[]; audits: ProcessAudit[];
+  startAudit: (event: React.FormEvent<HTMLFormElement>) => void; updateAudit: (audit: ProcessAudit) => void;
+}) {
+  const visible = canViewAll(user) ? audits : audits.filter((item)=>item.auditorId===user.id||item.responsibleId===user.id);
+  const openFindings=visible.reduce((sum,audit)=>sum+audit.checks.filter((check)=>check.result==="No cumple"&&!check.closed).length,0);
+  const completedChecks=visible.flatMap((audit)=>audit.checks).filter((check)=>check.result!=="Pendiente"&&check.result!=="No aplica");
+  const compliance=completedChecks.length?completedChecks.filter((check)=>check.result==="Cumple").length/completedChecks.length*100:0;
+  return <section className="stack"><div className="grid"><Metric label="Auditorías abiertas" value={String(visible.filter((item)=>item.status!=="Cerrada").length)} icon={<ShieldCheck/>}/><Metric label="Hallazgos abiertos" value={String(openFindings)} icon={<AlertTriangle/>}/><Metric label="Cumplimiento" value={`${compliance.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="Auditorías cerradas" value={String(visible.filter((item)=>item.status==="Cerrada").length)} icon={<CheckCircle2/>}/></div>
+    {(canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role))&&<form className="panelCard form" onSubmit={startAudit}><h2>Iniciar auditoría</h2><div className="auditFormGrid"><label>Fecha<input name="date" type="date" defaultValue={todayKey()} required/></label><label>Proceso<select name="processId" required><option value="">Selecciona proceso</option>{processes.map((process)=><option key={process.id} value={process.id}>{process.name}</option>)}</select></label><label>Responsable auditado<select name="responsibleId" required><option value="">Selecciona responsable</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label></div><textarea name="notes" placeholder="Objetivo, alcance u observaciones iniciales"/><button className="primary">Crear checklist de auditoría</button></form>}
+    <div className="stack">{visible.map((audit)=><AuditEditor key={audit.id} audit={audit} collaborators={collaborators} canEdit={canGovern(user)||audit.auditorId===user.id} onSave={updateAudit}/>)}{visible.length===0&&<article className="panelCard"><p className="muted">No hay auditorías registradas.</p></article>}</div>
+  </section>;
+}
+
+function AuditEditor({ audit, collaborators, canEdit, onSave }: { audit: ProcessAudit; collaborators: Employee[]; canEdit: boolean; onSave:(audit:ProcessAudit)=>void }) {
+  const [draft,setDraft]=useState(audit); useEffect(()=>setDraft(audit),[audit]);
+  const updateCheck=(index:number,changes:Partial<ProcessAudit["checks"][number]>)=>setDraft({...draft,checks:draft.checks.map((check,current)=>current===index?{...check,...changes}:check)});
+  const scoreChecks=draft.checks.filter((check)=>check.result!=="Pendiente"&&check.result!=="No aplica"); const score=scoreChecks.length?scoreChecks.filter((check)=>check.result==="Cumple").length/scoreChecks.length*100:0;
+  return <article className="panelCard"><div className="sectionHead"><div><h2>{draft.processName}</h2><span>{draft.date} · {draft.branch} · responsable {collaborators.find((employee)=>employee.id===draft.responsibleId)?.name||draft.responsibleId}</span></div><span className={`statusPill ${draft.status==="Cerrada"?"ok":draft.status==="En corrección"?"danger":"warn"}`}>{draft.status} · {score.toFixed(0)}%</span></div><div className="auditChecklist">{draft.checks.map((check,index)=><div className="auditCheck" key={`${check.title}-${index}`}><strong>{index+1}. {check.title}</strong><select disabled={!canEdit} value={check.result} onChange={(event)=>updateCheck(index,{result:event.target.value as typeof check.result})}><option>Pendiente</option><option>Cumple</option><option>No cumple</option><option>No aplica</option></select><input disabled={!canEdit} value={check.finding} onChange={(event)=>updateCheck(index,{finding:event.target.value})} placeholder="Hallazgo o evidencia revisada"/><input disabled={!canEdit} value={check.correctiveAction} onChange={(event)=>updateCheck(index,{correctiveAction:event.target.value})} placeholder="Acción correctiva"/><input disabled={!canEdit} type="date" value={check.dueDate} onChange={(event)=>updateCheck(index,{dueDate:event.target.value})}/><label className="auditClose"><input disabled={!canEdit||check.result!=="No cumple"} type="checkbox" checked={check.closed} onChange={(event)=>updateCheck(index,{closed:event.target.checked})}/> Corregido</label></div>)}</div>{canEdit&&<div className="taskActions"><button className="primary compact" onClick={()=>onSave(draft)}>Guardar auditoría</button></div>}</article>;
 }
 
 function KpiDashboard({ user, collaborators, records, saveRecord }: {
