@@ -1149,6 +1149,12 @@ function App() {
           <button className={view === "finanzas" ? "active" : ""} onClick={() => setView("finanzas")}>
             <BriefcaseBusiness size={18} /> Finanzas
           </button>
+          <button className={view === "bancos" ? "active" : ""} onClick={() => {
+            setView("bancos");
+            window.setTimeout(() => document.getElementById("bancos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+          }}>
+            <Building2 size={18} /> Bancos
+          </button>
           <button className={view === "garantias" ? "active" : ""} onClick={() => setView("garantias")}>
             <ShieldCheck size={18} /> Garantias
           </button>
@@ -1278,7 +1284,7 @@ function App() {
             collaborators={collaborators}
           />
         )}
-        {view === "finanzas" && (
+        {(view === "finanzas" || view === "bancos") && (
           <FinanceView
             user={user} suppliers={suppliers} payables={payables}
             addSupplier={addSupplier} addPayable={addPayable} requestPayablePayment={requestPayablePayment}
@@ -3476,7 +3482,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
       <Metric label="Deducible" value={`$${deductibleExpenses.toLocaleString("es-MX")}`} icon={<FileCheck2 />} />
       <Metric label="Sin factura" value={`$${withoutInvoice.toLocaleString("es-MX")}`} icon={<AlertTriangle />} />
     </div>
-    {canManage && <section className="grid two">
+    {canManage && <section className="grid two" id="bancos">
       <form className="panelCard form" onSubmit={addSupplier}>
         <h2>Alta de proveedor</h2>
         <input name="name" placeholder="Razon social o nombre" required />
