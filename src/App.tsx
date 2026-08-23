@@ -458,6 +458,13 @@ type ActivitySchedule = (typeof defaultActivitySchedules)[number];
 type CleaningRole = (typeof defaultCleaningRole)[number];
 type Branch = Employee["branch"];
 
+const auxiliaryViews = new Set(["panel", "asistencia", "tareas", "solicitudes", "instructivo"]);
+
+function canAccessView(employee: Employee, targetView: string) {
+  if (employee.role === "AUXILIAR") return auxiliaryViews.has(targetView);
+  return true;
+}
+
 const load = <T,>(key: string, fallback: T): T => {
   const raw = localStorage.getItem(key);
   return raw ? (JSON.parse(raw) as T) : fallback;
@@ -519,6 +526,10 @@ function App() {
   const [note, setNote] = useState("");
   const [personalSales, setPersonalSales] = useState(0);
   const [salesGoal, setSalesGoal] = useState(1000);
+
+  const navigate = (targetView: string) => {
+    if (canAccessView(user, targetView)) setView(targetView);
+  };
 
   useEffect(() => {
     let active = true;
@@ -634,6 +645,9 @@ function App() {
   }, [isAuthenticated]);
 
   const user = collaborators.find((employee) => employee.id === activeId) ?? collaborators[0] ?? defaultEmployees[2];
+  useEffect(() => {
+    if (isAuthenticated && !canAccessView(user, view)) setView("panel");
+  }, [isAuthenticated, user.role, view]);
   const visibleEmployees = canViewAll(user)
     ? collaborators
     : collaborators.filter((employee) => employee.branch === user.branch || employee.id === user.id);
@@ -1274,61 +1288,61 @@ function App() {
         </div>
 
         <nav>
-          <button className={view === "panel" ? "active" : ""} onClick={() => setView("panel")}>
+          <button className={view === "panel" ? "active" : ""} onClick={() => navigate("panel")}>
             <BarChart3 size={18} /> Panel
           </button>
-          <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => setView("tableroFinanciero")}>
+          {user.role !== "AUXILIAR" && <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => navigate("tableroFinanciero")}>
             <WalletCards size={18} /> Tablero financiero
-          </button>
-          <button className={view === "kpis" ? "active" : ""} onClick={() => setView("kpis")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "kpis" ? "active" : ""} onClick={() => navigate("kpis")}>
             <BarChart3 size={18} /> KPIs
-          </button>
-          <button className={view === "asistencia" ? "active" : ""} onClick={() => setView("asistencia")}>
+          </button>}
+          <button className={view === "asistencia" ? "active" : ""} onClick={() => navigate("asistencia")}>
             <Clock size={18} /> Registro diario
           </button>
-          <button className={view === "equipo" ? "active" : ""} onClick={() => setView("equipo")}>
+          {user.role !== "AUXILIAR" && <button className={view === "equipo" ? "active" : ""} onClick={() => navigate("equipo")}>
             <UserRound size={18} /> Colaboradores
-          </button>
-          <button className={view === "organigrama" ? "active" : ""} onClick={() => setView("organigrama")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "organigrama" ? "active" : ""} onClick={() => navigate("organigrama")}>
             <Network size={18} /> Organigrama
-          </button>
-          <button className={view === "procesos" ? "active" : ""} onClick={() => setView("procesos")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "procesos" ? "active" : ""} onClick={() => navigate("procesos")}>
             <FileCheck2 size={18} /> Procesos
-          </button>
-          <button className={view === "auditorias" ? "active" : ""} onClick={() => setView("auditorias")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "auditorias" ? "active" : ""} onClick={() => navigate("auditorias")}>
             <ShieldCheck size={18} /> Auditorías
-          </button>
-          <button className={view === "expansion" ? "active" : ""} onClick={() => setView("expansion")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "expansion" ? "active" : ""} onClick={() => navigate("expansion")}>
             <Building2 size={18} /> Expansión
-          </button>
-          <button className={view === "evaluacion" ? "active" : ""} onClick={() => setView("evaluacion")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "evaluacion" ? "active" : ""} onClick={() => navigate("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
-          </button>
-          <button className={view === "caja" ? "active" : ""} onClick={() => setView("caja")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "caja" ? "active" : ""} onClick={() => navigate("caja")}>
             <WalletCards size={18} /> Caja
-          </button>
-          <button className={view === "finanzas" ? "active" : ""} onClick={() => setView("finanzas")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "finanzas" ? "active" : ""} onClick={() => navigate("finanzas")}>
             <BriefcaseBusiness size={18} /> Finanzas
-          </button>
-          <button className={view === "bancos" ? "active" : ""} onClick={() => {
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "bancos" ? "active" : ""} onClick={() => {
             setView("bancos");
             window.setTimeout(() => document.getElementById("bancos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
           }}>
             <Building2 size={18} /> Bancos
-          </button>
-          <button className={view === "garantias" ? "active" : ""} onClick={() => setView("garantias")}>
+          </button>}
+          {user.role !== "AUXILIAR" && <button className={view === "garantias" ? "active" : ""} onClick={() => navigate("garantias")}>
             <ShieldCheck size={18} /> Garantias
-          </button>
-          <button className={view === "tareas" ? "active" : ""} onClick={() => setView("tareas")}>
+          </button>}
+          <button className={view === "tareas" ? "active" : ""} onClick={() => navigate("tareas")}>
             <ClipboardList size={18} /> Tareas
           </button>
-          <button className={view === "solicitudes" ? "active" : ""} onClick={() => setView("solicitudes")}>
+          <button className={view === "solicitudes" ? "active" : ""} onClick={() => navigate("solicitudes")}>
             <MessageSquare size={18} /> Solicitudes
           </button>
-          <button className={view === "reportes" ? "active" : ""} onClick={() => setView("reportes")}>
+          {user.role !== "AUXILIAR" && <button className={view === "reportes" ? "active" : ""} onClick={() => navigate("reportes")}>
             <FileText size={18} /> Reportes
-          </button>
-          <button className={view === "instructivo" ? "active" : ""} onClick={() => setView("instructivo")}>
+          </button>}
+          <button className={view === "instructivo" ? "active" : ""} onClick={() => navigate("instructivo")}>
             <BookOpen size={18} /> Instructivo
           </button>
           {canGovern(user) && (
@@ -1673,6 +1687,27 @@ function Dashboard({
   const liveStatuses = visibleForMonitor.map((employee) => ({ employee, live: liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today) }));
   const idleNow = liveStatuses.filter((entry) => entry.live.state === "idle").length;
   const breachedNow = liveStatuses.filter((entry) => entry.live.state === "breach").length;
+  if (user.role === "AUXILIAR") {
+    const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
+    const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
+    const myEvaluation = todaysEvaluations.find((entry) => entry.employeeId === user.id);
+    const myAverage = myEvaluation ? myEvaluation.scores.reduce((sum, score) => sum + score, 0) / myEvaluation.scores.length : 0;
+    const myCleaning = getEditableCleaningAssignment(user, cleaningRole);
+    const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
+    return <section className="grid">
+      <Metric label="Mis tareas de hoy" value={String(myTasks.length)} icon={<ClipboardList />} />
+      <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
+      <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
+      <Metric label="Mi evaluación" value={myAverage ? myAverage.toFixed(1) : "Pendiente"} icon={<BarChart3 />} />
+      <article className="wide panelCard"><div className="sectionHead"><div><h2>Mi jornada</h2><span>Sólo información necesaria para ejecutar y reportar</span></div></div>
+        <p><strong>Turno:</strong> {myShift ? `${myShift.start}-${myShift.end}` : user.shift}</p>
+        <p><strong>Aseo:</strong> {myCleaning}</p>
+        <p><strong>Jefe inmediato:</strong> {supervisorFor(user, collaborators)?.name ?? "Gerencia"}</p>
+      </article>
+      <article className="wide panelCard"><h2>Mis tareas asignadas</h2><div className="taskList">{myTasks.map((task)=><div className="taskRow" key={task.id}><span>{task.start}-{task.end}<small>{task.notes}</small></span><strong>{task.title} · {task.status}</strong></div>)}{myTasks.length===0&&<p className="muted">No tienes tareas especiales asignadas hoy. Continúa con tu rutina programada.</p>}</div></article>
+      <article className="wide panelCard"><h2>Regla de trabajo</h2><p>Atiende primero al cliente, ejecuta una actividad a la vez y reporta avances, evidencia o impedimentos en Registro diario o Tareas.</p></article>
+    </section>;
+  }
   return (
     <section className="grid">
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
@@ -3444,6 +3479,7 @@ function TasksView({
   setDailyTasks: (value: DailyTask[]) => void;
 }) {
   const today = todayKey();
+  const isAuxiliary = user.role === "AUXILIAR";
   const [taskError, setTaskError] = useState("");
   const assignable = collaborators.filter((employee) => canAssign(user, employee));
   const addTask = (event: React.FormEvent<HTMLFormElement>) => {
@@ -3521,7 +3557,7 @@ function TasksView({
 
   return (
     <section className="grid two">
-      <form className="panelCard form" onSubmit={addTask}>
+      {!isAuxiliary && <form className="panelCard form" onSubmit={addTask}>
         <h2>Asignar tarea del dia</h2>
         <select name="employeeId" required>
           {assignable.map((employee) => (
@@ -3549,7 +3585,13 @@ function TasksView({
         <textarea name="notes" placeholder="Misión bien redactada: objetivo, pasos, resultado esperado y evidencia" required />
         {taskError&&<p className="loginError">{taskError}</p>}
         <button className="primary">Asignar</button>
-      </form>
+      </form>}
+
+      {isAuxiliary && <article className="panelCard">
+        <h2>Mis instrucciones</h2>
+        <p>Ejecuta una tarea a la vez, sigue las instrucciones y registra aquí el avance, la evidencia o cualquier impedimento.</p>
+        <p className="muted">No puedes asignar, borrar, aprobar ni modificar tareas de otros colaboradores.</p>
+      </article>}
 
       <article className="panelCard">
         <h2>Tabla de tareas</h2>
@@ -3583,23 +3625,27 @@ function TasksView({
                   <span>{task.approvalStatus || "No requerida"}</span>
                 </div>
               </div>
-              <textarea
+              {isAuxiliary ? <textarea
+                value={task.employeeComment ?? ""}
+                onChange={(event) => updateTaskPatch(task.id, { employeeComment: event.target.value })}
+                placeholder="Reporta avance, evidencia, resultado o impedimento"
+              /> : <textarea
                 value={task.supervisorComment ?? ""}
                 onChange={(event) => updateTaskPatch(task.id, { supervisorComment: event.target.value })}
                 placeholder="Comentario, instruccion o seguimiento del superior"
-              />
+              />}
               <div className="taskActions">
                 <select value={task.status} onChange={(event) => updateTaskStatus(task.id, event.target.value as DailyTask["status"])}>
-                  {["Pendiente", "En proceso", "Completada", "Incidencia", "Pausada"].map((status) => (
+                  {(isAuxiliary ? ["Pendiente", "En proceso", "Completada", "Incidencia"] : ["Pendiente", "En proceso", "Completada", "Incidencia", "Pausada"]).map((status) => (
                     <option key={status}>{status}</option>
                   ))}
                 </select>
-                <button className="ghost" disabled={!task.paused && task.approvalStatus !== "Pendiente"} onClick={() => approveTask(task.id)}>
+                {!isAuxiliary && <button className="ghost" disabled={!task.paused && task.approvalStatus !== "Pendiente"} onClick={() => approveTask(task.id)}>
                   Aprobar y reanudar
-                </button>
-                <button className="ghost danger" onClick={() => deleteTask(task.id)}>
+                </button>}
+                {!isAuxiliary && <button className="ghost danger" onClick={() => deleteTask(task.id)}>
                   Borrar
-                </button>
+                </button>}
               </div>
             </div>
           ))}
