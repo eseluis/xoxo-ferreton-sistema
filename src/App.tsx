@@ -459,9 +459,14 @@ type CleaningRole = (typeof defaultCleaningRole)[number];
 type Branch = Employee["branch"];
 
 const auxiliaryViews = new Set(["panel", "asistencia", "tareas", "solicitudes", "instructivo"]);
+const areaLeaderViews = new Set([
+  "panel", "kpis", "asistencia", "organigrama", "procesos", "auditorias",
+  "evaluacion", "garantias", "tareas", "solicitudes", "instructivo",
+]);
 
 function canAccessView(employee: Employee, targetView: string) {
   if (employee.role === "AUXILIAR") return auxiliaryViews.has(targetView);
+  if (employee.role === "JEFE_AREA") return areaLeaderViews.has(targetView);
   return true;
 }
 
@@ -1291,46 +1296,46 @@ function App() {
           <button className={view === "panel" ? "active" : ""} onClick={() => navigate("panel")}>
             <BarChart3 size={18} /> Panel
           </button>
-          {user.role !== "AUXILIAR" && <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => navigate("tableroFinanciero")}>
+          {canAccessView(user, "tableroFinanciero") && <button className={view === "tableroFinanciero" ? "active" : ""} onClick={() => navigate("tableroFinanciero")}>
             <WalletCards size={18} /> Tablero financiero
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "kpis" ? "active" : ""} onClick={() => navigate("kpis")}>
+          {canAccessView(user, "kpis") && <button className={view === "kpis" ? "active" : ""} onClick={() => navigate("kpis")}>
             <BarChart3 size={18} /> KPIs
           </button>}
           <button className={view === "asistencia" ? "active" : ""} onClick={() => navigate("asistencia")}>
             <Clock size={18} /> Registro diario
           </button>
-          {user.role !== "AUXILIAR" && <button className={view === "equipo" ? "active" : ""} onClick={() => navigate("equipo")}>
+          {canAccessView(user, "equipo") && <button className={view === "equipo" ? "active" : ""} onClick={() => navigate("equipo")}>
             <UserRound size={18} /> Colaboradores
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "organigrama" ? "active" : ""} onClick={() => navigate("organigrama")}>
+          {canAccessView(user, "organigrama") && <button className={view === "organigrama" ? "active" : ""} onClick={() => navigate("organigrama")}>
             <Network size={18} /> Organigrama
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "procesos" ? "active" : ""} onClick={() => navigate("procesos")}>
+          {canAccessView(user, "procesos") && <button className={view === "procesos" ? "active" : ""} onClick={() => navigate("procesos")}>
             <FileCheck2 size={18} /> Procesos
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "auditorias" ? "active" : ""} onClick={() => navigate("auditorias")}>
+          {canAccessView(user, "auditorias") && <button className={view === "auditorias" ? "active" : ""} onClick={() => navigate("auditorias")}>
             <ShieldCheck size={18} /> Auditorías
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "expansion" ? "active" : ""} onClick={() => navigate("expansion")}>
+          {canAccessView(user, "expansion") && <button className={view === "expansion" ? "active" : ""} onClick={() => navigate("expansion")}>
             <Building2 size={18} /> Expansión
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "evaluacion" ? "active" : ""} onClick={() => navigate("evaluacion")}>
+          {canAccessView(user, "evaluacion") && <button className={view === "evaluacion" ? "active" : ""} onClick={() => navigate("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "caja" ? "active" : ""} onClick={() => navigate("caja")}>
+          {canAccessView(user, "caja") && <button className={view === "caja" ? "active" : ""} onClick={() => navigate("caja")}>
             <WalletCards size={18} /> Caja
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "finanzas" ? "active" : ""} onClick={() => navigate("finanzas")}>
+          {canAccessView(user, "finanzas") && <button className={view === "finanzas" ? "active" : ""} onClick={() => navigate("finanzas")}>
             <BriefcaseBusiness size={18} /> Finanzas
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "bancos" ? "active" : ""} onClick={() => {
+          {canAccessView(user, "bancos") && <button className={view === "bancos" ? "active" : ""} onClick={() => {
             setView("bancos");
             window.setTimeout(() => document.getElementById("bancos")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
           }}>
             <Building2 size={18} /> Bancos
           </button>}
-          {user.role !== "AUXILIAR" && <button className={view === "garantias" ? "active" : ""} onClick={() => navigate("garantias")}>
+          {canAccessView(user, "garantias") && <button className={view === "garantias" ? "active" : ""} onClick={() => navigate("garantias")}>
             <ShieldCheck size={18} /> Garantias
           </button>}
           <button className={view === "tareas" ? "active" : ""} onClick={() => navigate("tareas")}>
@@ -1339,7 +1344,7 @@ function App() {
           <button className={view === "solicitudes" ? "active" : ""} onClick={() => navigate("solicitudes")}>
             <MessageSquare size={18} /> Solicitudes
           </button>
-          {user.role !== "AUXILIAR" && <button className={view === "reportes" ? "active" : ""} onClick={() => navigate("reportes")}>
+          {canAccessView(user, "reportes") && <button className={view === "reportes" ? "active" : ""} onClick={() => navigate("reportes")}>
             <FileText size={18} /> Reportes
           </button>}
           <button className={view === "instructivo" ? "active" : ""} onClick={() => navigate("instructivo")}>
