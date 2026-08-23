@@ -47,8 +47,10 @@ import {
 import {
   cloudLoad,
   cloudSave,
+  changeOwnPassword,
   getSession,
   isCloudReady,
+  manageEmployeeAccess,
   sessionEmployeeNumber,
   signIn,
   signOut,
@@ -483,6 +485,7 @@ function App() {
   const [activeId, setActiveId] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [mustChangePassword, setMustChangePassword] = useState(false);
   const [loginId, setLoginId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -527,6 +530,7 @@ function App() {
       setActiveId(employeeNumber);
       setLoginId(employeeNumber);
       setIsAuthenticated(Boolean(session && employeeNumber));
+      setMustChangePassword(Boolean(session?.user.user_metadata?.must_change_password));
       setAuthLoading(false);
     };
     void applySession();
@@ -534,6 +538,7 @@ function App() {
       const employeeNumber = sessionEmployeeNumber(session);
       setActiveId(employeeNumber);
       setIsAuthenticated(Boolean(session && employeeNumber));
+      setMustChangePassword(Boolean(session?.user.user_metadata?.must_change_password));
       setAuthLoading(false);
     }).data.subscription;
     return () => {
@@ -1244,6 +1249,10 @@ function App() {
         submitLogin={submitLogin}
       />
     );
+  }
+
+  if (mustChangePassword) {
+    return <PasswordChangeView onComplete={async (password) => { await changeOwnPassword(password); setMustChangePassword(false); }} />;
   }
 
   return (
@@ -2673,6 +2682,7 @@ function TeamView({
           </div>
         ))}
       </div>
+      {["001","002","003","005"].includes(user.id)&&<div className="accessAdmin"><div className="sectionHead"><div><h2>Accesos y contraseñas temporales</h2><span>La contraseña se usa una vez; el colaborador deberá reemplazarla al entrar.</span></div></div>{collaborators.filter((employee)=>employee.name!=="Vacante").map((employee)=><EmployeeAccessControl key={employee.id} employee={employee}/>)}</div>}
       </article>
 
       <article className="panelCard">
@@ -3625,6 +3635,19 @@ function roleLabel(role: Role) {
       AUXILIAR: "Auxiliar",
     } satisfies Record<Role, string>
   )[role];
+}
+
+function EmployeeAccessControl({employee}:{employee:Employee}) {
+  const [password,setPassword]=useState("");const [message,setMessage]=useState("");const [saving,setSaving]=useState(false);
+  const generate=()=>{const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";const bytes=crypto.getRandomValues(new Uint8Array(12));let value="Xf";for(const byte of bytes)value+=alphabet[byte%alphabet.length];value+="7";setPassword(value);setMessage("Contraseña temporal generada. Entrégala de forma privada.");};
+  const apply=async()=>{setSaving(true);setMessage("");try{const result=await manageEmployeeAccess(employee,password);setMessage(result.created?"Cuenta creada. La contraseña se mostrará sólo aquí.":"Contraseña restablecida. Se exigirá cambiarla al entrar.");}catch(error){setMessage(error instanceof Error?error.message:"No se pudo actualizar el acceso.");}finally{setSaving(false);}};
+  return <div className="accessRow"><span><strong>{employee.id} · {employee.name}</strong><small>{employee.roleLabel} · {employee.branch}</small></span><input type="text" value={password} onChange={(event)=>setPassword(event.target.value)} placeholder="Contraseña temporal" autoComplete="off"/><button type="button" className="ghost compact" onClick={generate}>Generar</button><button type="button" className="primary compact" disabled={saving||password.length<10} onClick={apply}>{saving?"Guardando...":"Crear / Restablecer"}</button><small className={message.includes("No se pudo")||message.includes("requiere")?"danger":"ok"}>{message}</small></div>;
+}
+
+function PasswordChangeView({ onComplete }: { onComplete: (password: string) => Promise<void> }) {
+  const [password,setPassword]=useState("");const [confirm,setConfirm]=useState("");const [error,setError]=useState("");const [saving,setSaving]=useState(false);
+  const submit=async(event:React.FormEvent)=>{event.preventDefault();if(password!==confirm){setError("Las contraseñas no coinciden.");return;}if(password.length<10||!/[A-Z]/.test(password)||!/[a-z]/.test(password)||!/[0-9]/.test(password)){setError("Usa al menos 10 caracteres, mayúscula, minúscula y número.");return;}setSaving(true);setError("");try{await onComplete(password);}catch{setError("No se pudo actualizar la contraseña.");setSaving(false);}};
+  return <main className="loginPage"><form className="loginCard" onSubmit={submit}><div className="brand loginBrand"><span className="brandMark">XF</span><div><strong>Cambio obligatorio</strong><small>Protege tu cuenta personal</small></div></div><p>La contraseña temporal sólo sirve para el primer acceso. Crea ahora una contraseña privada que ningún administrador podrá consultar.</p><label>Nueva contraseña<input type="password" value={password} onChange={(event)=>setPassword(event.target.value)} autoComplete="new-password" required/></label><label>Confirmar contraseña<input type="password" value={confirm} onChange={(event)=>setConfirm(event.target.value)} autoComplete="new-password" required/></label>{error&&<p className="loginError">{error}</p>}<button className="primary" disabled={saving}>{saving?"Guardando...":"Cambiar contraseña y entrar"}</button></form></main>;
 }
 
 function ExpansionDashboard({ user, collaborators, openings, startOpening, updateOpening }: {

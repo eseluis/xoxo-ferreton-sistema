@@ -1,0 +1,4 @@
+project_id = "cuqgddgmpraichiqmjqh"
+
+[functions.manage-employee-access]
+verify_jwt = true

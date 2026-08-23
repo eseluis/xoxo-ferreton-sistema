@@ -1610,6 +1610,25 @@ h2 {
   text-align: right;
 }
 
+.accessAdmin {
+  display: grid;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.accessRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(190px, 1fr) auto auto minmax(190px, 1fr);
+  gap: 9px;
+  align-items: center;
+}
+
+.accessRow span small {
+  display: block;
+}
+
 .statusPill.danger {
   background: var(--danger-soft);
   color: var(--danger);

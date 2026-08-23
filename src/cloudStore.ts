@@ -49,6 +49,20 @@ export async function signOut() {
   if (error) throw error;
 }
 
+export async function manageEmployeeAccess(employee: { id: string; name: string; role: string; branch: string }, password: string) {
+  if (!supabase) throw new Error("La conexión segura no está configurada.");
+  const { data, error } = await supabase.functions.invoke("manage-employee-access", { body: { employeeNumber: employee.id, name: employee.name, role: employee.role, branch: employee.branch, password } });
+  if (error) throw new Error(data?.error || error.message);
+  if (data?.error) throw new Error(data.error);
+  return data as { success: boolean; created: boolean };
+}
+
+export async function changeOwnPassword(password: string) {
+  if (!supabase) throw new Error("La conexión segura no está configurada.");
+  const { error } = await supabase.auth.updateUser({ password, data: { must_change_password: false } });
+  if (error) throw error;
+}
+
 export function sessionEmployeeNumber(session: Session | null) {
   return String(session?.user.user_metadata?.employee_number ?? "");
 }
