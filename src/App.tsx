@@ -491,6 +491,7 @@ function workSequenceFor(
   const nextIndex = currentIndex >= 0 ? currentIndex + 1 : entries.findIndex((item) => timeToMinutes(item.start) > minutes);
   const previousIndex = currentIndex >= 0 ? currentIndex - 1 : nextIndex > 0 ? nextIndex - 1 : entries.length - 1;
   return {
+    entries,
     previous: previousIndex >= 0 ? entries[previousIndex] : undefined,
     current: currentIndex >= 0 ? entries[currentIndex] : undefined,
     next: nextIndex >= 0 ? entries[nextIndex] : undefined,
@@ -1761,6 +1762,7 @@ function Dashboard({
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole);
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
     return <section className="grid">
+      <article className="wide panelCard workLocationHero"><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>Tu agenda y procesos de este panel corresponden a esta tienda.</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
@@ -1771,6 +1773,7 @@ function Dashboard({
         <p><strong>Lugar de trabajo hoy:</strong> {locationFor(user)}</p><p><strong>Jefe inmediato:</strong> {supervisorFor(user, collaborators)?.name ?? "Gerencia"}</p>
       </article>
       <SequenceCard sequence={ownSequence} location={locationFor(user)} />
+      <DailyContinuityCard sequence={ownSequence} />
       <article className="wide panelCard"><h2>Mis tareas asignadas</h2><div className="taskList">{myTasks.map((task)=><div className="taskRow" key={task.id}><span>{task.start}-{task.end}<small>{task.notes}</small></span><strong>{task.title} · {task.status}</strong></div>)}{myTasks.length===0&&<p className="muted">No tienes tareas especiales asignadas hoy. Continúa con tu rutina programada.</p>}</div></article>
       <article className="wide panelCard"><h2>Regla de trabajo</h2><p>Atiende primero al cliente, ejecuta una actividad a la vez y reporta avances, evidencia o impedimentos en Registro diario o Tareas.</p></article>
     </section>;
@@ -4852,6 +4855,17 @@ function Metric({ label, value, icon }: { label: string; value: string; icon: Re
 function SequenceCard({ sequence, location }: { sequence: ReturnType<typeof workSequenceFor>; location: string }) {
   const item = (label: string, entry: ReturnType<typeof workSequenceFor>["current"]) => <div className="taskRow"><span>{label}<small>{entry ? `${entry.start}-${entry.end} · ${entry.kind}` : "Sin actividad"}</small></span><strong>{entry?.title ?? "--"}</strong></div>;
   return <article className="wide panelCard"><div className="sectionHead"><div><h2>Mi secuencia de trabajo</h2><span>{location} · actividad anterior, actual y siguiente según horario</span></div></div><div className="taskList">{item("Anterior",sequence.previous)}{item("Ahora",sequence.current)}{item("Siguiente",sequence.next)}</div></article>;
+}
+
+function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSequenceFor> }) {
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const gaps = sequence.entries.slice(1).flatMap((entry, index) => {
+    const prior = sequence.entries[index];
+    const gap = timeToMinutes(entry.start) - timeToMinutes(prior.end);
+    return gap > 0 ? [{ start: prior.end, end: entry.start, minutes: gap }] : [];
+  });
+  return <article className="wide panelCard"><div className="sectionHead"><div><h2>Agenda completa y continuidad</h2><span>Al terminar una actividad continúa inmediatamente con la siguiente.</span></div><strong className={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} espacio(s) por cubrir` : "Agenda continua"}</strong></div><div className="taskList">{sequence.entries.map((entry)=>{const start=timeToMinutes(entry.start);const end=timeToMinutes(entry.end);const state=minutes>=end?"Horario concluido":minutes>=start&&minutes<end?"Ahora":sequence.next?.id===entry.id?"Siguiente":"Programada";return <div className={`taskRow continuityRow ${state==="Ahora"?"currentActivity":""}`} key={`${entry.kind}-${entry.id}`}><span><strong>{entry.start}-{entry.end}</strong><small>{entry.kind} · {entry.status}</small></span><span>{entry.title}</span><strong>{state}</strong></div>;})}{sequence.entries.length===0&&<p className="muted">Aún no existe una agenda para este lugar. Reporta a tu jefe antes de iniciar para evitar tiempo muerto.</p>}</div>{gaps.length>0&&<div className="gapWarnings"><strong>Espacios sin actividad programada:</strong>{gaps.map((gap)=><span key={`${gap.start}-${gap.end}`}>{gap.start}-{gap.end} ({gap.minutes} min)</span>)}</div>}</article>;
 }
 
 export default App;

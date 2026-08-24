@@ -389,6 +389,46 @@ h2 {
   max-width: 8rem;
 }
 
+.workLocationHero {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  border: 2px solid var(--ok);
+  background: linear-gradient(135deg, var(--ok-soft), var(--surface));
+}
+
+.workLocationHero svg {
+  width: 42px;
+  height: 42px;
+  color: var(--ok);
+}
+
+.workLocationHero div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.workLocationHero strong {
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.continuityRow {
+  grid-template-columns: minmax(120px, 0.6fr) minmax(240px, 2fr) minmax(110px, 0.6fr);
+}
+
+.currentActivity {
+  border-left: 4px solid var(--ok);
+  background: var(--ok-soft);
+}
+
+.gapWarnings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  color: var(--warn);
+}
+
 .metric svg {
   width: 22px;
   height: 22px;
