@@ -429,6 +429,43 @@ h2 {
   color: var(--warn);
 }
 
+.slaReviewPanel {
+  border-color: var(--danger);
+}
+
+.slaIncident {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.slaIncidentHead {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(240px, 1.8fr) minmax(150px, 0.7fr);
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem;
+  border: 0;
+  background: var(--surface2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.slaIncidentHead span:first-child {
+  display: grid;
+}
+
+.slaIncidentBody {
+  padding: 1rem;
+  background: var(--surface);
+}
+
+.slaIncidentBody textarea {
+  width: 100%;
+}
+
 .metric svg {
   width: 22px;
   height: 22px;

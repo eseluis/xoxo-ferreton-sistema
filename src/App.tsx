@@ -516,6 +516,19 @@ type WorkLocation = {
   assignedById: string;
 };
 
+type SlaReview = {
+  id: string;
+  sourceType: "Tarea" | "Actividad";
+  sourceId: string;
+  employeeId: string;
+  date: string;
+  decision: "Justificada" | "Incumplimiento";
+  scoreImpact: 0 | -1;
+  note: string;
+  reviewedById: string;
+  reviewedAt: string;
+};
+
 const clearLegacyLocalCache = () => {
   if (!isCloudReady) return;
   Object.keys(localStorage)
@@ -558,6 +571,7 @@ function App() {
   const [internalRequests, setInternalRequests] = useState<InternalRequest[]>(() => load("xoxo.internalRequests", []));
   const [activityRuns, setActivityRuns] = useState<ActivityRun[]>(() => load("xoxo.activityRuns", []));
   const [workLocations, setWorkLocations] = useState<WorkLocation[]>(() => load("xoxo.workLocations", []));
+  const [slaReviews, setSlaReviews] = useState<SlaReview[]>(() => load("xoxo.slaReviews", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -627,6 +641,7 @@ function App() {
         cloudActivitySchedules,
         cloudCleaningRole,
         cloudWorkLocations,
+        cloudSlaReviews,
       ] = await Promise.all([
         cloudLoad("xoxo.collaborators", collaborators),
         cloudLoad("xoxo.attendance", attendance),
@@ -651,6 +666,7 @@ function App() {
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
         cloudLoad("xoxo.workLocations", workLocations),
+        cloudLoad("xoxo.slaReviews", slaReviews),
       ]);
       const organizationOverrides: Record<string, Partial<Employee>> = {
         "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
@@ -684,6 +700,7 @@ function App() {
       setActivitySchedules(mergedActivitySchedules);
       setCleaningRole(cloudCleaningRole);
       setWorkLocations(cloudWorkLocations);
+      setSlaReviews(cloudSlaReviews);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
       if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
     };
@@ -825,6 +842,13 @@ function App() {
     next.push({ id: `${today}-${employeeId}`, employeeId, date: today, location, assignedById: user.id });
     setWorkLocations(next);
     save("xoxo.workLocations", next);
+  };
+
+  const reviewSla = (sourceType: SlaReview["sourceType"], sourceId: string, employeeId: string, decision: SlaReview["decision"], note: string) => {
+    const review: SlaReview = { id: crypto.randomUUID(), sourceType, sourceId, employeeId, date: today, decision, scoreImpact: decision === "Incumplimiento" ? -1 : 0, note, reviewedById: user.id, reviewedAt: new Date().toISOString() };
+    const next = [...slaReviews.filter((item) => !(item.sourceType === sourceType && item.sourceId === sourceId)), review];
+    setSlaReviews(next);
+    save("xoxo.slaReviews", next);
   };
 
   const addCashOpening = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1439,6 +1463,8 @@ function App() {
             activitySchedules={activitySchedules}
             workLocations={workLocations}
             onNavigate={navigate}
+            slaReviews={slaReviews}
+            reviewSla={reviewSla}
           />
         )}
         {view === "asistencia" && (
@@ -1502,6 +1528,7 @@ function App() {
             dailyTasks={dailyTasks}
             shiftMap={shiftMap}
             cashIncidents={cashIncidents}
+            slaReviews={slaReviews}
           />
         )}
         {view === "caja" && (
@@ -1714,6 +1741,8 @@ function Dashboard({
   activitySchedules,
   workLocations,
   onNavigate,
+  slaReviews,
+  reviewSla,
 }: {
   user: Employee;
   attendance: Attendance[];
@@ -1729,8 +1758,11 @@ function Dashboard({
   activitySchedules: ActivitySchedule[];
   workLocations: WorkLocation[];
   onNavigate: (view: string) => void;
+  slaReviews: SlaReview[];
+  reviewSla: (sourceType: SlaReview["sourceType"], sourceId: string, employeeId: string, decision: SlaReview["decision"], note: string) => void;
 }) {
   const [, setTick] = useState(0);
+  const [showSlaReview, setShowSlaReview] = useState(false);
   useEffect(() => {
     const interval = setInterval(() => setTick((value) => value + 1), 15000);
     return () => clearInterval(interval);
@@ -1751,7 +1783,10 @@ function Dashboard({
   );
   const liveStatuses = visibleForMonitor.map((employee) => ({ employee, live: liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today) }));
   const idleNow = liveStatuses.filter((entry) => entry.live.state === "idle").length;
-  const breachedNow = liveStatuses.filter((entry) => entry.live.state === "breach").length;
+  const reviewedSourceIds = new Set(slaReviews.filter((item) => item.date === today).map((item) => `${item.sourceType}-${item.sourceId}`));
+  const breachedTasks = dailyTasks.filter((task) => task.date === today && task.startedAt && !task.completedAt && task.slaMinutes && slaStatus({ startedAt: task.startedAt, slaMinutes: task.slaMinutes }) === "Vencida" && !reviewedSourceIds.has(`Tarea-${task.id}`));
+  const breachedRuns = activityRuns.filter((run) => run.date === today && run.startedAt && !run.completedAt && slaStatus(run) === "Vencida" && !reviewedSourceIds.has(`Actividad-${run.id}`));
+  const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
   if (user.role === "AUXILIAR") {
@@ -1785,7 +1820,9 @@ function Dashboard({
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
       <Metric label="Garantias abiertas" value={warranties.filter((item) => !["Resuelta", "Rechazada"].includes(item.status)).length.toString()} icon={<ShieldCheck />} />
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><Clock /></span><div><strong>{idleNow}</strong><small>En tiempo libre ahora</small></div></button>
-      <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><AlertTriangle /></span><div><strong>{breachedNow}</strong><small>SLA vencidos ahora</small></div></button>
+      <button className="metric metricButton" onClick={() => setShowSlaReview((value)=>!value)}><span><AlertTriangle /></span><div><strong>{breachedNow}</strong><small>SLA vencidos ahora · ver detalle</small></div></button>
+
+      {showSlaReview && <SlaReviewPanel user={user} collaborators={collaborators} tasks={breachedTasks} runs={breachedRuns} reviews={slaReviews.filter((item)=>item.date===today)} onReview={reviewSla} />}
 
       <article className="wide panelCard">
         <div className="sectionHead">
@@ -3347,8 +3384,11 @@ function EvaluationView(props: {
   dailyTasks: DailyTask[];
   shiftMap: Record<string, ShiftConfig>;
   cashIncidents: CashIncident[];
+  slaReviews: SlaReview[];
 }) {
-  const average = props.scores.reduce((sum, value) => sum + value, 0) / props.scores.length;
+  const slaPenalty = props.slaReviews.filter((review)=>review.employeeId===props.targetEvalId&&review.date===todayKey()).reduce((sum,review)=>sum+review.scoreImpact,0);
+  const baseAverage = props.scores.reduce((sum, value) => sum + value, 0) / props.scores.length;
+  const average = Math.max(0, baseAverage + slaPenalty);
   const rate = commissionRate(average, props.salesGoal, props.personalSales);
   const canSeeStoreSummary =
     canViewAll(props.user) || props.collaborators.some((employee) => employee.supervisorId === props.user.id);
@@ -3368,7 +3408,7 @@ function EvaluationView(props: {
       <article className="panelCard">
         <div className="sectionHead">
           <h2>Evaluar colaborador</h2>
-          <span>Escala 10 / 8 / 6 / 4</span>
+          <span>Escala 10 / 8 / 6 / 4 · ajuste SLA {slaPenalty} punto(s)</span>
         </div>
         <select value={props.targetEvalId} onChange={(event) => props.setTargetEvalId(event.target.value)}>
           {props.collaborators
@@ -4866,6 +4906,17 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
     return gap > 0 ? [{ start: prior.end, end: entry.start, minutes: gap }] : [];
   });
   return <article className="wide panelCard"><div className="sectionHead"><div><h2>Agenda completa y continuidad</h2><span>Al terminar una actividad continúa inmediatamente con la siguiente.</span></div><strong className={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} espacio(s) por cubrir` : "Agenda continua"}</strong></div><div className="taskList">{sequence.entries.map((entry)=>{const start=timeToMinutes(entry.start);const end=timeToMinutes(entry.end);const state=minutes>=end?"Horario concluido":minutes>=start&&minutes<end?"Ahora":sequence.next?.id===entry.id?"Siguiente":"Programada";return <div className={`taskRow continuityRow ${state==="Ahora"?"currentActivity":""}`} key={`${entry.kind}-${entry.id}`}><span><strong>{entry.start}-{entry.end}</strong><small>{entry.kind} · {entry.status}</small></span><span>{entry.title}</span><strong>{state}</strong></div>;})}{sequence.entries.length===0&&<p className="muted">Aún no existe una agenda para este lugar. Reporta a tu jefe antes de iniciar para evitar tiempo muerto.</p>}</div>{gaps.length>0&&<div className="gapWarnings"><strong>Espacios sin actividad programada:</strong>{gaps.map((gap)=><span key={`${gap.start}-${gap.end}`}>{gap.start}-{gap.end} ({gap.minutes} min)</span>)}</div>}</article>;
+}
+
+function SlaReviewPanel({ user, collaborators, tasks, runs, reviews, onReview }: { user: Employee; collaborators: Employee[]; tasks: DailyTask[]; runs: ActivityRun[]; reviews: SlaReview[]; onReview: (sourceType:SlaReview["sourceType"],sourceId:string,employeeId:string,decision:SlaReview["decision"],note:string)=>void }) {
+  const canDecide = canGovern(user) || ["GERENTE_TIENDA","ADMIN_TIENDA","JEFE_AREA"].includes(user.role);
+  const incidents = [...tasks.map((task)=>({sourceType:"Tarea" as const,id:task.id,employeeId:task.employeeId,title:task.title,scheduled:`${task.start}-${task.end}`,startedAt:task.startedAt!,limit:task.slaMinutes??60,instructions:task.notes})),...runs.map((run)=>({sourceType:"Actividad" as const,id:run.id,employeeId:run.employeeId,title:run.title,scheduled:`${run.scheduledStart}-${run.scheduledEnd}`,startedAt:run.startedAt!,limit:run.slaMinutes,instructions:run.evidence?`Evidencia requerida: ${run.evidence}`:"Sin evidencia indicada"}))];
+  return <article className="wide panelCard slaReviewPanel"><div className="sectionHead"><div><h2>Revisión de SLA vencidos</h2><span>Ningún vencimiento afecta la calificación hasta que un responsable lo revise.</span></div><strong>{incidents.length} pendiente(s)</strong></div><div className="stack">{incidents.map((incident)=><SlaReviewItem key={`${incident.sourceType}-${incident.id}`} incident={incident} employeeName={collaborators.find((employee)=>employee.id===incident.employeeId)?.name??incident.employeeId} canDecide={canDecide} onReview={onReview}/>)}</div>{incidents.length===0&&<p className="muted">No existen SLA pendientes de revisión.</p>}{reviews.length>0&&<div className="taskList"><h3>Decisiones de hoy</h3>{reviews.slice().reverse().map((review)=><div className="taskRow" key={review.id}><span>{collaborators.find((employee)=>employee.id===review.employeeId)?.name??review.employeeId}<small>{review.sourceType} · revisó {collaborators.find((employee)=>employee.id===review.reviewedById)?.name??review.reviewedById}</small></span><span>{review.note}</span><strong className={review.scoreImpact<0?"danger":"ok"}>{review.decision} · {review.scoreImpact} punto</strong></div>)}</div>}</article>;
+}
+
+function SlaReviewItem({incident,employeeName,canDecide,onReview}:{incident:{sourceType:SlaReview["sourceType"];id:string;employeeId:string;title:string;scheduled:string;startedAt:string;limit:number;instructions:string};employeeName:string;canDecide:boolean;onReview:(sourceType:SlaReview["sourceType"],sourceId:string,employeeId:string,decision:SlaReview["decision"],note:string)=>void}) {
+  const [expanded,setExpanded]=useState(false);const [note,setNote]=useState("");
+  return <div className="slaIncident"><button type="button" className="slaIncidentHead" onClick={()=>setExpanded((value)=>!value)}><span><strong>{employeeName}</strong><small>{incident.sourceType} · {incident.scheduled}</small></span><span>{incident.title}</span><strong className="danger">Vencida · {formatElapsed(incident.startedAt)}</strong></button>{expanded&&<div className="slaIncidentBody"><p><strong>Instrucciones:</strong> {incident.instructions}</p><p><strong>Límite autorizado:</strong> {incident.limit} minutos.</p>{canDecide&&<><textarea value={note} onChange={(event)=>setNote(event.target.value)} placeholder="Motivo obligatorio de la decisión"/><div className="taskActions"><button type="button" className="ghost" disabled={note.trim().length<10} onClick={()=>onReview(incident.sourceType,incident.id,incident.employeeId,"Justificada",note)}>Justificar · sin afectar</button><button type="button" className="ghost danger" disabled={note.trim().length<10} onClick={()=>onReview(incident.sourceType,incident.id,incident.employeeId,"Incumplimiento",note)}>Cerrar con -1 punto</button></div></>}</div>}</div>;
 }
 
 export default App;
