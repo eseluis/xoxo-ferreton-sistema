@@ -470,6 +470,33 @@ function canAccessView(employee: Employee, targetView: string) {
   return true;
 }
 
+function workSequenceFor(
+  employee: Employee,
+  date: string,
+  location: string,
+  schedules: ActivitySchedule[],
+  tasks: DailyTask[],
+) {
+  const targeted = schedules.filter((item) => item.employeeIds?.includes(employee.id) && (!item.branch || item.branch === location));
+  const routine = targeted.length
+    ? targeted
+    : schedules.filter((item) => item.branch === location && item.ownerRoles.includes(employee.role));
+  const entries = [
+    ...routine.map((item) => ({ id: item.id, title: item.name, start: item.start, end: item.end, status: "Programada", kind: "Proceso" })),
+    ...tasks.filter((task) => task.employeeId === employee.id && task.date === date).map((task) => ({ id: task.id, title: task.title, start: task.start, end: task.end, status: task.status, kind: "Tarea" })),
+  ].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  const currentIndex = entries.findIndex((item) => timeToMinutes(item.start) <= minutes && timeToMinutes(item.end) > minutes);
+  const nextIndex = currentIndex >= 0 ? currentIndex + 1 : entries.findIndex((item) => timeToMinutes(item.start) > minutes);
+  const previousIndex = currentIndex >= 0 ? currentIndex - 1 : nextIndex > 0 ? nextIndex - 1 : entries.length - 1;
+  return {
+    previous: previousIndex >= 0 ? entries[previousIndex] : undefined,
+    current: currentIndex >= 0 ? entries[currentIndex] : undefined,
+    next: nextIndex >= 0 ? entries[nextIndex] : undefined,
+  };
+}
+
 const load = <T,>(key: string, fallback: T): T => {
   const raw = localStorage.getItem(key);
   return raw ? (JSON.parse(raw) as T) : fallback;
@@ -478,6 +505,14 @@ const load = <T,>(key: string, fallback: T): T => {
 const save = (key: string, value: unknown) => {
   if (!isCloudReady) localStorage.setItem(key, JSON.stringify(value));
   void cloudSave(key, value);
+};
+
+type WorkLocation = {
+  id: string;
+  employeeId: string;
+  date: string;
+  location: "Matriz" | "Sucursal Centro";
+  assignedById: string;
 };
 
 const clearLegacyLocalCache = () => {
@@ -521,6 +556,7 @@ function App() {
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
   const [internalRequests, setInternalRequests] = useState<InternalRequest[]>(() => load("xoxo.internalRequests", []));
   const [activityRuns, setActivityRuns] = useState<ActivityRun[]>(() => load("xoxo.activityRuns", []));
+  const [workLocations, setWorkLocations] = useState<WorkLocation[]>(() => load("xoxo.workLocations", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -589,6 +625,7 @@ function App() {
         cloudShiftConfigs,
         cloudActivitySchedules,
         cloudCleaningRole,
+        cloudWorkLocations,
       ] = await Promise.all([
         cloudLoad("xoxo.collaborators", collaborators),
         cloudLoad("xoxo.attendance", attendance),
@@ -612,6 +649,7 @@ function App() {
         cloudLoad("xoxo.shiftConfigs", shiftConfigs),
         cloudLoad("xoxo.activitySchedules", activitySchedules),
         cloudLoad("xoxo.cleaningRole", cleaningRole),
+        cloudLoad("xoxo.workLocations", workLocations),
       ]);
       const organizationOverrides: Record<string, Partial<Employee>> = {
         "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
@@ -640,11 +678,13 @@ function App() {
       setInternalRequests(cloudInternalRequests);
       setActivityRuns(cloudActivityRuns);
       setShiftConfigs(cloudShiftConfigs);
-      const mergedActivitySchedules = [...cloudActivitySchedules, ...defaultActivitySchedules.filter((preset) => !cloudActivitySchedules.some((item) => item.id === preset.id))];
+      const currentCloudSchedules = cloudActivitySchedules.filter((item) => item.id !== "centro-traslado-apertura");
+      const mergedActivitySchedules = [...currentCloudSchedules, ...defaultActivitySchedules.filter((preset) => !currentCloudSchedules.some((item) => item.id === preset.id))];
       setActivitySchedules(mergedActivitySchedules);
       setCleaningRole(cloudCleaningRole);
+      setWorkLocations(cloudWorkLocations);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
-      if (mergedActivitySchedules.length !== cloudActivitySchedules.length) save("xoxo.activitySchedules", mergedActivitySchedules);
+      if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
     };
     void hydrate();
   }, [isAuthenticated]);
@@ -777,6 +817,13 @@ function App() {
     setCashIncidents(next);
     save("xoxo.cash", next);
     event.currentTarget.reset();
+  };
+
+  const assignWorkLocation = (employeeId: string, location: WorkLocation["location"]) => {
+    const next = workLocations.filter((item) => !(item.employeeId === employeeId && item.date === today));
+    next.push({ id: `${today}-${employeeId}`, employeeId, date: today, location, assignedById: user.id });
+    setWorkLocations(next);
+    save("xoxo.workLocations", next);
   };
 
   const addCashOpening = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1388,6 +1435,9 @@ function App() {
             dailyTasks={dailyTasks}
             activityRuns={activityRuns}
             shiftMap={shiftMap}
+            activitySchedules={activitySchedules}
+            workLocations={workLocations}
+            onNavigate={navigate}
           />
         )}
         {view === "asistencia" && (
@@ -1398,6 +1448,7 @@ function App() {
             myEval={myEval}
             shift={shiftMap[user.shift]}
             activitySchedules={activitySchedules}
+            workLocation={workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch}
             cleaningAssignment={currentCleaningAssignment}
             cleaningRow={currentCleaningRow}
             dailyTasks={userTasks}
@@ -1495,6 +1546,8 @@ function App() {
             collaborators={collaborators}
             dailyTasks={dailyTasks}
             setDailyTasks={persistDailyTasks}
+            workLocations={workLocations}
+            assignWorkLocation={assignWorkLocation}
           />
         )}
         {view === "solicitudes" && (
@@ -1657,6 +1710,9 @@ function Dashboard({
   dailyTasks,
   activityRuns,
   shiftMap,
+  activitySchedules,
+  workLocations,
+  onNavigate,
 }: {
   user: Employee;
   attendance: Attendance[];
@@ -1669,6 +1725,9 @@ function Dashboard({
   dailyTasks: DailyTask[];
   activityRuns: ActivityRun[];
   shiftMap: Record<string, ShiftConfig>;
+  activitySchedules: ActivitySchedule[];
+  workLocations: WorkLocation[];
+  onNavigate: (view: string) => void;
 }) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -1692,6 +1751,8 @@ function Dashboard({
   const liveStatuses = visibleForMonitor.map((employee) => ({ employee, live: liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today) }));
   const idleNow = liveStatuses.filter((entry) => entry.live.state === "idle").length;
   const breachedNow = liveStatuses.filter((entry) => entry.live.state === "breach").length;
+  const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
+  const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
     const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
@@ -1700,15 +1761,16 @@ function Dashboard({
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole);
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
     return <section className="grid">
-      <Metric label="Mis tareas de hoy" value={String(myTasks.length)} icon={<ClipboardList />} />
+      <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
       <Metric label="Mi evaluación" value={myAverage ? myAverage.toFixed(1) : "Pendiente"} icon={<BarChart3 />} />
       <article className="wide panelCard"><div className="sectionHead"><div><h2>Mi jornada</h2><span>Sólo información necesaria para ejecutar y reportar</span></div></div>
         <p><strong>Turno:</strong> {myShift ? `${myShift.start}-${myShift.end}` : user.shift}</p>
         <p><strong>Aseo:</strong> {myCleaning}</p>
-        <p><strong>Jefe inmediato:</strong> {supervisorFor(user, collaborators)?.name ?? "Gerencia"}</p>
+        <p><strong>Lugar de trabajo hoy:</strong> {locationFor(user)}</p><p><strong>Jefe inmediato:</strong> {supervisorFor(user, collaborators)?.name ?? "Gerencia"}</p>
       </article>
+      <SequenceCard sequence={ownSequence} location={locationFor(user)} />
       <article className="wide panelCard"><h2>Mis tareas asignadas</h2><div className="taskList">{myTasks.map((task)=><div className="taskRow" key={task.id}><span>{task.start}-{task.end}<small>{task.notes}</small></span><strong>{task.title} · {task.status}</strong></div>)}{myTasks.length===0&&<p className="muted">No tienes tareas especiales asignadas hoy. Continúa con tu rutina programada.</p>}</div></article>
       <article className="wide panelCard"><h2>Regla de trabajo</h2><p>Atiende primero al cliente, ejecuta una actividad a la vez y reporta avances, evidencia o impedimentos en Registro diario o Tareas.</p></article>
     </section>;
@@ -1719,8 +1781,8 @@ function Dashboard({
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
       <Metric label="Garantias abiertas" value={warranties.filter((item) => !["Resuelta", "Rechazada"].includes(item.status)).length.toString()} icon={<ShieldCheck />} />
-      <Metric label="En tiempo libre ahora" value={idleNow.toString()} icon={<Clock />} />
-      <Metric label="SLA vencidos ahora" value={breachedNow.toString()} icon={<AlertTriangle />} />
+      <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><Clock /></span><div><strong>{idleNow}</strong><small>En tiempo libre ahora</small></div></button>
+      <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><AlertTriangle /></span><div><strong>{breachedNow}</strong><small>SLA vencidos ahora</small></div></button>
 
       <article className="wide panelCard">
         <div className="sectionHead">
@@ -1756,6 +1818,8 @@ function Dashboard({
         </div>
       </article>
 
+      <SequenceCard sequence={ownSequence} location={locationFor(user)} />
+
       {(canViewAll(user) || dailyTasks.some((task) => task.assignedById === user.id)) && (
         <article className="wide panelCard">
           <div className="sectionHead">
@@ -1781,6 +1845,7 @@ function Dashboard({
                     task.date === today &&
                     ["En proceso", "Incidencia", "Pausada"].includes(task.status),
                 ) ?? dailyTasks.find((task) => task.employeeId === employee.id && task.date === today);
+              const sequence = workSequenceFor(employee, today, locationFor(employee), activitySchedules, dailyTasks);
               return (
                 <div className="operationRow" key={employee.id}>
                   <strong>{employee.name}</strong>
@@ -1790,7 +1855,7 @@ function Dashboard({
                     <span className={`statusPill ${live.className}`}>{live.sub}</span>
                     {activeTask?.approvalStatus === "Pendiente" ? <small className="danger">Requiere aprobacion</small> : null}
                   </span>
-                  <span>{activeTask?.incidentNote || activeTask?.employeeComment || activeTask?.notes || "--"}</span>
+                  <span><small>Anterior: {sequence.previous?.title ?? "--"}</small><strong>Ahora: {sequence.current?.title ?? live.label}</strong><small>Siguiente: {sequence.next?.title ?? "--"} · {locationFor(employee)}</small></span>
                 </div>
               );
             })}
@@ -1862,6 +1927,7 @@ function AttendanceView({
   startActivityRun,
   completeActivityRun,
   setActivityEvidence,
+  workLocation,
 }: {
   user: Employee;
   myAttendance?: Attendance;
@@ -1887,11 +1953,12 @@ function AttendanceView({
   }) => void;
   completeActivityRun: (id: string) => void;
   setActivityEvidence: (id: string, evidence: EvidenceCapture | undefined) => void;
+  workLocation: string;
 }) {
-  const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id));
+  const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id) && (!activity.branch || activity.branch === workLocation));
   const userActivities = targetedActivities.length
     ? targetedActivities
-    : activitySchedules.filter((activity) => !activity.employeeIds?.length && activity.ownerRoles.includes(user.role) && (!activity.branch || activity.branch === user.branch));
+    : activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role) && (!activity.branch || activity.branch === workLocation));
   const today = todayKey();
   const runFor = (itemType: ActivityRun["itemType"], itemId: string) =>
     activityRuns.find((run) => run.id === `${user.id}-${today}-${itemType}-${itemId}`);
@@ -1920,6 +1987,7 @@ function AttendanceView({
             {shift ? `${shift.start} - ${shift.end} / comida ${shift.lunchStart} - ${shift.lunchEnd}` : "Turno por asignar"}
           </span>
         </div>
+        <p className="statusPill ok">Lugar de trabajo hoy: {workLocation}</p>
         <div className="cleaningHero">
           <Sparkles />
           <div>
@@ -3477,15 +3545,20 @@ function TasksView({
   collaborators,
   dailyTasks,
   setDailyTasks,
+  workLocations,
+  assignWorkLocation,
 }: {
   user: Employee;
   collaborators: Employee[];
   dailyTasks: DailyTask[];
   setDailyTasks: (value: DailyTask[]) => void;
+  workLocations: WorkLocation[];
+  assignWorkLocation: (employeeId: string, location: WorkLocation["location"]) => void;
 }) {
   const today = todayKey();
   const isAuxiliary = user.role === "AUXILIAR";
   const [taskError, setTaskError] = useState("");
+  const [reviewStatus, setReviewStatus] = useState("Todas");
   const assignable = collaborators.filter((employee) => canAssign(user, employee));
   const addTask = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3493,9 +3566,10 @@ function TasksView({
     const employeeId=String(form.get("employeeId"));const start=String(form.get("start"));const end=String(form.get("end"));const notes=String(form.get("notes")).trim();
     if(timeToMinutes(end)<=timeToMinutes(start)){setTaskError("La hora final debe ser posterior a la hora inicial.");return;}
     if(notes.length<20){setTaskError("La misión necesita instrucciones completas de al menos 20 caracteres.");return;}
-    const overlap=dailyTasks.find((task)=>task.employeeId===employeeId&&task.date===today&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
-    if(overlap){setTaskError(`Horario ocupado por: ${overlap.title} (${overlap.start}-${overlap.end}).`);return;}
     const targetEmployee=collaborators.find((employee)=>employee.id===employeeId);
+    const overlaps=dailyTasks.filter((task)=>task.employeeId===employeeId&&task.date===today&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
+    const overlapLimit=targetEmployee?.role==="AUXILIAR"?2:1;
+    if(overlaps.length>=overlapLimit){setTaskError(targetEmployee?.role==="AUXILIAR"?"Un auxiliar no puede tener más de 2 tareas en el mismo horario.":`Horario ocupado por: ${overlaps[0].title} (${overlaps[0].start}-${overlaps[0].end}).`);return;}
     const targetedSchedule=defaultActivitySchedules.filter((activity)=>activity.employeeIds?.includes(employeeId));
     const fixedConflict=targetEmployee&&(targetedSchedule.length?targetedSchedule:defaultActivitySchedules.filter((activity)=>!activity.employeeIds?.length&&activity.ownerRoles.includes(targetEmployee.role))).find((activity)=>activity.area!=="Operación"&&timeToMinutes(start)<timeToMinutes(activity.end)&&timeToMinutes(end)>timeToMinutes(activity.start));
     if(fixedConflict){setTaskError(`Ese horario choca con una actividad fija: ${fixedConflict.name} (${fixedConflict.start}-${fixedConflict.end}).`);return;}
@@ -3559,6 +3633,9 @@ function TasksView({
   const visibleTasks = canViewAll(user)
     ? dailyTasks
     : dailyTasks.filter((task) => task.employeeId === user.id || task.assignedById === user.id);
+  const reviewedTasks = visibleTasks.filter((task) => reviewStatus === "Todas" || task.status === reviewStatus);
+  const canDirectAllTasks = ["001", "002", "003"].includes(user.id);
+  const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.id === "006");
 
   return (
     <section className="grid two">
@@ -3592,6 +3669,8 @@ function TasksView({
         <button className="primary">Asignar</button>
       </form>}
 
+      {canGovern(user) && <article className="panelCard"><div className="sectionHead"><div><h2>Lugar de trabajo de hoy</h2><span>Auxiliares y Jan reciben los procesos del lugar asignado.</span></div></div><div className="taskList">{locationTargets.map((employee)=>{const assigned=workLocations.find((item)=>item.employeeId===employee.id&&item.date===today)?.location??employee.branch;return <div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel}</small></span><select value={assigned} onChange={(event)=>assignWorkLocation(employee.id,event.target.value as WorkLocation["location"])}><option>Matriz</option><option>Sucursal Centro</option></select></div>;})}</div></article>}
+
       {isAuxiliary && <article className="panelCard">
         <h2>Mis instrucciones</h2>
         <p>Ejecuta una tarea a la vez, sigue las instrucciones y registra aquí el avance, la evidencia o cualquier impedimento.</p>
@@ -3599,16 +3678,15 @@ function TasksView({
       </article>}
 
       <article className="panelCard">
-        <h2>Tabla de tareas</h2>
+        <div className="sectionHead"><div><h2>Revisión de tareas</h2><span>Asignadas, en proceso, incidencias y terminadas.</span></div><select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select></div>
         <div className="taskList">
-          {visibleTasks.map((task) => (
+          {reviewedTasks.map((task) => (
             <div className="taskFollowCard" key={task.id}>
               <div className="sectionHead">
                 <span>
-                  <strong>{task.title}</strong>
-                  <small>
-                    {collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.start}-{task.end} · {task.priority}
-                  </small>
+                  {canDirectAllTasks ? <input value={task.title} onChange={(event)=>updateTaskPatch(task.id,{title:event.target.value})}/> : <strong>{task.title}</strong>}
+                  <small>{collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.priority}</small>
+                  {canDirectAllTasks ? <span className="inlineTimes"><input type="time" value={task.start} onChange={(event)=>updateTaskPatch(task.id,{start:event.target.value})}/><input type="time" value={task.end} onChange={(event)=>updateTaskPatch(task.id,{end:event.target.value})}/></span> : <small>{task.start}-{task.end}</small>}
                 </span>
                 <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
               </div>
@@ -3648,7 +3726,7 @@ function TasksView({
                 {!isAuxiliary && <button className="ghost" disabled={!task.paused && task.approvalStatus !== "Pendiente"} onClick={() => approveTask(task.id)}>
                   Aprobar y reanudar
                 </button>}
-                {!isAuxiliary && <button className="ghost danger" onClick={() => deleteTask(task.id)}>
+                {!isAuxiliary && (canDirectAllTasks || task.assignedById === user.id) && <button className="ghost danger" onClick={() => deleteTask(task.id)}>
                   Borrar
                 </button>}
               </div>
@@ -4769,6 +4847,11 @@ function Metric({ label, value, icon }: { label: string; value: string; icon: Re
       </div>
     </article>
   );
+}
+
+function SequenceCard({ sequence, location }: { sequence: ReturnType<typeof workSequenceFor>; location: string }) {
+  const item = (label: string, entry: ReturnType<typeof workSequenceFor>["current"]) => <div className="taskRow"><span>{label}<small>{entry ? `${entry.start}-${entry.end} · ${entry.kind}` : "Sin actividad"}</small></span><strong>{entry?.title ?? "--"}</strong></div>;
+  return <article className="wide panelCard"><div className="sectionHead"><div><h2>Mi secuencia de trabajo</h2><span>{location} · actividad anterior, actual y siguiente según horario</span></div></div><div className="taskList">{item("Anterior",sequence.previous)}{item("Ahora",sequence.current)}{item("Siguiente",sequence.next)}</div></article>;
 }
 
 export default App;

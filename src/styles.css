@@ -365,6 +365,30 @@ h2 {
   padding: 18px;
 }
 
+.metricButton {
+  width: 100%;
+  cursor: pointer;
+  text-align: left;
+  border: 1px solid transparent;
+  font: inherit;
+}
+
+.metricButton:hover,
+.metricButton:focus-visible {
+  border-color: var(--green);
+  transform: translateY(-1px);
+}
+
+.inlineTimes {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.inlineTimes input {
+  max-width: 8rem;
+}
+
 .metric svg {
   width: 22px;
   height: 22px;
