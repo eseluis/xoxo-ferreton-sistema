@@ -148,10 +148,16 @@ export async function cloudSave(key: string, value: unknown) {
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
   const moduleTable = moduleTables[key];
   if (moduleTable) {
-    const { error } = await supabase.rpc("replace_module_records", {
+    let { error } = await supabase.rpc("sync_module_records", {
       module_name: key.replace("xoxo.", ""),
       records: value,
     });
+    // Compatibilidad durante la publicación de la migración de sincronización.
+    if (error?.code === "PGRST202" || error?.message?.includes("sync_module_records")) {
+      ({ error } = await supabase.rpc("replace_module_records", {
+        module_name: key.replace("xoxo.", ""), records: value,
+      }));
+    }
     if (error) throw error;
     return;
   }
