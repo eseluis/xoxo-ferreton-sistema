@@ -5321,6 +5321,25 @@ function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborat
   const canValidate = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
   const canAuthorizeCash = user.role === "CAJERO" || canValidate;
   const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
+
+  // Autorreparación: si una caja se abrió antes de que existiera cashOpenConfirmedAt (o el
+  // reflejo se perdió), quien SÍ tiene permiso de Supabase para leer cash_session_records
+  // (gerencia/dirección) lo vuelve a guardar en el checklist apenas lo detecta, para que el
+  // resto del personal (que no tiene ese permiso) deje de ver "tienda cerrada" por error.
+  const backfilled = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    branches.forEach((branch) => {
+      const id = `${today}-${branch}`;
+      const check = checks.find((item) => item.id === id);
+      const realOpenSession = cashSessions.find((session) => session.branch === branch && session.date === today && ["Abierta", "Cerrada", "Aprobada"].includes(session.status));
+      if (realOpenSession && !check?.cashOpenConfirmedAt && !backfilled.current.has(id)) {
+        backfilled.current.add(id);
+        onUpdate(branch, { cashOpenConfirmedAt: realOpenSession.openedAt, cashOpenConfirmedById: realOpenSession.openedById });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cashSessions, checks, today]);
+
   return (
     <article className="wide panelCard storeOpeningBoard">
       <div className="sectionHead">
