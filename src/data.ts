@@ -119,6 +119,9 @@ export type DailyTask = {
   completedAt?: string;
   escalated?: boolean;
   requiresPhoto?: boolean;
+  // Si es false, quitar o incumplir esta actividad no genera penalización de evaluación
+  // (útil para tareas extra/de apoyo que no deben afectar la calificación del colaborador).
+  affectsEvaluation?: boolean;
   beforeEvidenceCapture?: { dataUrl: string; capturedAt: string; lat?: number; lng?: number; accuracyM?: number };
   afterEvidenceCapture?: { dataUrl: string; capturedAt: string; lat?: number; lng?: number; accuracyM?: number };
 };

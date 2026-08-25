@@ -300,6 +300,8 @@ type InternalRequest = {
   status: "Abierta" | "En revision" | "Atendida" | "Cerrada";
   confidentiality: "Normal" | "Confidencial";
   response: string;
+  respondedAt?: string;
+  respondedById?: string;
 };
 
 type SlaState = "Pendiente" | "En curso" | "Por vencer" | "Vencida" | "Completada" | "Completada con retraso";
@@ -908,6 +910,32 @@ function App() {
   const persistDailyTasks = (next: DailyTask[]) => {
     setDailyTasks(next);
     save("xoxo.dailyTasks", next);
+  };
+
+  // Asignar/quitar actividad directamente desde el panel de inicio (tabla de equipo), sin
+  // pasar por la pantalla de Tareas. Sólo lo usan roles con canGovern.
+  const addQuickTask = (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => {
+    const start = timeNow();
+    const endMinutes = Math.min(23 * 60 + 59, timeToMinutes(start) + 60);
+    const end = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+    const next: DailyTask[] = [
+      ...dailyTasks,
+      {
+        id: crypto.randomUUID(), title, employeeId, assignedById: user.id, assignedAt: new Date().toISOString(),
+        date: today, start, end, status: "Pendiente", priority: "Media",
+        notes: notes || "Actividad asignada desde el panel de inicio.",
+        currentStep: "Asignada", employeeComment: "", supervisorComment: "", incidentNote: "",
+        paused: false, approvalStatus: "No requerida", requiresPhoto: false, affectsEvaluation,
+      },
+    ];
+    persistDailyTasks(next);
+  };
+
+  const removeTaskWithDecision = (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => {
+    persistDailyTasks(dailyTasks.filter((item) => item.id !== task.id));
+    if (decision === "Penalizar" && task.affectsEvaluation !== false) {
+      reviewSla("Tarea", task.id, task.employeeId, "Incumplimiento", note || `Se retiró "${task.title}" sin cumplirse.`);
+    }
   };
 
   const persistProcessInstances = (next: ProcessInstance[]) => {
@@ -1700,6 +1728,8 @@ function App() {
             cashSessions={cashSessions}
             storeOpeningChecks={storeOpeningChecks}
             updateStoreOpening={updateStoreOpening}
+            addQuickTask={addQuickTask}
+            removeTaskWithDecision={removeTaskWithDecision}
           />
         )}
         {view === "asistencia" && (
@@ -1985,6 +2015,8 @@ function Dashboard({
   cashSessions,
   storeOpeningChecks,
   updateStoreOpening,
+  addQuickTask,
+  removeTaskWithDecision,
 }: {
   user: Employee;
   attendance: Attendance[];
@@ -2005,6 +2037,8 @@ function Dashboard({
   cashSessions: CashSession[];
   storeOpeningChecks: StoreOpeningCheck[];
   updateStoreOpening: (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => void;
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
 }) {
   const [, setTick] = useState(0);
   const [showSlaReview, setShowSlaReview] = useState(false);
@@ -2158,6 +2192,21 @@ function Dashboard({
         </article>
       )}
 
+      {canGovern(user) && (
+        <TeamActivityBoard
+          user={user}
+          today={today}
+          employees={visibleForMonitor}
+          collaborators={collaborators}
+          dailyTasks={dailyTasks}
+          activityRuns={activityRuns}
+          shiftMap={shiftMap}
+          attendance={attendance}
+          addQuickTask={addQuickTask}
+          removeTaskWithDecision={removeTaskWithDecision}
+        />
+      )}
+
       <article className="panelCard">
         <h2>Tareas asignadas hoy</h2>
         <div className="taskList">
@@ -2202,6 +2251,154 @@ function Dashboard({
         ))}
       </article>
     </section>
+  );
+}
+
+function TeamActivityBoard({
+  user,
+  today,
+  employees,
+  collaborators,
+  dailyTasks,
+  activityRuns,
+  shiftMap,
+  attendance,
+  addQuickTask,
+  removeTaskWithDecision,
+}: {
+  user: Employee;
+  today: string;
+  employees: Employee[];
+  collaborators: Employee[];
+  dailyTasks: DailyTask[];
+  activityRuns: ActivityRun[];
+  shiftMap: Record<string, ShiftConfig>;
+  attendance: Attendance[];
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
+}) {
+  return (
+    <article className="wide panelCard teamActivityBoard">
+      <div className="sectionHead">
+        <div>
+          <h2>Actividades del equipo</h2>
+          <span>Actividad en vivo, pendientes, terminadas hoy y quién asignó cada una. Puedes asignar o quitar actividades, con o sin efecto en la evaluación.</span>
+        </div>
+        <strong>{employees.length} colaboradores</strong>
+      </div>
+      <div className="stack">
+        {employees.map((employee) => (
+          <TeamActivityRow
+            key={employee.id}
+            employee={employee}
+            collaborators={collaborators}
+            employeeTasks={dailyTasks.filter((task) => task.employeeId === employee.id && task.date === today)}
+            live={liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today)}
+            todaysAttendance={attendance.find((entry) => entry.employeeId === employee.id && entry.date === today)}
+            addQuickTask={addQuickTask}
+            removeTaskWithDecision={removeTaskWithDecision}
+          />
+        ))}
+        {employees.length === 0 && <p className="muted">No hay colaboradores visibles para tu usuario.</p>}
+      </div>
+    </article>
+  );
+}
+
+function TeamActivityRow({
+  employee,
+  collaborators,
+  employeeTasks,
+  live,
+  todaysAttendance,
+  addQuickTask,
+  removeTaskWithDecision,
+}: {
+  employee: Employee;
+  collaborators: Employee[];
+  employeeTasks: DailyTask[];
+  live: ReturnType<typeof liveStatusFor>;
+  todaysAttendance?: Attendance;
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
+}) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [affectsEvaluation, setAffectsEvaluation] = useState(true);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeNote, setRemoveNote] = useState("");
+
+  const pending = employeeTasks.filter((task) => ["Pendiente", "En proceso", "Pausada", "Incidencia"].includes(task.status));
+  const completed = employeeTasks.filter((task) => task.status === "Completada");
+
+  const submitAdd = () => {
+    if (title.trim().length < 3) return;
+    addQuickTask(employee.id, title.trim(), notes.trim(), affectsEvaluation);
+    setTitle(""); setNotes(""); setAffectsEvaluation(true); setShowAdd(false);
+  };
+
+  const startRemoving = (id: string) => { setRemovingId(id); setRemoveNote(""); };
+  const cancelRemoving = () => { setRemovingId(null); setRemoveNote(""); };
+  const confirmRemove = (task: DailyTask, decision: "Sin efecto" | "Penalizar") => {
+    removeTaskWithDecision(task, decision, removeNote);
+    cancelRemoving();
+  };
+
+  return (
+    <div className="teamActivityRow">
+      <div className="sectionHead">
+        <div>
+          <strong>{employee.name}</strong>
+          <small>{employee.roleLabel} · {employee.branch} · entrada {todaysAttendance?.in ?? "sin registrar"}</small>
+        </div>
+        <span className={`statusPill ${live.className}`}>{live.label}</span>
+      </div>
+      <div className="teamActivityLists">
+        <div>
+          <small>Pendientes ({pending.length})</small>
+          {pending.map((task) => (
+            <div className="teamActivityTask" key={task.id}>
+              <span>
+                {task.title}
+                <small> {task.status} · asignó {collaborators.find((person) => person.id === task.assignedById)?.name ?? task.assignedById}{task.affectsEvaluation === false ? " · no afecta evaluación" : ""}</small>
+              </span>
+              {removingId === task.id ? (
+                <div className="teamActivityRemove">
+                  <input value={removeNote} onChange={(event) => setRemoveNote(event.target.value)} placeholder="Motivo (mínimo 10 caracteres)" />
+                  <button className="ghost compact" disabled={removeNote.trim().length < 10} onClick={() => confirmRemove(task, "Sin efecto")}>Quitar sin afectar</button>
+                  <button className="ghost danger compact" disabled={removeNote.trim().length < 10} onClick={() => confirmRemove(task, "Penalizar")}>Quitar y penalizar -1</button>
+                  <button className="ghost compact" onClick={cancelRemoving}>Cancelar</button>
+                </div>
+              ) : (
+                <button className="ghost compact" onClick={() => startRemoving(task.id)}>Quitar</button>
+              )}
+            </div>
+          ))}
+          {pending.length === 0 && <p className="muted">Sin pendientes hoy.</p>}
+        </div>
+        <div>
+          <small>Completadas hoy ({completed.length})</small>
+          {completed.map((task) => (
+            <div className="teamActivityTask" key={task.id}>
+              <span>{task.title} <small>asignó {collaborators.find((person) => person.id === task.assignedById)?.name ?? task.assignedById}</small></span>
+            </div>
+          ))}
+          {completed.length === 0 && <p className="muted">Aún ninguna.</p>}
+        </div>
+      </div>
+      {showAdd ? (
+        <div className="teamActivityAdd">
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Título de la actividad" />
+          <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Instrucción breve (opcional)" />
+          <label><input type="checkbox" checked={affectsEvaluation} onChange={(event) => setAffectsEvaluation(event.target.checked)} /> Afecta evaluación</label>
+          <button className="primary compact" disabled={title.trim().length < 3} onClick={submitAdd}>Asignar</button>
+          <button className="ghost compact" onClick={() => setShowAdd(false)}>Cancelar</button>
+        </div>
+      ) : (
+        <button className="ghost compact" onClick={() => setShowAdd(true)}>+ Asignar actividad</button>
+      )}
+    </div>
   );
 }
 
@@ -4859,6 +5056,11 @@ function RequestsView({
             const authorName = request.requestedById === "sistema" ? "Sistema (SLA automatico)" : author?.name ?? "Sin autor";
             const recipient = collaborators.find((employee) => employee.id === request.recipientId);
             const canAnswer = request.recipientId === user.id || canGovern(user);
+            const isMine = request.requestedById === user.id;
+            const hasResponse = request.response.trim().length > 0;
+            const responder = collaborators.find((employee) => employee.id === request.respondedById);
+            const answerResponse = (value: string) =>
+              updateRequest(request.id, { response: value, respondedAt: new Date().toISOString(), respondedById: user.id });
             return (
               <div className="requestCard" key={request.id}>
                 <div className="sectionHead">
@@ -4875,6 +5077,9 @@ function RequestsView({
                 <p>{request.message}</p>
                 <small>
                   Estado: {request.status} · {request.confidentiality}
+                  {isMine && !canAnswer && (
+                    <strong className={hasResponse ? "ok" : "warn"}> · {hasResponse ? "Respondida" : "Esperando respuesta"}</strong>
+                  )}
                 </small>
                 <div className="requestControls">
                   <select
@@ -4887,12 +5092,21 @@ function RequestsView({
                     <option>Atendida</option>
                     <option>Cerrada</option>
                   </select>
-                  <textarea
-                    disabled={!canAnswer}
-                    value={request.response}
-                    onChange={(event) => updateRequest(request.id, { response: event.target.value })}
-                    placeholder="Respuesta, acuerdo, accion tomada o seguimiento"
-                  />
+                  {canAnswer ? (
+                    <textarea
+                      value={request.response}
+                      onChange={(event) => answerResponse(event.target.value)}
+                      placeholder="Respuesta para el solicitante: qué procede, cómo continuar o en qué terminó el asunto"
+                    />
+                  ) : (
+                    <div className={`requestResponse ${hasResponse ? "ok" : "muted"}`}>
+                      <strong>{hasResponse ? "Respuesta" : "Sin responder todavía"}</strong>
+                      <p>{request.response || "El destinatario aún no contesta esta comunicación."}</p>
+                      {hasResponse && request.respondedAt && (
+                        <small>{responder?.name ?? "Destinatario"} · {new Date(request.respondedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}</small>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
