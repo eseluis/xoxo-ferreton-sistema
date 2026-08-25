@@ -1525,6 +1525,8 @@ function App() {
         {view === "asistencia" && (
           <AttendanceView
             user={user}
+            attendance={attendance}
+            collaborators={collaborators}
             myAttendance={myAttendance}
             updateAttendance={updateAttendance}
             myEval={myEval}
@@ -2017,6 +2019,8 @@ function Dashboard({
 
 function AttendanceView({
   user,
+  attendance,
+  collaborators,
   myAttendance,
   updateAttendance,
   myEval,
@@ -2036,6 +2040,8 @@ function AttendanceView({
   setActivityPhoto,
 }: {
   user: Employee;
+  attendance: Attendance[];
+  collaborators: Employee[];
   myAttendance?: Attendance;
   updateAttendance: (field: keyof Attendance) => void;
   myEval?: Evaluation & { average: number; rate: number };
@@ -2069,6 +2075,14 @@ function AttendanceView({
   const today = todayKey();
   const runFor = (itemType: ActivityRun["itemType"], itemId: string) =>
     activityRuns.find((run) => run.id === `${user.id}-${today}-${itemType}-${itemId}`);
+  const attendanceLog = attendance
+    .flatMap((entry) => ([
+      entry.in ? { employeeId: entry.employeeId, date: entry.date, time: entry.in, event: "Entrada" } : undefined,
+      entry.lunchOut ? { employeeId: entry.employeeId, date: entry.date, time: entry.lunchOut, event: "Salida a comida" } : undefined,
+      entry.lunchIn ? { employeeId: entry.employeeId, date: entry.date, time: entry.lunchIn, event: "Regreso de comida" } : undefined,
+      entry.out ? { employeeId: entry.employeeId, date: entry.date, time: entry.out, event: "Salida" } : undefined,
+    ]).filter(Boolean) as { employeeId: string; date: string; time: string; event: string }[])
+    .sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
 
   const updateTask = (id: string, patch: Partial<DailyTask>) => {
     setDailyTasks(allDailyTasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
@@ -2270,6 +2284,23 @@ function AttendanceView({
           <p className="muted">Aun no hay evaluacion registrada para hoy.</p>
         )}
       </article>
+
+      {canViewAll(user) && (
+        <article className="wide panelCard">
+          <div className="sectionHead">
+            <div><h2>Bitácora de registros</h2><span>Quién se registró, qué movimiento hizo y a qué hora</span></div>
+            <strong>{attendanceLog.length} movimientos</strong>
+          </div>
+          <div className="operationTable attendanceLogTable">
+            <div className="operationRow head"><span>Colaborador</span><span>Número</span><span>Sucursal</span><span>Registro</span><span>Fecha y hora</span></div>
+            {attendanceLog.slice(0, 100).map((entry, index) => {
+              const employee = collaborators.find((person) => person.id === entry.employeeId);
+              return <div className="operationRow" key={`${entry.employeeId}-${entry.date}-${entry.time}-${entry.event}-${index}`}><strong>{employee?.name ?? "Colaborador no encontrado"}</strong><span>{employee?.id ?? entry.employeeId}</span><span>{employee?.branch ?? "--"}</span><span className="statusPill ok">{entry.event}</span><strong>{entry.date} · {entry.time}</strong></div>;
+            })}
+            {attendanceLog.length === 0 && <p className="muted">Todavía no hay registros de asistencia.</p>}
+          </div>
+        </article>
+      )}
     </section>
   );
 }
