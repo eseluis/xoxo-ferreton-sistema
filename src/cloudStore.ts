@@ -101,6 +101,21 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   return data.value as T;
 }
 
+// Recarga segura para pantallas que deben compartir cambios en vivo. A diferencia
+// de cloudLoad, no sustituye el estado actual cuando hay una falla de red.
+export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
+  if (!supabase) return undefined;
+  const moduleTable = moduleTables[key];
+  if (moduleTable) {
+    const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
+    if (error) return undefined;
+    return data.map((row) => row.payload) as T;
+  }
+  const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
+  if (error || !data) return undefined;
+  return data.value as T;
+}
+
 export async function cloudSave(key: string, value: unknown) {
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();

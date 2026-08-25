@@ -46,6 +46,7 @@ import {
 } from "./data";
 import {
   cloudLoad,
+  cloudRefresh,
   cloudSave,
   changeOwnPassword,
   getSession,
@@ -740,6 +741,45 @@ function App() {
       if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
     };
     void hydrate();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let refreshing = false;
+    const refreshOperationalState = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations] = await Promise.all([
+          cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
+          cloudRefresh<ProcessInstance[]>("xoxo.processInstances"),
+          cloudRefresh<InternalRequest[]>("xoxo.internalRequests"),
+          cloudRefresh<Attendance[]>("xoxo.attendance"),
+          cloudRefresh<CashSession[]>("xoxo.cashSessions"),
+          cloudRefresh<StoreOpeningCheck[]>("xoxo.storeOpeningChecks"),
+          cloudRefresh<ActivityRun[]>("xoxo.activityRuns"),
+          cloudRefresh<WorkLocation[]>("xoxo.workLocations"),
+        ]);
+        if (latestTasks) setDailyTasks(latestTasks);
+        if (latestProcesses) setProcessInstances(latestProcesses);
+        if (latestRequests) setInternalRequests(latestRequests);
+        if (latestAttendance) setAttendance(latestAttendance);
+        if (latestCashSessions) setCashSessions(latestCashSessions);
+        if (latestOpeningChecks) setStoreOpeningChecks(latestOpeningChecks);
+        if (latestActivityRuns) setActivityRuns(latestActivityRuns);
+        if (latestWorkLocations) setWorkLocations(latestWorkLocations);
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refreshOperationalState();
+    const interval = window.setInterval(() => void refreshOperationalState(), 8000);
+    const refreshOnFocus = () => void refreshOperationalState();
+    window.addEventListener("focus", refreshOnFocus);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refreshOnFocus);
+    };
   }, [isAuthenticated]);
 
   const user = collaborators.find((employee) => employee.id === activeId) ?? collaborators[0] ?? defaultEmployees[2];
