@@ -275,6 +275,8 @@ type ProcessInstance = {
     note: string;
     completedAt?: string;
     evidenceCapture?: EvidenceCapture;
+    beforeEvidenceCapture?: EvidenceCapture;
+    afterEvidenceCapture?: EvidenceCapture;
   }[];
   fleteType?: "Fletera externa" | "Flete propio del proveedor";
   merchandisingTipo?: "Normal" | "Oferta" | "Producto ancla" | "Novedad";
@@ -308,6 +310,8 @@ type ActivityRun = {
   slaMinutes: number;
   evidence?: string;
   evidenceCapture?: EvidenceCapture;
+  beforeEvidenceCapture?: EvidenceCapture;
+  afterEvidenceCapture?: EvidenceCapture;
   startedAt?: string;
   completedAt?: string;
   status: SlaState;
@@ -541,6 +545,9 @@ const timeNow = () =>
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date());
+
+const oaxacaNow = () => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "full", timeStyle: "medium" }).format(new Date());
+const oaxacaDateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 function App() {
   const [activeId, setActiveId] = useState("");
@@ -826,7 +833,7 @@ function App() {
         paymentMethod: String(form.get("paymentMethod")),
         note: String(form.get("note")),
         ownerId: user.id,
-        date: today,
+        date: oaxacaDateKey(),
         folio: String(form.get("folio")),
         status: "Pendiente" as const,
         createdAt: new Date().toISOString(),
@@ -882,7 +889,8 @@ function App() {
     const openSession = cashSessions.find((session) => session.branch === branch && session.date === date && session.status === "Abierta");
     if (!openSession) return;
     const openingFund = openSession.openingFund;
-    const expectedCash = openingFund + erpSales - cardTotal - transferTotal - withdrawals - providerPayments - operationalExpenses;
+    const cashAdditions = cashIncidents.filter((item) => item.branch === branch && item.date === date && item.type === "Ingreso adicional de efectivo" && item.status !== "Rechazado").reduce((sum,item)=>sum+item.amount,0);
+    const expectedCash = openingFund + cashAdditions + erpSales - cardTotal - transferTotal - withdrawals - providerPayments - operationalExpenses;
     const difference = cashCounted - expectedCash;
     const next = [
       {
@@ -1249,7 +1257,8 @@ function App() {
   const completeActivityRun = (id: string) => {
     const run = activityRuns.find((entry) => entry.id === id);
     if (!run) return;
-    if (run.evidence && run.evidence !== "none" && !run.evidenceCapture) return;
+    if (run.evidence === "photo" && (!run.beforeEvidenceCapture || !run.afterEvidenceCapture)) return;
+    if (run.evidence && run.evidence !== "none" && run.evidence !== "photo" && !run.evidenceCapture) return;
     const completedAt = new Date().toISOString();
     const next = activityRuns.map((entry) =>
       entry.id === id ? { ...entry, completedAt, status: slaStatus({ ...entry, completedAt }) } : entry,
@@ -1259,6 +1268,11 @@ function App() {
 
   const setActivityEvidence = (id: string, evidence: EvidenceCapture | undefined) => {
     const next = activityRuns.map((run) => (run.id === id ? { ...run, evidenceCapture: evidence } : run));
+    persistActivityRuns(next);
+  };
+
+  const setActivityPhoto = (id: string, phase: "before" | "after", evidence: EvidenceCapture | undefined) => {
+    const next = activityRuns.map((run) => run.id === id ? { ...run, [phase === "before" ? "beforeEvidenceCapture" : "afterEvidenceCapture"]: evidence } : run);
     persistActivityRuns(next);
   };
 
@@ -1350,7 +1364,7 @@ function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brandMark">XF</span>
+          <img className="brandLogo" src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" />
           <div>
             <strong>XOXO Ferreton</strong>
             <small>Control operativo</small>
@@ -1486,6 +1500,7 @@ function App() {
             startActivityRun={startActivityRun}
             completeActivityRun={completeActivityRun}
             setActivityEvidence={setActivityEvidence}
+            setActivityPhoto={setActivityPhoto}
           />
         )}
         {view === "equipo" && (
@@ -1668,7 +1683,7 @@ function LoginView({
     <main className="loginPage">
       <form className="loginCard" onSubmit={submitLogin}>
         <div className="brand loginBrand">
-          <span className="brandMark">XF</span>
+          <img className="brandLogo" src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" />
           <div>
             <strong>XOXO Ferreton</strong>
             <small>Acceso al sistema</small>
@@ -1797,7 +1812,7 @@ function Dashboard({
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole);
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
     return <section className="grid">
-      <article className="wide panelCard workLocationHero"><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>Tu agenda y procesos de este panel corresponden a esta tienda.</span></div></article>
+      <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
@@ -1968,6 +1983,7 @@ function AttendanceView({
   completeActivityRun,
   setActivityEvidence,
   workLocation,
+  setActivityPhoto,
 }: {
   user: Employee;
   myAttendance?: Attendance;
@@ -1993,6 +2009,7 @@ function AttendanceView({
   }) => void;
   completeActivityRun: (id: string) => void;
   setActivityEvidence: (id: string, evidence: EvidenceCapture | undefined) => void;
+  setActivityPhoto: (id: string, phase: "before" | "after", evidence: EvidenceCapture | undefined) => void;
   workLocation: string;
 }) {
   const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id) && (!activity.branch || activity.branch === workLocation));
@@ -2096,6 +2113,8 @@ function AttendanceView({
               onComplete={completeActivityRun}
               onCaptureEvidence={(evidence) => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, evidence)}
               onClearEvidence={() => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, undefined)}
+              onCapturePhoto={(phase,evidence) => setActivityPhoto(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`,phase,evidence)}
+              onClearPhoto={(phase) => setActivityPhoto(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`,phase,undefined)}
             />
             {activity.instructions && <p className="muted"><strong>Instrucciones:</strong> {activity.instructions}</p>}
             </div>
@@ -2486,6 +2505,8 @@ function LiveActivityCard({
   onComplete,
   onCaptureEvidence,
   onClearEvidence,
+  onCapturePhoto,
+  onClearPhoto,
 }: {
   title: string;
   scheduledStart: string;
@@ -2497,10 +2518,12 @@ function LiveActivityCard({
   onComplete: (id: string) => void;
   onCaptureEvidence?: (evidence: EvidenceCapture) => void;
   onClearEvidence?: () => void;
+  onCapturePhoto?: (phase: "before" | "after", evidence: EvidenceCapture) => void;
+  onClearPhoto?: (phase: "before" | "after") => void;
 }) {
   const status = run ? slaStatus(run) : "Pendiente";
   const needsEvidence = Boolean(evidence && evidence !== "none");
-  const evidenceReady = !needsEvidence || Boolean(run?.evidenceCapture);
+  const evidenceReady = !needsEvidence || (evidence === "photo" ? Boolean(run?.beforeEvidenceCapture && run?.afterEvidenceCapture) : Boolean(run?.evidenceCapture));
   const inProgress = Boolean(run?.startedAt) && !run?.completedAt;
   return (
     <div className="taskRow liveActivityRow">
@@ -2510,7 +2533,8 @@ function LiveActivityCard({
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} />}
-        {inProgress && needsEvidence && (
+        {inProgress && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
+        {inProgress && needsEvidence && evidence !== "photo" && (
           <EvidenceField
             evidence={evidence}
             value={run?.evidenceCapture}
@@ -3003,8 +3027,10 @@ function ProcessesView({
                       );
                       updateInstance({ ...instance, stepStates });
                     };
+                    const setPhoto = (phase:"before"|"after",evidence:EvidenceCapture|undefined) => { const key=phase==="before"?"beforeEvidenceCapture":"afterEvidenceCapture";const stepStates=instance.stepStates.map((current,currentIndex)=>currentIndex===index?{...current,[key]:evidence}:current);updateInstance({...instance,stepStates}); };
                     const toggleDone = (done: boolean) => {
-                      if (done && needsEvidence && !step.evidenceCapture) return;
+                      if (done && step.evidence === "photo" && (!step.beforeEvidenceCapture || !step.afterEvidenceCapture)) return;
+                      if (done && needsEvidence && step.evidence !== "photo" && !step.evidenceCapture) return;
                       const stepStates = instance.stepStates.map((current, currentIndex) =>
                         currentIndex === index ? { ...current, done, completedAt: done ? timeNow() : undefined } : current,
                       );
@@ -3040,18 +3066,18 @@ function ProcessesView({
                               Deshacer
                             </button>
                           ) : (
-                            <button className="ghost compact" disabled={!step.evidenceCapture} onClick={() => toggleDone(true)}>
+                            <button className="ghost compact" disabled={step.evidence==="photo"?!step.beforeEvidenceCapture||!step.afterEvidenceCapture:!step.evidenceCapture} onClick={() => toggleDone(true)}>
                               Marcar hecho
                             </button>
                           )}
                         </div>
-                        <EvidenceField
+                        {step.evidence==="photo"?<div className="beforeAfterEvidence"><div><strong>Foto antes</strong><PhotoCapture label="Antes" value={step.beforeEvidenceCapture} onCapture={(evidence)=>setPhoto("before",evidence)} onClear={()=>setPhoto("before",undefined)} readOnly={step.done}/></div><div><strong>Foto después</strong><PhotoCapture label="Después" value={step.afterEvidenceCapture} onCapture={(evidence)=>setPhoto("after",evidence)} onClear={()=>setPhoto("after",undefined)} readOnly={step.done}/></div></div>:<EvidenceField
                           evidence={step.evidence}
                           value={step.evidenceCapture}
                           onCapture={setEvidence}
                           onClear={() => setEvidence(undefined)}
                           readOnly={step.done}
-                        />
+                        />}
                       </div>
                     );
                   })}
@@ -3144,9 +3170,16 @@ function RecepcionMercanciaCard({
     updateInstance({ ...instance, stepStates });
   };
 
+  const setStepPhoto = (index: number, phase: "before" | "after", evidence: EvidenceCapture | undefined) => {
+    const key = phase === "before" ? "beforeEvidenceCapture" : "afterEvidenceCapture";
+    const stepStates = instance.stepStates.map((current, currentIndex) => currentIndex === index ? { ...current, [key]: evidence } : current);
+    updateInstance({ ...instance, stepStates });
+  };
+
   const completeStep = (index: number) => {
     const step = instance.stepStates[index];
-    if (step.evidence !== "none" && !step.evidenceCapture) return;
+    if (step.evidence === "photo" && (!step.beforeEvidenceCapture || !step.afterEvidenceCapture)) return;
+    if (step.evidence !== "none" && step.evidence !== "photo" && !step.evidenceCapture) return;
     const stepStates = instance.stepStates.map((current, currentIndex) =>
       currentIndex === index ? { ...current, done: true, completedAt: timeNow() } : current,
     );
@@ -3248,7 +3281,8 @@ function RecepcionMercanciaCard({
                   <small>{merchandisingHint(instance.merchandisingTipo)}</small>
                 </label>
               )}
-              {unlocked && step.evidence !== "none" && !step.done && (
+              {unlocked && step.evidence === "photo" && !step.done && <div className="beforeAfterEvidence"><div><strong>Foto antes</strong><PhotoCapture label="Antes" value={step.beforeEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"before",evidence)} onClear={()=>setStepPhoto(index,"before",undefined)}/></div><div><strong>Foto después</strong><PhotoCapture label="Después" value={step.afterEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"after",evidence)} onClear={()=>setStepPhoto(index,"after",undefined)}/></div></div>}
+              {unlocked && step.evidence !== "none" && step.evidence !== "photo" && !step.done && (
                 <EvidenceField
                   evidence={step.evidence}
                   value={step.evidenceCapture}
@@ -4180,6 +4214,23 @@ function CashView({
             ))}
           </div>
         </article>
+      </section>
+
+      <section className="grid two">
+        <form className="panelCard form" onSubmit={addCashIncident}>
+          <div className="sectionHead"><div><h2>2. Agregar dinero a la caja</h2><span>Ingreso extraordinario distinto del fondo inicial y de las ventas.</span></div><WalletCards className="greenIcon" /></div>
+          <input type="hidden" name="type" value="Ingreso adicional de efectivo" />
+          <input type="hidden" name="paymentMethod" value="Efectivo" />
+          <input type="hidden" name="recipient" value="Caja" />
+          <label>Fecha y hora oficial de registro<input value={oaxacaNow()} readOnly /></label>
+          <label>Monto agregado<input name="amount" type="number" min="0.01" step="0.01" required /></label>
+          <input name="purpose" placeholder="Origen del dinero: cambio, fondo extraordinario, devolución..." required />
+          <input name="folio" placeholder="Folio de autorización o referencia" required />
+          <textarea name="note" placeholder="Quién entrega, quién recibe, denominaciones y motivo" required />
+          <button className="primary">Registrar ingreso a caja</button>
+          <p className="muted">Zona horaria: Oaxaca de Juárez, México. Este monto se suma automáticamente al efectivo esperado del corte.</p>
+        </form>
+        <article className="panelCard"><h2>Ingresos adicionales de hoy</h2><div className="taskList">{cashIncidents.filter((item)=>item.type==="Ingreso adicional de efectivo"&&item.date===oaxacaDateKey()).map((item)=><div className="taskRow" key={item.id}><span>{item.purpose}<small>{new Date(item.createdAt).toLocaleString("es-MX",{timeZone:"America/Mexico_City"})} · {item.folio}</small></span><strong className="ok">+${item.amount.toLocaleString("es-MX")}</strong></div>)}{cashIncidents.filter((item)=>item.type==="Ingreso adicional de efectivo"&&item.date===oaxacaDateKey()).length===0&&<p className="muted">Sin ingresos adicionales hoy.</p>}</div></article>
       </section>
 
       <section className="grid two">

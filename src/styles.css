@@ -175,6 +175,14 @@ button {
   box-shadow: 0 0 0 1px rgba(242, 200, 75, 0.3), 0 0 24px rgba(242, 200, 75, 0.25);
 }
 
+.brandLogo {
+  width: 58px;
+  height: 58px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #fff;
+}
+
 .brand small,
 .userPill small,
 .loginLabel,
@@ -401,6 +409,28 @@ h2 {
   width: 42px;
   height: 42px;
   color: var(--ok);
+}
+
+.workLocationHero img {
+  width: 96px;
+  max-height: 82px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 10px;
+}
+
+.beforeAfterEvidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+
+.beforeAfterEvidence > div {
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface2);
 }
 
 .workLocationHero div {
