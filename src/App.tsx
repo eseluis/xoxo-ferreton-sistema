@@ -533,6 +533,18 @@ type SlaReview = {
   reviewedAt: string;
 };
 
+type StoreOpeningCheck = {
+  id: string;
+  branch: "Matriz" | "Sucursal Centro";
+  date: string;
+  minimumStaff: boolean;
+  systemsReady: boolean;
+  processComplete: boolean;
+  managerId?: string;
+  openedAt?: string;
+  openedById?: string;
+};
+
 const clearLegacyLocalCache = () => {
   if (!isCloudReady) return;
   Object.keys(localStorage)
@@ -580,6 +592,7 @@ function App() {
   const [activityRuns, setActivityRuns] = useState<ActivityRun[]>(() => load("xoxo.activityRuns", []));
   const [workLocations, setWorkLocations] = useState<WorkLocation[]>(() => load("xoxo.workLocations", []));
   const [slaReviews, setSlaReviews] = useState<SlaReview[]>(() => load("xoxo.slaReviews", []));
+  const [storeOpeningChecks, setStoreOpeningChecks] = useState<StoreOpeningCheck[]>(() => load("xoxo.storeOpeningChecks", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -655,6 +668,7 @@ function App() {
         cloudCleaningRole,
         cloudWorkLocations,
         cloudSlaReviews,
+        cloudStoreOpeningChecks,
       ] = await Promise.all([
         cloudLoad("xoxo.collaborators", collaborators),
         cloudLoad("xoxo.attendance", attendance),
@@ -680,6 +694,7 @@ function App() {
         cloudLoad("xoxo.cleaningRole", cleaningRole),
         cloudLoad("xoxo.workLocations", workLocations),
         cloudLoad("xoxo.slaReviews", slaReviews),
+        cloudLoad("xoxo.storeOpeningChecks", storeOpeningChecks),
       ]);
       const organizationOverrides: Record<string, Partial<Employee>> = {
         "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
@@ -716,6 +731,7 @@ function App() {
       setCleaningRole(mergedCleaning);
       setWorkLocations(cloudWorkLocations);
       setSlaReviews(cloudSlaReviews);
+      setStoreOpeningChecks(cloudStoreOpeningChecks);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
       if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
       if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
@@ -866,6 +882,15 @@ function App() {
     const next = [...slaReviews.filter((item) => !(item.sourceType === sourceType && item.sourceId === sourceId)), review];
     setSlaReviews(next);
     save("xoxo.slaReviews", next);
+  };
+
+  const updateStoreOpening = (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => {
+    const id = `${today}-${branch}`;
+    const existing = storeOpeningChecks.find((item)=>item.id===id) ?? { id, branch, date: today, minimumStaff:false, systemsReady:false, processComplete:false };
+    const updated = { ...existing, ...patch, managerId: user.id };
+    const next = [...storeOpeningChecks.filter((item)=>item.id!==id), updated];
+    setStoreOpeningChecks(next);
+    save("xoxo.storeOpeningChecks", next);
   };
 
   const addCashOpening = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1489,6 +1514,9 @@ function App() {
             onNavigate={navigate}
             slaReviews={slaReviews}
             reviewSla={reviewSla}
+            cashSessions={cashSessions}
+            storeOpeningChecks={storeOpeningChecks}
+            updateStoreOpening={updateStoreOpening}
           />
         )}
         {view === "asistencia" && (
@@ -1768,6 +1796,9 @@ function Dashboard({
   onNavigate,
   slaReviews,
   reviewSla,
+  cashSessions,
+  storeOpeningChecks,
+  updateStoreOpening,
 }: {
   user: Employee;
   attendance: Attendance[];
@@ -1785,6 +1816,9 @@ function Dashboard({
   onNavigate: (view: string) => void;
   slaReviews: SlaReview[];
   reviewSla: (sourceType: SlaReview["sourceType"], sourceId: string, employeeId: string, decision: SlaReview["decision"], note: string) => void;
+  cashSessions: CashSession[];
+  storeOpeningChecks: StoreOpeningCheck[];
+  updateStoreOpening: (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => void;
 }) {
   const [, setTick] = useState(0);
   const [showSlaReview, setShowSlaReview] = useState(false);
@@ -1814,6 +1848,7 @@ function Dashboard({
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
+  const openingBoard = <StoreOpeningBoard user={user} today={today} cashSessions={cashSessions} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
     const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
@@ -1822,6 +1857,7 @@ function Dashboard({
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole, locationFor(user));
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
     return <section className="grid">
+      {openingBoard}
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
@@ -1840,6 +1876,7 @@ function Dashboard({
   }
   return (
     <section className="grid">
+      {openingBoard}
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
@@ -4977,6 +5014,11 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
     return gap > 0 ? [{ start: prior.end, end: entry.start, minutes: gap }] : [];
   });
   return <article className="wide panelCard"><div className="sectionHead"><div><h2>Agenda completa y continuidad</h2><span>Al terminar una actividad continúa inmediatamente con la siguiente.</span></div><strong className={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} espacio(s) por cubrir` : "Agenda continua"}</strong></div><div className="taskList">{sequence.entries.map((entry)=>{const start=timeToMinutes(entry.start);const end=timeToMinutes(entry.end);const state=minutes>=end?"Horario concluido":minutes>=start&&minutes<end?"Ahora":sequence.next?.id===entry.id?"Siguiente":"Programada";return <div className={`taskRow continuityRow ${state==="Ahora"?"currentActivity":""}`} key={`${entry.kind}-${entry.id}`}><span><strong>{entry.start}-{entry.end}</strong><small>{entry.kind} · {entry.status}</small></span><span>{entry.title}</span><strong>{state}</strong></div>;})}{sequence.entries.length===0&&<p className="muted">Aún no existe una agenda para este lugar. Reporta a tu jefe antes de iniciar para evitar tiempo muerto.</p>}</div>{gaps.length>0&&<div className="gapWarnings"><strong>Espacios sin actividad programada:</strong>{gaps.map((gap)=><span key={`${gap.start}-${gap.end}`}>{gap.start}-{gap.end} ({gap.minutes} min)</span>)}</div>}</article>;
+}
+
+function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
+  const canValidate=canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);const branches:StoreOpeningCheck["branch"][]=["Matriz","Sucursal Centro"];
+  return <article className="wide panelCard storeOpeningBoard"><div className="sectionHead"><div><h2>Estado de apertura de tiendas</h2><span>La tienda sólo queda abierta después de completar todas las validaciones.</span></div></div><div className="openingCards">{branches.map((branch)=>{const check=checks.find((item)=>item.id===`${today}-${branch}`)??{id:`${today}-${branch}`,branch,date:today,minimumStaff:false,systemsReady:false,processComplete:false};const cashOpen=cashSessions.some((session)=>session.branch===branch&&session.date===today&&["Abierta","Cerrada","Aprobada"].includes(session.status));const staffPresent=attendance.filter((entry)=>entry.date===today&&entry.in&&collaborators.find((employee)=>employee.id===entry.employeeId)?.branch===branch).length;const ready=cashOpen&&check.minimumStaff&&check.systemsReady&&check.processComplete;const opened=Boolean(check.openedAt)&&ready;return <div className={`openingCard ${opened?"opened":""}`} key={branch}><div className="sectionHead"><div><h3>{branch}</h3><span>{opened?`Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City"})}`:"Pendiente de validación"}</span></div><strong className={`statusPill ${opened?"ok":"warn"}`}>{opened?"TIENDA ABIERTA":"TIENDA CERRADA"}</strong></div><label><input type="checkbox" checked={cashOpen} readOnly/> Caja abierta por cajera/encargado</label>{!cashOpen&&["CAJERO","GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)&&<button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}<label><input type="checkbox" checked={check.minimumStaff} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{minimumStaff:event.target.checked,openedAt:undefined,openedById:undefined})}/> Personal mínimo confirmado <small>({staffPresent} entradas registradas)</small></label><label><input type="checkbox" checked={check.systemsReady} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{systemsReady:event.target.checked,openedAt:undefined,openedById:undefined})}/> Sistema, POS, impresora e internet funcionales</label><label><input type="checkbox" checked={check.processComplete} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{processComplete:event.target.checked,openedAt:undefined,openedById:undefined})}/> Proceso completo de seguridad y apertura</label>{canValidate&&!opened&&<button className="primary" disabled={!ready} onClick={()=>onUpdate(branch,{openedAt:new Date().toISOString(),openedById:user.id})}>Confirmar tienda abierta</button>}{opened&&<p className="ok">Confirmó {collaborators.find((employee)=>employee.id===check.openedById)?.name??check.openedById}</p>}</div>;})}</div></article>;
 }
 
 function SlaReviewPanel({ user, collaborators, tasks, runs, reviews, onReview }: { user: Employee; collaborators: Employee[]; tasks: DailyTask[]; runs: ActivityRun[]; reviews: SlaReview[]; onReview: (sourceType:SlaReview["sourceType"],sourceId:string,employeeId:string,decision:SlaReview["decision"],note:string)=>void }) {
