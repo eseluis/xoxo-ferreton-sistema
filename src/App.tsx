@@ -711,11 +711,14 @@ function App() {
       const currentCloudSchedules = cloudActivitySchedules.filter((item) => item.id !== "centro-traslado-apertura");
       const mergedActivitySchedules = [...currentCloudSchedules, ...defaultActivitySchedules.filter((preset) => !currentCloudSchedules.some((item) => item.id === preset.id))];
       setActivitySchedules(mergedActivitySchedules);
-      setCleaningRole(cloudCleaningRole);
+      const normalizedCleaning = cloudCleaningRole.map((row) => ({ ...row, branch: row.branch || "Matriz" as const }));
+      const mergedCleaning = [...normalizedCleaning, ...defaultCleaningRole.filter((preset)=>preset.branch==="Sucursal Centro"&&!normalizedCleaning.some((row)=>row.branch===preset.branch&&row.activity===preset.activity))];
+      setCleaningRole(mergedCleaning);
       setWorkLocations(cloudWorkLocations);
       setSlaReviews(cloudSlaReviews);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
       if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
+      if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
     };
     void hydrate();
   }, [isAuthenticated]);
@@ -737,8 +740,9 @@ function App() {
     return { ...own, average, rate: commissionRate(average, own.salesGoal, own.personalSales) };
   }, [evaluations, today, user.id]);
   const shiftMap = Object.fromEntries(shiftConfigs.map((shift) => [shift.key, shift])) as Record<string, ShiftConfig>;
-  const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole);
-  const currentCleaningRow = getEditableCleaningRow(user, cleaningRole);
+  const currentWorkLocation = workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch;
+  const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole, currentWorkLocation);
+  const currentCleaningRow = getEditableCleaningRow(user, cleaningRole, currentWorkLocation);
   const userTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
 
   const persistCollaborators = (next: Employee[]) => {
@@ -1722,15 +1726,15 @@ function LoginView({
   );
 }
 
-function getEditableCleaningAssignment(employee: Employee, cleaningRole: CleaningRole[]) {
-  const assignment = getEditableCleaningRow(employee, cleaningRole);
+function getEditableCleaningAssignment(employee: Employee, cleaningRole: CleaningRole[], branch: string = employee.branch) {
+  const assignment = getEditableCleaningRow(employee, cleaningRole, branch);
   if (!assignment) return "Sin aseo asignado en el rol editable";
   return `${assignment.activity} (${assignment.start} - ${assignment.end})`;
 }
 
-function getEditableCleaningRow(employee: Employee, cleaningRole: CleaningRole[]) {
+function getEditableCleaningRow(employee: Employee, cleaningRole: CleaningRole[], branch: string = employee.branch) {
   const dayName = weekDays[(new Date().getDay() + 6) % 7];
-  return cleaningRole.find((row) =>
+  return cleaningRole.find((row) => row.branch === branch &&
     row.assignments[dayName]
       .toLowerCase()
       .split("/")
@@ -1815,7 +1819,7 @@ function Dashboard({
     const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
     const myEvaluation = todaysEvaluations.find((entry) => entry.employeeId === user.id);
     const myAverage = myEvaluation ? myEvaluation.scores.reduce((sum, score) => sum + score, 0) / myEvaluation.scores.length : 0;
-    const myCleaning = getEditableCleaningAssignment(user, cleaningRole);
+    const myCleaning = getEditableCleaningAssignment(user, cleaningRole, locationFor(user));
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
     return <section className="grid">
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
@@ -2038,6 +2042,7 @@ function AttendanceView({
     });
   };
   const completeTask = (task: DailyTask) => {
+    if (task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) return;
     updateTask(task.id, { status: "Completada", completedAt: new Date().toISOString() });
   };
 
@@ -2170,6 +2175,7 @@ function AttendanceView({
                       placeholder="Incidencia que detiene la tarea"
                     />
                   </div>
+                  {task.requiresPhoto && task.startedAt && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div><div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div></div>}
                   <div className="taskActions">
                     {!task.startedAt && (
                       <button className="ghost compact" onClick={() => startDailyTask(task)}>
@@ -2183,7 +2189,7 @@ function AttendanceView({
                     >
                       Reportar incidencia y pausar
                     </button>
-                    <button className="primary compact" disabled={task.paused} onClick={() => completeTask(task)}>
+                    <button className="primary compact" disabled={task.paused || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture))} onClick={() => completeTask(task)}>
                       Marcar completada
                     </button>
                   </div>
@@ -2588,6 +2594,7 @@ function GovernanceView({
   cleaningRole: CleaningRole[];
   setCleaningRole: (value: CleaningRole[]) => void;
 }) {
+  const [cleaningBranch, setCleaningBranch] = useState<"Matriz" | "Sucursal Centro">("Matriz");
   const updateShift = (index: number, field: keyof ShiftConfig, value: string) => {
     const next = shiftConfigs.map((shift, current) => (current === index ? { ...shift, [field]: value } : shift));
     setShiftConfigs(next);
@@ -2609,6 +2616,10 @@ function GovernanceView({
     setCleaningRole(next);
     save("xoxo.cleaningRole", next);
   };
+
+  const updateCleaningField = (index:number,field:"activity"|"start"|"end"|"details",value:string) => { const next=cleaningRole.map((row,current)=>current===index?{...row,[field]:value}:row);setCleaningRole(next);save("xoxo.cleaningRole",next); };
+  const addCleaningRow = () => { const assignments=Object.fromEntries(weekDays.map((day)=>[day,""]));const next=[...cleaningRole,{branch:cleaningBranch,activity:"Nueva actividad de limpieza",start:"09:00",end:"09:30",details:"Describe el resultado esperado.",assignments} as CleaningRole];setCleaningRole(next);save("xoxo.cleaningRole",next); };
+  const removeCleaningRow = (index:number) => { const next=cleaningRole.filter((_,current)=>current!==index);setCleaningRole(next);save("xoxo.cleaningRole",next); };
 
   const resetDefaults = () => {
     setShiftConfigs(defaultShiftConfigs);
@@ -2707,8 +2718,8 @@ function GovernanceView({
 
       <article className="panelCard">
         <div className="sectionHead">
-          <h2>Rol de limpieza semanal</h2>
-          <span>Basado en la tabla anterior; editable por directivos</span>
+          <div><h2>Rol de limpieza semanal</h2><span>Configuración independiente para cada sucursal</span></div>
+          <div className="taskActions"><select value={cleaningBranch} onChange={(event)=>setCleaningBranch(event.target.value as typeof cleaningBranch)}><option>Matriz</option><option>Sucursal Centro</option></select><button className="primary compact" onClick={addCleaningRow}>Agregar actividad</button></div>
         </div>
         <div className="editableTable cleaningTable">
           <div className="editableRow head">
@@ -2717,13 +2728,13 @@ function GovernanceView({
               <span key={day}>{day}</span>
             ))}
           </div>
-          {cleaningRole.map((row, index) => (
-            <div className="editableRow" key={row.activity}>
+          {cleaningRole.map((row, index) => ({row,index})).filter(({row})=>row.branch===cleaningBranch).map(({row,index}) => (
+            <div className="editableRow" key={`${row.branch}-${row.activity}-${index}`}>
               <div>
-                <strong>{row.activity}</strong>
-                <small>
-                  {row.start}-{row.end}
-                </small>
+                <input value={row.activity} onChange={(event)=>updateCleaningField(index,"activity",event.target.value)}/>
+                <span className="inlineTimes"><input type="time" value={row.start} onChange={(event)=>updateCleaningField(index,"start",event.target.value)}/><input type="time" value={row.end} onChange={(event)=>updateCleaningField(index,"end",event.target.value)}/></span>
+                <input value={row.details} onChange={(event)=>updateCleaningField(index,"details",event.target.value)} placeholder="Resultado esperado"/>
+                <button className="ghost danger compact" onClick={()=>removeCleaningRow(index)}>Eliminar</button>
               </div>
               {weekDays.map((day) => (
                 <input key={day} value={row.assignments[day]} onChange={(event) => updateCleaning(index, day, event.target.value)} />
@@ -3676,6 +3687,7 @@ function TasksView({
         incidentNote: "",
         paused: false,
         approvalStatus: "No requerida",
+        requiresPhoto: form.get("requiresPhoto") === "on",
       },
     ];
     setDailyTasks(next);
@@ -3748,6 +3760,7 @@ function TasksView({
           <option>Baja</option>
         </select>
         <textarea name="notes" placeholder="Misión bien redactada: objetivo, pasos, resultado esperado y evidencia" required />
+        <label className="auditClose"><input name="requiresPhoto" type="checkbox" defaultChecked /> Exigir foto antes y después de la tarea</label>
         {taskError&&<p className="loginError">{taskError}</p>}
         <button className="primary">Asignar</button>
       </form>}
@@ -3791,6 +3804,7 @@ function TasksView({
                   <span>{task.approvalStatus || "No requerida"}</span>
                 </div>
               </div>
+              {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>Foto antes</strong>{task.beforeEvidenceCapture?<EvidenceCaptured value={task.beforeEvidenceCapture} label="Antes de tarea" onClear={()=>{}} retakeLabel="" readOnly/>:<p className="muted">Pendiente</p>}</div><div><strong>Foto después</strong>{task.afterEvidenceCapture?<EvidenceCaptured value={task.afterEvidenceCapture} label="Después de tarea" onClear={()=>{}} retakeLabel="" readOnly/>:<p className="muted">Pendiente</p>}</div></div>}
               {isAuxiliary ? <textarea
                 value={task.employeeComment ?? ""}
                 onChange={(event) => updateTaskPatch(task.id, { employeeComment: event.target.value })}

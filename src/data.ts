@@ -88,6 +88,7 @@ export type ActivitySchedule = {
 };
 
 export type CleaningRole = {
+  branch: "Matriz" | "Sucursal Centro";
   activity: string;
   start: string;
   end: string;
@@ -116,6 +117,9 @@ export type DailyTask = {
   startedAt?: string;
   completedAt?: string;
   escalated?: boolean;
+  requiresPhoto?: boolean;
+  beforeEvidenceCapture?: { dataUrl: string; capturedAt: string; lat?: number; lng?: number; accuracyM?: number };
+  afterEvidenceCapture?: { dataUrl: string; capturedAt: string; lat?: number; lng?: number; accuracyM?: number };
 };
 
 export const roleRank: Record<Role, number> = {
@@ -536,6 +540,7 @@ export const weekDays = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "S
 
 export const defaultCleaningRole: CleaningRole[] = [
   {
+    branch: "Matriz",
     activity: "Barrer en frente",
     start: "08:30",
     end: "09:00",
@@ -552,6 +557,7 @@ export const defaultCleaningRole: CleaningRole[] = [
     },
   },
   {
+    branch: "Matriz",
     activity: "Lavar bano 1",
     start: "08:30",
     end: "09:00",
@@ -567,6 +573,7 @@ export const defaultCleaningRole: CleaningRole[] = [
     },
   },
   {
+    branch: "Matriz",
     activity: "Barrer atras",
     start: "09:00",
     end: "09:30",
@@ -583,6 +590,7 @@ export const defaultCleaningRole: CleaningRole[] = [
     },
   },
   {
+    branch: "Matriz",
     activity: "Lavar bano 2",
     start: "08:30",
     end: "09:00",
@@ -598,6 +606,7 @@ export const defaultCleaningRole: CleaningRole[] = [
     },
   },
   {
+    branch: "Matriz",
     activity: "Trapear atras",
     start: "09:00",
     end: "09:30",
@@ -613,6 +622,7 @@ export const defaultCleaningRole: CleaningRole[] = [
     },
   },
   {
+    branch: "Matriz",
     activity: "Acomodo de basura",
     start: "18:20",
     end: "18:40",
@@ -627,6 +637,12 @@ export const defaultCleaningRole: CleaningRole[] = [
       Domingo: "",
     },
   },
+  { branch:"Sucursal Centro",activity:"Barrer toda la tienda",start:"09:00",end:"10:00",details:"Daniel barre toda la tienda sin descuidar la entrada.",assignments:{Lunes:"Daniel",Martes:"Daniel",Miercoles:"Daniel",Jueves:"Daniel",Viernes:"Daniel",Sabado:"Daniel",Domingo:"Daniel"} },
+  { branch:"Sucursal Centro",activity:"Trapear toda la tienda",start:"09:00",end:"10:00",details:"Jan trapea toda la tienda manteniendo paso seguro para clientes.",assignments:{Lunes:"Jan",Martes:"Jan",Miercoles:"Jan",Jueves:"Jan",Viernes:"Jan",Sabado:"Jan",Domingo:"Jan"} },
+  { branch:"Sucursal Centro",activity:"Limpieza de baño 1",start:"09:00",end:"10:00",details:"Lavado y desinfección completa del baño 1.",assignments:{Lunes:"Daniel",Martes:"Daniel",Miercoles:"Daniel",Jueves:"Daniel",Viernes:"Daniel",Sabado:"Daniel",Domingo:"Daniel"} },
+  { branch:"Sucursal Centro",activity:"Limpieza de baño 2",start:"09:00",end:"10:00",details:"Lavado y desinfección completa del baño 2.",assignments:{Lunes:"Jan",Martes:"Jan",Miercoles:"Jan",Jueves:"Jan",Viernes:"Jan",Sabado:"Jan",Domingo:"Jan"} },
+  { branch:"Sucursal Centro",activity:"Mostradores, trapos y zona de trabajo",start:"09:00",end:"10:00",details:"Daniel limpia mostradores, trapos y área de atención.",assignments:{Lunes:"Daniel",Martes:"Daniel",Miercoles:"Daniel",Jueves:"Daniel",Viernes:"Daniel",Sabado:"Daniel",Domingo:"Daniel"} },
+  { branch:"Sucursal Centro",activity:"Basura, plantas y orden exterior",start:"17:00",end:"18:00",details:"Jan ordena basura y plantas y deja limpia la zona exterior.",assignments:{Lunes:"Jan",Martes:"Jan",Miercoles:"Jan",Jueves:"Jan",Viernes:"Jan",Sabado:"Jan",Domingo:"Jan"} },
 ];
 
 export const defaultActivitySchedules: ActivitySchedule[] = [
