@@ -192,6 +192,28 @@ button {
   color: var(--text-muted);
 }
 
+.systemClock {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.25rem;
+  color: var(--ok);
+}
+
+.systemClock span {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.systemClock strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+.systemClock small {
+  text-transform: capitalize;
+}
+
 .sidebar .brand small,
 .sidebar .loginLabel {
   color: #8fa398;

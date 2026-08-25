@@ -550,6 +550,7 @@ const oaxacaNow = () => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Me
 const oaxacaDateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 function App() {
+  const [clockNow, setClockNow] = useState(() => new Date());
   const [activeId, setActiveId] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -589,6 +590,11 @@ function App() {
   const [note, setNote] = useState("");
   const [personalSales, setPersonalSales] = useState(0);
   const [salesGoal, setSalesGoal] = useState(1000);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   const navigate = (targetView: string) => {
     if (canAccessView(user, targetView)) setView(targetView);
@@ -1447,7 +1453,7 @@ function App() {
       <main>
         <header className="topbar">
           <div>
-            <small>{today}</small>
+            <div className="systemClock"><Clock size={18}/><span><strong>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(clockNow)}</strong><small>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",weekday:"long",day:"2-digit",month:"long",year:"numeric"}).format(clockNow)} · Oaxaca de Juárez</small></span></div>
             <h1>{titleFor(view)}</h1>
           </div>
           <div className="userPill">
