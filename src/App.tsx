@@ -4013,6 +4013,7 @@ function TasksView({
         title: String(form.get("title")),
         employeeId,
         assignedById: user.id,
+        assignedAt: new Date().toISOString(),
         date: today,
         start,
         end,
@@ -4063,10 +4064,13 @@ function TasksView({
     setDailyTasks(dailyTasks.filter((task) => task.id !== id));
   };
 
+  const [reviewEmployee, setReviewEmployee] = useState("Todos");
   const visibleTasks = canViewAll(user)
     ? dailyTasks
     : dailyTasks.filter((task) => task.employeeId === user.id || task.assignedById === user.id);
-  const reviewedTasks = visibleTasks.filter((task) => reviewStatus === "Todas" || task.status === reviewStatus);
+  const reviewedTasks = visibleTasks
+    .filter((task) => reviewStatus === "Todas" || task.status === reviewStatus)
+    .filter((task) => reviewEmployee === "Todos" || task.employeeId === reviewEmployee);
   const canDirectAllTasks = ["001", "002", "003"].includes(user.id);
   const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.id === "006");
 
@@ -4112,18 +4116,35 @@ function TasksView({
       </article>}
 
       <article className="panelCard">
-        <div className="sectionHead"><div><h2>Revisión de tareas</h2><span>Asignadas, en proceso, incidencias y terminadas.</span></div><select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select></div>
+        <div className="sectionHead">
+          <div><h2>Revisión de tareas</h2><span>Asignadas, en proceso, incidencias y terminadas.{canViewAll(user)?` · ${visibleTasks.length} tareas de todo el personal`:""}</span></div>
+          <span className="inlineTimes">
+            {canViewAll(user) && <select value={reviewEmployee} onChange={(event)=>setReviewEmployee(event.target.value)}><option value="Todos">Todos los colaboradores</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select>}
+            <select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select>
+          </span>
+        </div>
         <div className="taskList">
           {reviewedTasks.map((task) => (
             <div className="taskFollowCard" key={task.id}>
               <div className="sectionHead">
                 <span>
                   {canDirectAllTasks ? <input value={task.title} onChange={(event)=>updateTaskPatch(task.id,{title:event.target.value})}/> : <strong>{task.title}</strong>}
-                  <small>{collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.priority}</small>
+                  {canDirectAllTasks ? (
+                    <span className="inlineTimes">
+                      <select value={task.employeeId} onChange={(event)=>updateTaskPatch(task.id,{employeeId:event.target.value})}>
+                        {collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                      </select>
+                      <select value={task.priority} onChange={(event)=>updateTaskPatch(task.id,{priority:event.target.value as DailyTask["priority"]})}>
+                        <option>Alta</option><option>Media</option><option>Baja</option>
+                      </select>
+                    </span>
+                  ) : <small>{collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.priority}</small>}
+                  <small>Asignó {collaborators.find((employee) => employee.id === task.assignedById)?.name ?? task.assignedById}{task.assignedAt ? ` · ${new Date(task.assignedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}` : ""}</small>
                   {canDirectAllTasks ? <span className="inlineTimes"><input type="time" value={task.start} onChange={(event)=>updateTaskPatch(task.id,{start:event.target.value})}/><input type="time" value={task.end} onChange={(event)=>updateTaskPatch(task.id,{end:event.target.value})}/></span> : <small>{task.start}-{task.end}</small>}
                 </span>
                 <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
               </div>
+              {canDirectAllTasks && <textarea value={task.notes} onChange={(event)=>updateTaskPatch(task.id,{notes:event.target.value})} placeholder="Instrucciones de la tarea"/>}
               <div className="taskFollowGrid">
                 <div>
                   <small>Paso actual</small>

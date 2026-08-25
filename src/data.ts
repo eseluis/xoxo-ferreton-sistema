@@ -101,6 +101,7 @@ export type DailyTask = {
   title: string;
   employeeId: string;
   assignedById: string;
+  assignedAt?: string;
   date: string;
   start: string;
   end: string;
