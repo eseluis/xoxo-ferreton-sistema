@@ -267,6 +267,8 @@ type ProcessInstance = {
   date: string;
   status: "Activo" | "Completado" | "Incidencia";
   notes: string;
+  startedAt?: string;
+  slaMinutes?: number;
   stepStates: {
     title: string;
     owner: string;
@@ -280,6 +282,7 @@ type ProcessInstance = {
   }[];
   fleteType?: "Fletera externa" | "Flete propio del proveedor";
   merchandisingTipo?: "Normal" | "Oferta" | "Producto ancla" | "Novedad";
+  stockingAssigneeId?: string;
 };
 
 type InternalRequest = {
@@ -1957,7 +1960,7 @@ function Dashboard({
                     <span className={`statusPill ${live.className}`}>{live.sub}</span>
                     {activeTask?.approvalStatus === "Pendiente" ? <small className="danger">Requiere aprobacion</small> : null}
                   </span>
-                  <span><small>Anterior: {sequence.previous?.title ?? "--"}</small><strong>Ahora: {sequence.current?.title ?? live.label}</strong><small>Siguiente: {sequence.next?.title ?? "--"} · {locationFor(employee)}</small></span>
+                  <span><small>Anterior: {sequence.previous?.title ?? "--"}</small><strong>Ahora: {sequence.current?.title ?? live.label}</strong><small>Siguiente: {sequence.next?.title ?? "--"} · {locationFor(employee)}</small>{(canViewAll(user) || employee.supervisorId === user.id) && <button className="ghost compact" onClick={() => onNavigate("tareas")}>Cambiar o quitar actividad</button>}</span>
                 </div>
               );
             })}
@@ -2109,6 +2112,7 @@ function AttendanceView({
                 scheduledStart={cleaningRow.start}
                 scheduledEnd={cleaningRow.end}
                 slaMinutes={slaMinutes}
+                evidence="photo"
                 run={runFor("Aseo", cleaningRow.activity)}
                 onStart={() =>
                   startActivityRun({
@@ -2118,12 +2122,26 @@ function AttendanceView({
                     scheduledStart: cleaningRow.start,
                     scheduledEnd: cleaningRow.end,
                     slaMinutes,
+                    evidence: "photo",
                   })
                 }
                 onComplete={completeActivityRun}
+                onCapturePhoto={(phase, evidence) => setActivityPhoto(runFor("Aseo", cleaningRow.activity)!.id, phase, evidence)}
+                onClearPhoto={(phase) => setActivityPhoto(runFor("Aseo", cleaningRow.activity)!.id, phase, undefined)}
               />
             );
           })()}
+        <div className="cleaningChecklist">
+          <strong>Lista obligatoria para un buen aseo</strong>
+          <ul className="guideList">
+            <li>Retirar toda la mercancía del mostrador.</li>
+            <li>Limpiar y desinfectar la superficie, esquinas y equipo.</li>
+            <li>Acomodar únicamente el material autorizado en su lugar.</li>
+            <li>Limpiar piso, exhibición y zona de atención.</li>
+            <li>Confirmar que no quede mercancía sobre los mostradores.</li>
+            <li>Subir foto de antes y foto de cómo quedó.</li>
+          </ul>
+        </div>
         <div className="punchGrid">
           <button onClick={() => updateAttendance("in")}>Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}</button>
           <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
@@ -3009,6 +3027,8 @@ function ProcessesView({
       date: todayKey(),
       status: "Activo",
       notes,
+      startedAt: new Date().toISOString(),
+      slaMinutes: process.id === "recepcion-mercancia" ? 180 : undefined,
       stepStates: process.steps.map((step) => ({
         title: step.title,
         owner: step.owner,
@@ -3027,7 +3047,7 @@ function ProcessesView({
   const availableOwners = collaborators.filter((employee) => employee.id === user.id || canAssign(user, employee));
   const visibleInstances = canViewAll(user)
     ? processInstances
-    : processInstances.filter((instance) => instance.ownerId === user.id || instance.startedById === user.id);
+    : processInstances.filter((instance) => instance.processId === "recepcion-mercancia" || instance.ownerId === user.id || instance.startedById === user.id);
   const activeInstances = visibleInstances.filter((instance) => instance.status === "Activo" || instance.status === "Incidencia");
 
   return (
@@ -3050,6 +3070,7 @@ function ProcessesView({
                 <RecepcionMercanciaCard
                   key={instance.id}
                   instance={instance}
+                  user={user}
                   owner={owner}
                   collaborators={collaborators}
                   updateInstance={updateInstance}
@@ -3200,17 +3221,24 @@ function merchandisingHint(tipo?: ProcessInstance["merchandisingTipo"]) {
 
 function RecepcionMercanciaCard({
   instance,
+  user,
   owner,
+  collaborators,
   updateInstance,
   notify,
 }: {
   instance: ProcessInstance;
+  user: Employee;
   owner?: Employee;
   collaborators: Employee[];
   updateInstance: (instance: ProcessInstance) => void;
   notify: (title: string, message: string, recipientId: string | undefined, priority?: InternalRequest["priority"]) => void;
 }) {
   const completed = instance.stepStates.filter((step) => step.done).length;
+  const merchandiseSla = instance.slaMinutes ?? 180;
+  const canManageReception = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
+  const canInspect = canManageReception || user.role === "JEFE_AREA";
+  const canCaptureErp = canGovern(user) || ["007", "009", "010"].includes(user.id);
   const luzVerde = instance.stepStates[RECEPCION_LUZ_VERDE_INDEX]?.done ?? false;
   const isUnlocked = (index: number) => (index === 0 ? Boolean(instance.fleteType) : Boolean(instance.stepStates[index - 1]?.done));
 
@@ -3267,6 +3295,11 @@ function RecepcionMercanciaCard({
         <span className={instance.status === "Incidencia" ? "status dangerText" : "status"}>{instance.status}</span>
       </div>
 
+      <div className="processSlaBanner">
+        <span>Tiempo máximo para completar todo el proceso: 3 horas</span>
+        {instance.startedAt ? <LiveStopwatch startedAt={instance.startedAt} slaMinutes={merchandiseSla} /> : <strong>Proceso anterior sin hora de inicio</strong>}
+      </div>
+
       {luzVerde && (
         <div className="luzVerdeBanner">
           <Sparkles size={16} /> LUZ VERDE — precios capturados, ya se puede acomodar y exhibir
@@ -3296,6 +3329,7 @@ function RecepcionMercanciaCard({
         {instance.stepStates.map((step, index) => {
           const unlocked = isUnlocked(index);
           const gatedByLuzVerde = index === RECEPCION_LUZ_VERDE_INDEX + 1 && !luzVerde;
+          const authorized = index === 0 || (index >= 1 && index <= 3 && canInspect) || (index >= 4 && index <= 5 && canCaptureErp) || (index === 6 && (canInspect || user.role === "AUXILIAR") && (!instance.stockingAssigneeId || instance.stockingAssigneeId === user.id || canInspect)) || (index === 7 && canManageReception);
           return (
             <div className={`luzVerdeStep ${step.done ? "done" : unlocked ? "active" : "locked"}`} key={`${instance.id}-${step.title}`}>
               <div className="stepHeader">
@@ -3309,16 +3343,18 @@ function RecepcionMercanciaCard({
                 </span>
                 {step.done ? (
                   <CheckCircle2 className="greenIcon" size={18} />
-                ) : unlocked ? (
+                ) : unlocked && authorized ? (
                   <button className="ghost compact" onClick={() => completeStep(index)}>
                     Marcar hecho
                   </button>
+                ) : unlocked ? (
+                  <span className="statusPill muted">Esperando: {step.owner}</span>
                 ) : (
                   <span className="statusPill muted">{gatedByLuzVerde ? "Esperando luz verde" : "Bloqueado"}</span>
                 )}
               </div>
               {index === RECEPCION_LUZ_VERDE_INDEX + 1 && (
-                <label className="merchandisingSelect">
+                <><label className="merchandisingSelect">
                   Tipo de exhibicion
                   <select
                     value={instance.merchandisingTipo ?? "Normal"}
@@ -3333,10 +3369,10 @@ function RecepcionMercanciaCard({
                     <option value="Novedad">Novedad</option>
                   </select>
                   <small>{merchandisingHint(instance.merchandisingTipo)}</small>
-                </label>
+                </label>{canInspect && <label className="merchandisingSelect">Responsable del acomodo<select value={instance.stockingAssigneeId ?? ""} onChange={(event) => updateInstance({ ...instance, stockingAssigneeId: event.target.value || undefined })}><option value="">Jefe de área lo realizará</option>{collaborators.filter((person) => ["JEFE_AREA", "AUXILIAR"].includes(person.role)).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.branch}</option>)}</select></label>}</>
               )}
-              {unlocked && step.evidence === "photo" && !step.done && <div className="beforeAfterEvidence"><div><strong>Foto antes</strong><PhotoCapture label="Antes" value={step.beforeEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"before",evidence)} onClear={()=>setStepPhoto(index,"before",undefined)}/></div><div><strong>Foto después</strong><PhotoCapture label="Después" value={step.afterEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"after",evidence)} onClear={()=>setStepPhoto(index,"after",undefined)}/></div></div>}
-              {unlocked && step.evidence !== "none" && step.evidence !== "photo" && !step.done && (
+              {unlocked && authorized && step.evidence === "photo" && !step.done && <div className="beforeAfterEvidence"><div><strong>Foto antes</strong><PhotoCapture label="Antes" value={step.beforeEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"before",evidence)} onClear={()=>setStepPhoto(index,"before",undefined)}/></div><div><strong>Foto después</strong><PhotoCapture label="Después" value={step.afterEvidenceCapture} onCapture={(evidence)=>setStepPhoto(index,"after",evidence)} onClear={()=>setStepPhoto(index,"after",undefined)}/></div></div>}
+              {unlocked && authorized && step.evidence !== "none" && step.evidence !== "photo" && !step.done && (
                 <EvidenceField
                   evidence={step.evidence}
                   value={step.evidenceCapture}
@@ -3344,7 +3380,7 @@ function RecepcionMercanciaCard({
                   onClear={() => setStepEvidence(index, undefined)}
                 />
               )}
-              {!step.done && unlocked && (
+              {!step.done && unlocked && authorized && (
                 <textarea
                   value={step.note}
                   onChange={(event) => setStepNote(index, event.target.value)}
