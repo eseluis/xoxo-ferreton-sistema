@@ -511,9 +511,11 @@ const load = <T,>(key: string, fallback: T): T => {
   return raw ? (JSON.parse(raw) as T) : fallback;
 };
 
+let lastCloudMutationAt = 0;
 const save = (key: string, value: unknown) => {
+  lastCloudMutationAt = Date.now();
   if (!isCloudReady) localStorage.setItem(key, JSON.stringify(value));
-  void cloudSave(key, value);
+  void cloudSave(key, value).catch((error) => console.error("No se pudo guardar la evidencia en la nube", error));
 };
 
 type WorkLocation = {
@@ -549,6 +551,17 @@ type StoreOpeningCheck = {
   openedById?: string;
 };
 
+type DailyClosure = {
+  date: string;
+  closedAt: string;
+  attendanceRecords: number;
+  completedTasks: number;
+  incompleteTasks: number;
+  incompleteActivities: number;
+  incompleteProcesses: number;
+  alertsCreated: number;
+};
+
 const clearLegacyLocalCache = () => {
   if (!isCloudReady) return;
   Object.keys(localStorage)
@@ -558,12 +571,14 @@ const clearLegacyLocalCache = () => {
 
 const timeNow = () =>
   new Intl.DateTimeFormat("es-MX", {
+    timeZone: "America/Mexico_City",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date());
 
 const oaxacaNow = () => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "full", timeStyle: "medium" }).format(new Date());
 const oaxacaDateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const oaxacaDateKeyFrom = (value: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
 
 function App() {
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -597,6 +612,7 @@ function App() {
   const [workLocations, setWorkLocations] = useState<WorkLocation[]>(() => load("xoxo.workLocations", []));
   const [slaReviews, setSlaReviews] = useState<SlaReview[]>(() => load("xoxo.slaReviews", []));
   const [storeOpeningChecks, setStoreOpeningChecks] = useState<StoreOpeningCheck[]>(() => load("xoxo.storeOpeningChecks", []));
+  const [dailyClosures, setDailyClosures] = useState<DailyClosure[]>(() => load("xoxo.dailyClosures", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
     load("xoxo.activitySchedules", defaultActivitySchedules),
@@ -748,9 +764,10 @@ function App() {
     let refreshing = false;
     const refreshOperationalState = async () => {
       if (refreshing) return;
+      if (Date.now() - lastCloudMutationAt < 12000) return;
       refreshing = true;
       try {
-        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations] = await Promise.all([
+        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures] = await Promise.all([
           cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
           cloudRefresh<ProcessInstance[]>("xoxo.processInstances"),
           cloudRefresh<InternalRequest[]>("xoxo.internalRequests"),
@@ -759,6 +776,7 @@ function App() {
           cloudRefresh<StoreOpeningCheck[]>("xoxo.storeOpeningChecks"),
           cloudRefresh<ActivityRun[]>("xoxo.activityRuns"),
           cloudRefresh<WorkLocation[]>("xoxo.workLocations"),
+          cloudRefresh<DailyClosure[]>("xoxo.dailyClosures"),
         ]);
         if (latestTasks) setDailyTasks(latestTasks);
         if (latestProcesses) setProcessInstances(latestProcesses);
@@ -768,6 +786,7 @@ function App() {
         if (latestOpeningChecks) setStoreOpeningChecks(latestOpeningChecks);
         if (latestActivityRuns) setActivityRuns(latestActivityRuns);
         if (latestWorkLocations) setWorkLocations(latestWorkLocations);
+        if (latestClosures) setDailyClosures(latestClosures);
       } finally {
         refreshing = false;
       }
@@ -861,9 +880,11 @@ function App() {
     save("xoxo.processInstances", next);
   };
 
-  const updateAttendance = (field: keyof Attendance) => {
-    const next = attendance.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
-    next.push({ ...(myAttendance ?? { employeeId: user.id, date: today }), [field]: timeNow() });
+  const updateAttendance = async (field: keyof Attendance) => {
+    const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
+    const existing = latest.find((entry) => entry.employeeId === user.id && entry.date === today) ?? myAttendance;
+    const next = latest.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
+    next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow() });
     setAttendance(next);
     save("xoxo.attendance", next);
   };
@@ -927,11 +948,12 @@ function App() {
     save("xoxo.slaReviews", next);
   };
 
-  const updateStoreOpening = (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => {
+  const updateStoreOpening = async (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => {
+    const latest = await cloudRefresh<StoreOpeningCheck[]>("xoxo.storeOpeningChecks") ?? storeOpeningChecks;
     const id = `${today}-${branch}`;
-    const existing = storeOpeningChecks.find((item)=>item.id===id) ?? { id, branch, date: today, minimumStaff:false, systemsReady:false, processComplete:false };
+    const existing = latest.find((item)=>item.id===id) ?? { id, branch, date: today, minimumStaff:false, systemsReady:false, processComplete:false };
     const updated = { ...existing, ...patch, managerId: user.id };
-    const next = [...storeOpeningChecks.filter((item)=>item.id!==id), updated];
+    const next = [...latest.filter((item)=>item.id!==id), updated];
     setStoreOpeningChecks(next);
     save("xoxo.storeOpeningChecks", next);
   };
@@ -1297,6 +1319,38 @@ function App() {
     save("xoxo.internalRequests", next);
   };
 
+  useEffect(() => {
+    if (!isAuthenticated || !canGovern(user)) return;
+    const closePreviousDay = async () => {
+      const prior = new Date();
+      prior.setDate(prior.getDate() - 1);
+      const priorDate = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(prior);
+      const [closuresCloud, tasksCloud, processesCloud, attendanceCloud, requestsCloud, runsCloud] = await Promise.all([
+        cloudRefresh<DailyClosure[]>("xoxo.dailyClosures"), cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
+        cloudRefresh<ProcessInstance[]>("xoxo.processInstances"), cloudRefresh<Attendance[]>("xoxo.attendance"),
+        cloudRefresh<InternalRequest[]>("xoxo.internalRequests"),
+        cloudRefresh<ActivityRun[]>("xoxo.activityRuns"),
+      ]);
+      const closures = closuresCloud ?? dailyClosures;
+      if (closures.some((closure) => closure.date === priorDate)) return;
+      const priorTasks = (tasksCloud ?? dailyTasks).filter((task) => task.date === priorDate);
+      const incompleteTasks = priorTasks.filter((task) => task.status !== "Completada");
+      const incompleteProcesses = (processesCloud ?? processInstances).filter((process) => process.date === priorDate && process.status !== "Completado");
+      const incompleteActivities = (runsCloud ?? activityRuns).filter((run) => run.startedAt && oaxacaDateKeyFrom(run.startedAt) === priorDate && !run.completedAt);
+      const existingRequests = requestsCloud ?? internalRequests;
+      const taskAlerts: InternalRequest[] = incompleteTasks.map((task) => ({ id: `cierre-${priorDate}-${task.id}`, type: "Reporte", title: `Tarea no terminada: ${task.title}`, message: `El corte diario detectó que ${collaborators.find((person) => person.id === task.employeeId)?.name ?? task.employeeId} no terminó esta tarea. Debe revisarse la evidencia y determinar la sanción correspondiente.`, requestedById: "sistema", recipientId: task.assignedById, date: today, priority: "Alta", status: "Abierta", confidentiality: "Normal", response: "" }));
+      const activityAlerts: InternalRequest[] = incompleteActivities.map((run) => { const employee = collaborators.find((person) => person.id === run.employeeId); return { id: `cierre-${priorDate}-${run.id}`, type: "Reporte", title: `Actividad no terminada: ${run.title}`, message: `${employee?.name ?? run.employeeId} inició esta actividad y no registró su conclusión. Debe revisarse para determinar la sanción correspondiente.`, requestedById: "sistema", recipientId: currentSupervisor(employee ?? user, collaborators)?.id ?? "003", date: today, priority: "Alta", status: "Abierta", confidentiality: "Normal", response: "" }; });
+      const processAlerts: InternalRequest[] = incompleteProcesses.map((process) => ({ id: `cierre-${priorDate}-${process.id}`, type: "Reporte", title: `Proceso pendiente: ${process.title}`, message: `El proceso del día anterior quedó sin completar y requiere seguimiento y determinación de responsabilidad.`, requestedById: "sistema", recipientId: process.startedById || "003", date: today, priority: "Alta", status: "Abierta", confidentiality: "Normal", response: "" }));
+      const alerts = [...taskAlerts, ...activityAlerts, ...processAlerts];
+      const uniqueAlerts = alerts.filter((alert) => !existingRequests.some((request) => request.id === alert.id));
+      const closure: DailyClosure = { date: priorDate, closedAt: new Date().toISOString(), attendanceRecords: (attendanceCloud ?? attendance).filter((entry) => entry.date === priorDate).length, completedTasks: priorTasks.length - incompleteTasks.length, incompleteTasks: incompleteTasks.length, incompleteActivities: incompleteActivities.length, incompleteProcesses: incompleteProcesses.length, alertsCreated: uniqueAlerts.length };
+      const nextClosures = [closure, ...closures];
+      setDailyClosures(nextClosures); save("xoxo.dailyClosures", nextClosures);
+      if (uniqueAlerts.length) { const nextRequests = [...uniqueAlerts, ...existingRequests]; setInternalRequests(nextRequests); save("xoxo.internalRequests", nextRequests); }
+    };
+    void closePreviousDay();
+  }, [isAuthenticated, user.id]);
+
   const startActivityRun = (item: {
     itemType: ActivityRun["itemType"];
     itemId: string;
@@ -1566,6 +1620,7 @@ function App() {
           <AttendanceView
             user={user}
             attendance={attendance}
+            dailyClosures={dailyClosures}
             collaborators={collaborators}
             myAttendance={myAttendance}
             updateAttendance={updateAttendance}
@@ -2060,6 +2115,7 @@ function Dashboard({
 function AttendanceView({
   user,
   attendance,
+  dailyClosures,
   collaborators,
   myAttendance,
   updateAttendance,
@@ -2081,6 +2137,7 @@ function AttendanceView({
 }: {
   user: Employee;
   attendance: Attendance[];
+  dailyClosures: DailyClosure[];
   collaborators: Employee[];
   myAttendance?: Attendance;
   updateAttendance: (field: keyof Attendance) => void;
@@ -2339,6 +2396,13 @@ function AttendanceView({
             })}
             {attendanceLog.length === 0 && <p className="muted">Todavía no hay registros de asistencia.</p>}
           </div>
+        </article>
+      )}
+
+      {canViewAll(user) && (
+        <article className="wide panelCard">
+          <div className="sectionHead"><div><h2>Cortes diarios guardados</h2><span>Cada día anterior queda cerrado como evidencia y el nuevo día inicia separado.</span></div><strong>{dailyClosures.length} cortes</strong></div>
+          <div className="taskList">{dailyClosures.slice(0, 30).map((closure) => <div className="taskRow" key={closure.date}><span><strong>{closure.date}</strong><small>Cerrado {new Date(closure.closedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}</small></span><span>Asistencias: {closure.attendanceRecords} · Tareas pendientes: {closure.incompleteTasks} · Actividades pendientes: {closure.incompleteActivities ?? 0} · Procesos pendientes: {closure.incompleteProcesses}</span><strong className={closure.alertsCreated ? "danger" : "ok"}>{closure.alertsCreated} alertas</strong></div>)}</div>
         </article>
       )}
     </section>

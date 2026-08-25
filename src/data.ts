@@ -1083,7 +1083,7 @@ export const internalRules: InternalRule[] = [
   },
 ];
 
-export const todayKey = () => new Date().toISOString().slice(0, 10);
+export const todayKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 
 export function getCleaningAssignment(employeeId: string, date = new Date()) {
   const employee = employees.find((person) => person.id === employeeId);
