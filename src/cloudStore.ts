@@ -10,6 +10,22 @@ const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ||
 const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) || publicSupabaseAnonKey;
 
 export const isCloudReady = Boolean(supabaseUrl && supabaseAnonKey);
+const pendingStorageKey = (key: string) => `xoxo.pending.${key}`;
+
+function pendingValue<T>(key: string): T | undefined {
+  if (typeof window === "undefined") return undefined;
+  const raw = window.localStorage.getItem(pendingStorageKey(key));
+  if (!raw) return undefined;
+  try { return JSON.parse(raw) as T; } catch { return undefined; }
+}
+
+export function markCloudPending(key: string, value: unknown) {
+  if (typeof window !== "undefined") window.localStorage.setItem(pendingStorageKey(key), JSON.stringify(value));
+}
+
+export function clearCloudPending(key: string) {
+  if (typeof window !== "undefined") window.localStorage.removeItem(pendingStorageKey(key));
+}
 export const supabase = isCloudReady
   ? createClient(supabaseUrl!, supabaseAnonKey!, {
       auth: {
@@ -90,6 +106,11 @@ const moduleTables: Record<string, string> = {
 
 export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
+  const pending = pendingValue<T>(key);
+  if (pending !== undefined) {
+    try { await cloudSave(key, pending); clearCloudPending(key); } catch { return pending; }
+    return pending;
+  }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
@@ -105,6 +126,11 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
 // de cloudLoad, no sustituye el estado actual cuando hay una falla de red.
 export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   if (!supabase) return undefined;
+  const pending = pendingValue<T>(key);
+  if (pending !== undefined) {
+    try { await cloudSave(key, pending); clearCloudPending(key); } catch { /* conservar para el siguiente intento */ }
+    return pending;
+  }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });

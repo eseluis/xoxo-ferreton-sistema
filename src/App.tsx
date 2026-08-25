@@ -52,6 +52,8 @@ import {
   getSession,
   isCloudReady,
   manageEmployeeAccess,
+  markCloudPending,
+  clearCloudPending,
   sessionEmployeeNumber,
   signIn,
   signOut,
@@ -514,8 +516,11 @@ const load = <T,>(key: string, fallback: T): T => {
 let lastCloudMutationAt = 0;
 const save = (key: string, value: unknown) => {
   lastCloudMutationAt = Date.now();
-  if (!isCloudReady) localStorage.setItem(key, JSON.stringify(value));
-  void cloudSave(key, value).catch((error) => console.error("No se pudo guardar la evidencia en la nube", error));
+  localStorage.setItem(key, JSON.stringify(value));
+  markCloudPending(key, value);
+  void cloudSave(key, value)
+    .then(() => clearCloudPending(key))
+    .catch((error) => console.error("No se pudo guardar la evidencia en la nube; se conserva localmente para reintento", error));
 };
 
 type WorkLocation = {
@@ -563,10 +568,8 @@ type DailyClosure = {
 };
 
 const clearLegacyLocalCache = () => {
-  if (!isCloudReady) return;
-  Object.keys(localStorage)
-    .filter((key) => key.startsWith("xoxo."))
-    .forEach((key) => localStorage.removeItem(key));
+  // Los datos operativos y pendientes no se eliminan: son evidencia hasta que
+  // Supabase confirma el guardado. La sesión segura vive aparte en sessionStorage.
 };
 
 const timeNow = () =>
