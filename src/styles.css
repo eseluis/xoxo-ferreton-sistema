@@ -516,6 +516,38 @@ h2 {
   height: 19px;
 }
 
+.openingStep {
+  display: grid;
+  gap: 0.4rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+
+.openingStep:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.openingStep label {
+  flex-wrap: wrap;
+}
+
+.openingStaffList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.8rem;
+  font-size: 0.8rem;
+  margin-left: 1.75rem;
+}
+
+.openingStaffList .ok {
+  color: var(--ok);
+}
+
+.openingStaffList .muted {
+  color: var(--text-muted);
+}
+
 .slaIncident {
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1357,6 +1389,11 @@ h2 {
 .storeSummaryTable .operationRow {
   grid-template-columns: 1.4fr 0.9fr 0.9fr 0.8fr 0.9fr 0.8fr;
   min-width: 760px;
+}
+
+.processLogTable .operationRow {
+  grid-template-columns: 1.3fr 0.8fr 1.4fr 0.9fr 0.8fr 0.8fr 1fr;
+  min-width: 980px;
 }
 
 .requestList {

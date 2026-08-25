@@ -533,12 +533,12 @@ type WorkLocation = {
 
 type SlaReview = {
   id: string;
-  sourceType: "Tarea" | "Actividad";
+  sourceType: "Tarea" | "Actividad" | "Apertura";
   sourceId: string;
   employeeId: string;
   date: string;
-  decision: "Justificada" | "Incumplimiento";
-  scoreImpact: 0 | -1;
+  decision: "Justificada" | "Incumplimiento" | "Reconocimiento";
+  scoreImpact: 0 | -1 | 1;
   note: string;
   reviewedById: string;
   reviewedAt: string;
@@ -554,6 +554,18 @@ type StoreOpeningCheck = {
   managerId?: string;
   openedAt?: string;
   openedById?: string;
+  // Checklist detallado del proceso real de apertura.
+  doorsOpenedAt?: string;
+  doorsOpenedById?: string;
+  erpReady?: boolean;
+  cashierAuthorizedAt?: string;
+  cashierAuthorizedById?: string;
+  // Reflejo de "caja abierta" guardado aquí (en app_state, visible para todos los roles)
+  // porque cash_session_records tiene permisos por sucursal/dueño y un auxiliar o cajero
+  // de otra caja no puede leer la fila real: sin este reflejo, su pantalla mostraba
+  // "tienda cerrada" aunque el gerente ya la hubiera abierto.
+  cashOpenConfirmedAt?: string;
+  cashOpenConfirmedById?: string;
 };
 
 type DailyClosure = {
@@ -582,6 +594,17 @@ const timeNow = () =>
 const oaxacaNow = () => new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", dateStyle: "full", timeStyle: "medium" }).format(new Date());
 const oaxacaDateKey = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 const oaxacaDateKeyFrom = (value: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Mexico_City", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+
+// Minutos transcurridos desde medianoche (hora Ciudad de México) para un ISO dado. Se usa para
+// validar la ventana de apertura puntual de tienda (8:00-8:15).
+const minutesOfDayMx = (iso: string) => {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "America/Mexico_City", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date(iso));
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+};
+const OPENING_WINDOW_START = 8 * 60;
+const OPENING_WINDOW_END = 8 * 60 + 15;
 
 function App() {
   const [clockNow, setClockNow] = useState(() => new Date());
@@ -770,7 +793,7 @@ function App() {
       if (Date.now() - lastCloudMutationAt < 12000) return;
       refreshing = true;
       try {
-        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures] = await Promise.all([
+        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures, latestCollaborators, latestCleaningRole, latestSlaReviews] = await Promise.all([
           cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
           cloudRefresh<ProcessInstance[]>("xoxo.processInstances"),
           cloudRefresh<InternalRequest[]>("xoxo.internalRequests"),
@@ -780,6 +803,12 @@ function App() {
           cloudRefresh<ActivityRun[]>("xoxo.activityRuns"),
           cloudRefresh<WorkLocation[]>("xoxo.workLocations"),
           cloudRefresh<DailyClosure[]>("xoxo.dailyClosures"),
+          // Directorio y aseo también deben llegar a todas las sesiones abiertas: si un
+          // director cambia un nombre, el resto de las pantallas ya conectadas deben
+          // reflejarlo sin necesidad de cerrar sesión.
+          cloudRefresh<Employee[]>("xoxo.collaborators"),
+          cloudRefresh<CleaningRole[]>("xoxo.cleaningRole"),
+          cloudRefresh<SlaReview[]>("xoxo.slaReviews"),
         ]);
         if (latestTasks) setDailyTasks(latestTasks);
         if (latestProcesses) setProcessInstances(latestProcesses);
@@ -790,6 +819,9 @@ function App() {
         if (latestActivityRuns) setActivityRuns(latestActivityRuns);
         if (latestWorkLocations) setWorkLocations(latestWorkLocations);
         if (latestClosures) setDailyClosures(latestClosures);
+        if (latestCollaborators) setCollaborators(latestCollaborators);
+        if (latestCleaningRole) setCleaningRole(latestCleaningRole);
+        if (latestSlaReviews) setSlaReviews(latestSlaReviews);
       } finally {
         refreshing = false;
       }
@@ -959,6 +991,50 @@ function App() {
     const next = [...latest.filter((item)=>item.id!==id), updated];
     setStoreOpeningChecks(next);
     save("xoxo.storeOpeningChecks", next);
+
+    // El gerente autoriza la apertura final (openedAt) sólo cuando ya se hizo el checklist
+    // completo (puertas, personal, cajera + ERP Visorus, sistemas). Si eso ocurre entre 8:00
+    // y 8:15, se reconoce con +1 punto a quienes participaron y a todo el personal que ya
+    // se había registrado; si se abre fuera de esa ventana o se reabre el checklist, no
+    // aplica bono y se retira cualquier reconocimiento previo de esa apertura.
+    if ("openedAt" in patch) {
+      const latestSla = await cloudRefresh<SlaReview[]>("xoxo.slaReviews") ?? slaReviews;
+      const withoutPrevious = latestSla.filter((item) => !(item.sourceType === "Apertura" && item.sourceId === id));
+      if (patch.openedAt) {
+        const onTime = (() => {
+          const minutes = minutesOfDayMx(patch.openedAt!);
+          return minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END;
+        })();
+        if (onTime) {
+          const attendedIds = attendance
+            .filter((entry) => entry.date === today && entry.in && collaborators.find((employee) => employee.id === entry.employeeId)?.branch === branch)
+            .map((entry) => entry.employeeId);
+          const participantIds = Array.from(new Set([...attendedIds, existing.doorsOpenedById, existing.cashierAuthorizedById, user.id].filter(Boolean))) as string[];
+          const grantedAt = new Date().toISOString();
+          const bonuses: SlaReview[] = participantIds.map((employeeId) => ({
+            id: crypto.randomUUID(),
+            sourceType: "Apertura",
+            sourceId: id,
+            employeeId,
+            date: today,
+            decision: "Reconocimiento",
+            scoreImpact: 1,
+            note: `Apertura puntual de ${branch}: checklist completo entre 8:00 y 8:15.`,
+            reviewedById: user.id,
+            reviewedAt: grantedAt,
+          }));
+          const nextSla = [...withoutPrevious, ...bonuses];
+          setSlaReviews(nextSla);
+          save("xoxo.slaReviews", nextSla);
+        } else if (withoutPrevious.length !== latestSla.length) {
+          setSlaReviews(withoutPrevious);
+          save("xoxo.slaReviews", withoutPrevious);
+        }
+      } else if (withoutPrevious.length !== latestSla.length) {
+        setSlaReviews(withoutPrevious);
+        save("xoxo.slaReviews", withoutPrevious);
+      }
+    }
   };
 
   const addCashOpening = (event: React.FormEvent<HTMLFormElement>) => {
@@ -974,6 +1050,13 @@ function App() {
     }, ...cashSessions];
     setCashSessions(next);
     save("xoxo.cashSessions", next);
+    // cash_session_records sólo lo puede leer quien la abrió, la gerencia de esa sucursal o
+    // dirección; el resto del personal (auxiliares, cajeras de otra caja) necesita saber que
+    // la tienda ya abrió, así que se refleja también en el checklist (app_state), que sí es
+    // visible para todos.
+    if (branch === "Matriz" || branch === "Sucursal Centro") {
+      void updateStoreOpening(branch, { cashOpenConfirmedAt: new Date().toISOString(), cashOpenConfirmedById: user.id });
+    }
     event.currentTarget.reset();
   };
 
@@ -1959,6 +2042,12 @@ function Dashboard({
     const myAverage = myEvaluation ? myEvaluation.scores.reduce((sum, score) => sum + score, 0) / myEvaluation.scores.length : 0;
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole, locationFor(user));
     const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
+    // Un auxiliar no veía cuántos compañeros de su misma sucursal ya estaban trabajando hoy;
+    // esta cuenta no depende de permisos especiales, sólo de asistencia y colaboradores, que
+    // ya llegan a todos los roles.
+    const branchToday = locationFor(user);
+    const coworkersToday = collaborators.filter((employee) => employee.id !== user.id && locationFor(employee) === branchToday);
+    const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
       {openingBoard}
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
@@ -1966,6 +2055,7 @@ function Dashboard({
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
       <Metric label="Mi evaluación" value={myAverage ? myAverage.toFixed(1) : "Pendiente"} icon={<BarChart3 />} />
+      <Metric label="Compañeros trabajando hoy" value={`${coworkersPresent}/${coworkersToday.length}`} icon={<UserRound />} />
       <article className="wide panelCard"><div className="sectionHead"><div><h2>Mi jornada</h2><span>Sólo información necesaria para ejecutar y reportar</span></div></div>
         <p><strong>Turno:</strong> {myShift ? `${myShift.start}-${myShift.end}` : user.shift}</p>
         <p><strong>Aseo:</strong> {myCleaning}</p>
@@ -2401,6 +2491,43 @@ function AttendanceView({
           </div>
         </article>
       )}
+
+      {canViewAll(user) && (() => {
+        const processLog = [
+          ...activityRuns
+            .filter((run) => run.date === today)
+            .map((run) => ({ id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title, scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, startedAt: run.startedAt, completedAt: run.completedAt, status: run.status })),
+          ...allDailyTasks
+            .filter((task) => task.date === today)
+            .map((task) => ({ id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title, scheduled: `${task.start}-${task.end}`, startedAt: task.startedAt, completedAt: task.completedAt, status: task.status })),
+        ].sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""));
+        return (
+          <article className="wide panelCard">
+            <div className="sectionHead">
+              <div><h2>Bitácora de procesos y aseo (todo el personal)</h2><span>A qué hora inició y terminó cada quien su aseo, actividad o tarea de hoy</span></div>
+              <strong>{processLog.length} registros</strong>
+            </div>
+            <div className="operationTable processLogTable">
+              <div className="operationRow head"><span>Colaborador</span><span>Tipo</span><span>Título</span><span>Horario</span><span>Inicio</span><span>Fin</span><span>Estado</span></div>
+              {processLog.slice(0, 150).map((entry) => {
+                const employee = collaborators.find((person) => person.id === entry.employeeId);
+                return (
+                  <div className="operationRow" key={entry.id}>
+                    <strong>{employee?.name ?? "Colaborador no encontrado"}</strong>
+                    <span>{entry.kind}</span>
+                    <span>{entry.title}</span>
+                    <span>{entry.scheduled}</span>
+                    <span>{entry.startedAt ? new Date(entry.startedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" }) : "Sin iniciar"}</span>
+                    <span>{entry.completedAt ? new Date(entry.completedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" }) : "--"}</span>
+                    <span className={`statusPill ${entry.status === "Completada" || entry.status === "Completada con retraso" ? "ok" : entry.status === "Vencida" ? "danger" : "warn"}`}>{entry.status}</span>
+                  </div>
+                );
+              })}
+              {processLog.length === 0 && <p className="muted">Todavía no hay actividades, aseo o tareas registradas hoy.</p>}
+            </div>
+          </article>
+        );
+      })()}
 
       {canViewAll(user) && (
         <article className="wide panelCard">
@@ -5191,8 +5318,82 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
 }
 
 function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
-  const canValidate=canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);const branches:StoreOpeningCheck["branch"][]=["Matriz","Sucursal Centro"];
-  return <article className="wide panelCard storeOpeningBoard"><div className="sectionHead"><div><h2>Estado de apertura de tiendas</h2><span>La tienda sólo queda abierta después de completar todas las validaciones.</span></div></div><div className="openingCards">{branches.map((branch)=>{const check=checks.find((item)=>item.id===`${today}-${branch}`)??{id:`${today}-${branch}`,branch,date:today,minimumStaff:false,systemsReady:false,processComplete:false};const cashOpen=cashSessions.some((session)=>session.branch===branch&&session.date===today&&["Abierta","Cerrada","Aprobada"].includes(session.status));const staffPresent=attendance.filter((entry)=>entry.date===today&&entry.in&&collaborators.find((employee)=>employee.id===entry.employeeId)?.branch===branch).length;const ready=cashOpen&&check.minimumStaff&&check.systemsReady&&check.processComplete;const opened=Boolean(check.openedAt)&&ready;return <div className={`openingCard ${opened?"opened":""}`} key={branch}><div className="sectionHead"><div><h3>{branch}</h3><span>{opened?`Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City"})}`:"Pendiente de validación"}</span></div><strong className={`statusPill ${opened?"ok":"warn"}`}>{opened?"TIENDA ABIERTA":"TIENDA CERRADA"}</strong></div><label><input type="checkbox" checked={cashOpen} readOnly/> Caja abierta por cajera/encargado</label>{!cashOpen&&["CAJERO","GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)&&<button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}<label><input type="checkbox" checked={check.minimumStaff} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{minimumStaff:event.target.checked,openedAt:undefined,openedById:undefined})}/> Personal mínimo confirmado <small>({staffPresent} entradas registradas)</small></label><label><input type="checkbox" checked={check.systemsReady} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{systemsReady:event.target.checked,openedAt:undefined,openedById:undefined})}/> Sistema, POS, impresora e internet funcionales</label><label><input type="checkbox" checked={check.processComplete} disabled={!canValidate||opened} onChange={(event)=>onUpdate(branch,{processComplete:event.target.checked,openedAt:undefined,openedById:undefined})}/> Proceso completo de seguridad y apertura</label>{canValidate&&!opened&&<button className="primary" disabled={!ready} onClick={()=>onUpdate(branch,{openedAt:new Date().toISOString(),openedById:user.id})}>Confirmar tienda abierta</button>}{opened&&<p className="ok">Confirmó {collaborators.find((employee)=>employee.id===check.openedById)?.name??check.openedById}</p>}</div>;})}</div></article>;
+  const canValidate = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
+  const canAuthorizeCash = user.role === "CAJERO" || canValidate;
+  const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
+  return (
+    <article className="wide panelCard storeOpeningBoard">
+      <div className="sectionHead">
+        <div>
+          <h2>Estado de apertura de tiendas</h2>
+          <span>Gerente abre puertas → colaboradores se registran → cajera autoriza caja y ERP → gerente autoriza apertura. Sólo cuenta como puntual entre 8:00 y 8:15.</span>
+        </div>
+      </div>
+      <div className="openingCards">
+        {branches.map((branch) => {
+          const check = checks.find((item) => item.id === `${today}-${branch}`) ?? { id: `${today}-${branch}`, branch, date: today, minimumStaff: false, systemsReady: false, processComplete: false };
+          // cashSessions viene de una tabla con permisos por sucursal/dueño: un auxiliar o
+          // una cajera de la otra caja puede no tener acceso a esa fila aunque la tienda ya
+          // haya abierto. cashOpenConfirmedAt (guardado en el checklist) es visible para
+          // todos y sirve de respaldo para que a nadie le aparezca "tienda cerrada" por error.
+          const cashOpen = cashSessions.some((session) => session.branch === branch && session.date === today && ["Abierta", "Cerrada", "Aprobada"].includes(session.status)) || Boolean(check.cashOpenConfirmedAt);
+          const branchStaff = collaborators.filter((employee) => employee.branch === branch);
+          const branchAttendance = attendance.filter((entry) => entry.date === today && entry.in && branchStaff.some((employee) => employee.id === entry.employeeId));
+          const staffPresent = branchAttendance.length;
+          const doorsOpen = Boolean(check.doorsOpenedAt);
+          const cashierReady = cashOpen && Boolean(check.erpReady);
+          const ready = doorsOpen && cashierReady && check.minimumStaff && check.systemsReady && check.processComplete;
+          const opened = Boolean(check.openedAt) && ready;
+          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
+          return (
+            <div className={`openingCard ${opened ? "opened" : ""}`} key={branch}>
+              <div className="sectionHead">
+                <div>
+                  <h3>{branch}</h3>
+                  <span>{opened ? `Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : "Pendiente de validación"}</span>
+                </div>
+                <strong className={`statusPill ${opened ? "ok" : "warn"}`}>{opened ? "TIENDA ABIERTA" : "TIENDA CERRADA"}</strong>
+              </div>
+
+              <div className="openingStep">
+                <label><input type="checkbox" checked={doorsOpen} readOnly /> 1. Gerente abrió puertas {doorsOpen && <small>{new Date(check.doorsOpenedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}</small>}</label>
+                {!doorsOpen && canValidate && !opened && <button className="ghost compact" onClick={() => onUpdate(branch, { doorsOpenedAt: new Date().toISOString(), doorsOpenedById: user.id })}>Registrar apertura de puertas</button>}
+              </div>
+
+              <div className="openingStep">
+                <label><input type="checkbox" checked={check.minimumStaff} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, openedAt: undefined, openedById: undefined })} /> 2. Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
+                <div className="openingStaffList">
+                  {branchStaff.map((employee) => {
+                    const entry = branchAttendance.find((item) => item.employeeId === employee.id);
+                    return <span key={employee.id} className={entry ? "ok" : "muted"}>{employee.name}: {entry?.in ?? "pendiente"}</span>;
+                  })}
+                </div>
+              </div>
+
+              <div className="openingStep">
+                <label><input type="checkbox" checked={cashOpen} readOnly /> 3a. Caja abierta por cajera/encargado</label>
+                {!cashOpen && ["CAJERO", "GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role) && <button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}
+                <label><input type="checkbox" checked={Boolean(check.erpReady)} disabled={!canAuthorizeCash || !cashOpen || opened} onChange={(event) => onUpdate(branch, { erpReady: event.target.checked, cashierAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierAuthorizedById: event.target.checked ? user.id : undefined, openedAt: undefined, openedById: undefined })} /> 3b. Cajera autoriza sistema ERP Visorus {check.erpReady && check.cashierAuthorizedAt && <small>{new Date(check.cashierAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierAuthorizedById)?.name ?? check.cashierAuthorizedById}</small>}</label>
+              </div>
+
+              <div className="openingStep">
+                <label><input type="checkbox" checked={check.systemsReady} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, openedAt: undefined, openedById: undefined })} /> Sistema, POS, impresora e internet funcionales</label>
+                <label><input type="checkbox" checked={check.processComplete} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, openedAt: undefined, openedById: undefined })} /> Proceso completo de seguridad y apertura</label>
+              </div>
+
+              {canValidate && !opened && <button className="primary" disabled={!ready} onClick={() => onUpdate(branch, { openedAt: new Date().toISOString(), openedById: user.id })}>4. Gerente autoriza apertura final</button>}
+              {opened && (
+                <p className={onTime ? "ok" : "warn"}>
+                  Confirmó {collaborators.find((employee) => employee.id === check.openedById)?.name ?? check.openedById}
+                  {onTime ? " · Apertura puntual (8:00-8:15): se reconoció con +1 punto a quien participó y al personal ya registrado." : " · Apertura fuera de la ventana 8:00-8:15: no aplica reconocimiento."}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
 }
 
 function SlaReviewPanel({ user, collaborators, tasks, runs, reviews, onReview }: { user: Employee; collaborators: Employee[]; tasks: DailyTask[]; runs: ActivityRun[]; reviews: SlaReview[]; onReview: (sourceType:SlaReview["sourceType"],sourceId:string,employeeId:string,decision:SlaReview["decision"],note:string)=>void }) {
