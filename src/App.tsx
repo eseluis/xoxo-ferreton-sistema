@@ -632,6 +632,21 @@ const minutesOfDayMx = (iso: string) => {
 const OPENING_WINDOW_START = 8 * 60;
 const OPENING_WINDOW_END = 8 * 60 + 15;
 
+// Ventanas de puntualidad para el checador de entrada.
+const ARRIVAL_ON_TIME_END = 8 * 60 + 10; // 8:10
+const ARRIVAL_LATE_END = 8 * 60 + 30; // 8:30
+const ARRIVAL_BLOCK_AT = 8 * 60 + 45; // 8:45 — a partir de aquí se bloquea el autochecado
+// Únicos 4 usuarios que pueden registrar la entrada de otro colaborador después del bloqueo
+// (permisos, avisos o imprevistos ya autorizados fuera del sistema).
+const LATE_ATTENDANCE_OVERRIDE_IDS = ["001", "002", "003", "005"];
+
+function arrivalPunctuality(minutes: number): { label: string; className: string } {
+  if (minutes <= ARRIVAL_ON_TIME_END) return { label: "A tiempo", className: "ok" };
+  if (minutes <= ARRIVAL_LATE_END) return { label: "Tarde", className: "warn" };
+  if (minutes < ARRIVAL_BLOCK_AT) return { label: "Muy tarde", className: "warn" };
+  return { label: "Día no laborable", className: "danger" };
+}
+
 function App() {
   const [clockNow, setClockNow] = useState(() => new Date());
   const [activeId, setActiveId] = useState("");
@@ -972,6 +987,18 @@ function App() {
     const existing = latest.find((entry) => entry.employeeId === user.id && entry.date === today) ?? myAttendance;
     const next = latest.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
     next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow() });
+    setAttendance(next);
+    save("xoxo.attendance", next);
+  };
+
+  // Registrar la entrada de otro colaborador cuando ya pasó la hora de autochecado (8:45),
+  // por permisos, avisos o imprevistos ya autorizados. Sólo lo usan los 4 usuarios permitidos
+  // (se restringe también en la interfaz que llama a esta función).
+  const registerAttendanceFor = async (employeeId: string) => {
+    const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
+    const existing = latest.find((entry) => entry.employeeId === employeeId && entry.date === today);
+    const next = latest.filter((entry) => !(entry.employeeId === employeeId && entry.date === today));
+    next.push({ ...(existing ?? { employeeId, date: today }), in: timeNow() });
     setAttendance(next);
     save("xoxo.attendance", next);
   };
@@ -1768,6 +1795,7 @@ function App() {
             collaborators={collaborators}
             myAttendance={myAttendance}
             updateAttendance={updateAttendance}
+            registerAttendanceFor={registerAttendanceFor}
             myEval={myEval}
             shift={shiftMap[user.shift]}
             activitySchedules={activitySchedules}
@@ -2441,6 +2469,7 @@ function AttendanceView({
   collaborators,
   myAttendance,
   updateAttendance,
+  registerAttendanceFor,
   myEval,
   shift,
   activitySchedules,
@@ -2463,6 +2492,7 @@ function AttendanceView({
   collaborators: Employee[];
   myAttendance?: Attendance;
   updateAttendance: (field: keyof Attendance) => void;
+  registerAttendanceFor: (employeeId: string) => void;
   myEval?: Evaluation & { average: number; rate: number };
   shift?: ShiftConfig;
   activitySchedules: ActivitySchedule[];
@@ -2487,6 +2517,14 @@ function AttendanceView({
   setActivityPhoto: (id: string, phase: "before" | "after", evidence: EvidenceCapture | undefined) => void;
   workLocation: string;
 }) {
+  // Refresca cada 30s para que el bloqueo de las 8:45 se active sin necesidad de recargar.
+  const [, setArrivalTick] = useState(0);
+  useEffect(() => {
+    const interval = window.setInterval(() => setArrivalTick((value) => value + 1), 30000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const canRegisterLateAttendance = LATE_ATTENDANCE_OVERRIDE_IDS.includes(user.id);
+  const [lateEmployeeId, setLateEmployeeId] = useState("");
   const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id) && (!activity.branch || activity.branch === workLocation));
   const userActivities = targetedActivities.length
     ? targetedActivities
@@ -2575,12 +2613,48 @@ function AttendanceView({
             <li>Subir foto de antes y foto de cómo quedó.</li>
           </ul>
         </div>
-        <div className="punchGrid">
-          <button onClick={() => updateAttendance("in")}>Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}</button>
-          <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
-          <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
-          <button onClick={() => updateAttendance("out")}>Salida {myAttendance?.out && <span>{myAttendance.out}</span>}</button>
-        </div>
+        {(() => {
+          const nowMinutes = timeToMinutes(timeNow());
+          const arrivalBlocked = !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;
+          const punctuality = arrivalPunctuality(myAttendance?.in ? timeToMinutes(myAttendance.in) : nowMinutes);
+          return (
+            <>
+              <div className="punchGrid">
+                <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
+                  Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
+                  {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{punctuality.label}</small>}
+                </button>
+                <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
+                <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
+                <button onClick={() => updateAttendance("out")}>Salida {myAttendance?.out && <span>{myAttendance.out}</span>}</button>
+              </div>
+              {arrivalBlocked && (
+                <p className="loginError">
+                  Ya pasaron las 8:45 y no registraste tu entrada: hoy cuenta como día no laborable. Si tenías permiso o aviso previo, pide a un director que la registre por ti.
+                </p>
+              )}
+            </>
+          );
+        })()}
+        {canRegisterLateAttendance && (() => {
+          const nowMinutes = timeToMinutes(timeNow());
+          if (nowMinutes < ARRIVAL_BLOCK_AT) return null;
+          const pendingEmployees = collaborators.filter((employee) => !attendance.some((entry) => entry.employeeId === employee.id && entry.date === today && entry.in));
+          if (pendingEmployees.length === 0) return null;
+          return (
+            <div className="lateAttendancePanel">
+              <strong>Registrar entrada tardía de un colaborador</strong>
+              <small>Sólo para permisos, avisos o imprevistos ya autorizados fuera del sistema.</small>
+              <div className="inlineTimes">
+                <select value={lateEmployeeId} onChange={(event) => setLateEmployeeId(event.target.value)}>
+                  <option value="">Selecciona colaborador</option>
+                  {pendingEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+                </select>
+                <button className="ghost compact" disabled={!lateEmployeeId} onClick={() => { registerAttendanceFor(lateEmployeeId); setLateEmployeeId(""); }}>Registrar entrada ahora</button>
+              </div>
+            </div>
+          );
+        })()}
       </article>
 
       <article className="panelCard">

@@ -703,6 +703,21 @@ h2 {
   font-family: var(--mono);
 }
 
+.punchGrid .statusPill {
+  display: inline-block;
+  margin-top: 6px;
+}
+
+.lateAttendancePanel {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--warn-soft);
+}
+
 .scoreBox {
   border: 1px solid var(--border);
   border-radius: var(--radius);
