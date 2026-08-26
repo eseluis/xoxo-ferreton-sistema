@@ -482,6 +482,17 @@ function canAccessView(employee: Employee, targetView: string) {
   return true;
 }
 
+// Autorización de apertura/cierre por puesto real de cada sucursal, no por nombre: quien hoy
+// tenga el puesto de gerente/administrador de tienda de esa sucursal puede autorizar, sin
+// importar quién sea la persona (evita el mismo problema que tuvo el aseo por nombre fijo).
+function canAuthorizeAsManager(employee: Employee, branch: string) {
+  return canGovern(employee) || (["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(employee.role) && employee.branch === branch);
+}
+
+function canAuthorizeAsCashier(employee: Employee, branch: string) {
+  return canGovern(employee) || (["CAJERO", "GERENTE_TIENDA", "ADMIN_TIENDA"].includes(employee.role) && employee.branch === branch);
+}
+
 function workSequenceFor(
   employee: Employee,
   date: string,
@@ -556,18 +567,31 @@ type StoreOpeningCheck = {
   managerId?: string;
   openedAt?: string;
   openedById?: string;
-  // Checklist detallado del proceso real de apertura.
-  doorsOpenedAt?: string;
-  doorsOpenedById?: string;
+  // Checklist detallado del proceso real de apertura. Orden: 1) gerente autoriza,
+  // 2) cajero autoriza (caja + ERP), 3) con ambas autorizaciones, indicación para todos
+  // de abrir cortinas y puertas (doorsOpenedAt/openedAt es esa confirmación final).
+  managerAuthorizedAt?: string;
+  managerAuthorizedById?: string;
   erpReady?: boolean;
   cashierAuthorizedAt?: string;
   cashierAuthorizedById?: string;
+  doorsOpenedAt?: string;
+  doorsOpenedById?: string;
   // Reflejo de "caja abierta" guardado aquí (en app_state, visible para todos los roles)
   // porque cash_session_records tiene permisos por sucursal/dueño y un auxiliar o cajero
   // de otra caja no puede leer la fila real: sin este reflejo, su pantalla mostraba
   // "tienda cerrada" aunque el gerente ya la hubiera abierto.
   cashOpenConfirmedAt?: string;
   cashOpenConfirmedById?: string;
+  // Checklist de cierre, mismo patrón: gerente autoriza, cajero autoriza (requiere corte
+  // de caja del día ya capturado), y con ambas listas, indicación de cerrar cortinas y
+  // puertas (closedAt es esa confirmación final).
+  managerClosingAuthorizedAt?: string;
+  managerClosingAuthorizedById?: string;
+  cashierClosingAuthorizedAt?: string;
+  cashierClosingAuthorizedById?: string;
+  closedAt?: string;
+  closedById?: string;
 };
 
 type DailyClosure = {
@@ -1729,6 +1753,7 @@ function App() {
             slaReviews={slaReviews}
             reviewSla={reviewSla}
             cashSessions={cashSessions}
+            cashCuts={cashCuts}
             storeOpeningChecks={storeOpeningChecks}
             updateStoreOpening={updateStoreOpening}
             addQuickTask={addQuickTask}
@@ -2018,6 +2043,7 @@ function Dashboard({
   slaReviews,
   reviewSla,
   cashSessions,
+  cashCuts,
   storeOpeningChecks,
   updateStoreOpening,
   addQuickTask,
@@ -2040,6 +2066,7 @@ function Dashboard({
   slaReviews: SlaReview[];
   reviewSla: (sourceType: SlaReview["sourceType"], sourceId: string, employeeId: string, decision: SlaReview["decision"], note: string) => void;
   cashSessions: CashSession[];
+  cashCuts: CashCut[];
   storeOpeningChecks: StoreOpeningCheck[];
   updateStoreOpening: (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => void;
   addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
@@ -2073,7 +2100,7 @@ function Dashboard({
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
-  const openingBoard = <StoreOpeningBoard user={user} today={today} cashSessions={cashSessions} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
+  const openingBoard = <StoreOpeningBoard user={user} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
     const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
@@ -2741,6 +2768,17 @@ function AttendanceView({
   );
 }
 
+function ImageLightbox({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
+  return (
+    <div className="lightboxBackdrop" onClick={onClose}>
+      <div className="lightboxFrame" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="ghost compact lightboxClose" onClick={onClose}>Cerrar ✕</button>
+        <img src={src} alt={label} />
+      </div>
+    </div>
+  );
+}
+
 function EvidenceCaptured({
   value,
   label,
@@ -2754,9 +2792,11 @@ function EvidenceCaptured({
   retakeLabel: string;
   readOnly?: boolean;
 }) {
+  const [zoomed, setZoomed] = useState(false);
   return (
     <div className="evidenceCaptured">
-      <img src={value.dataUrl} alt={label} />
+      <img src={value.dataUrl} alt={label} className="evidenceThumb" onClick={() => setZoomed(true)} />
+      {zoomed && <ImageLightbox src={value.dataUrl} label={label} onClose={() => setZoomed(false)} />}
       <div>
         <small>
           <CheckCircle2 size={13} className="greenIcon" /> {new Date(value.capturedAt).toLocaleString("es-MX")}
@@ -5664,9 +5704,7 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
   return <article className="wide panelCard"><div className="sectionHead"><div><h2>Agenda completa y continuidad</h2><span>Al terminar una actividad continúa inmediatamente con la siguiente.</span></div><strong className={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} espacio(s) por cubrir` : "Agenda continua"}</strong></div><div className="taskList">{sequence.entries.map((entry)=>{const start=timeToMinutes(entry.start);const end=timeToMinutes(entry.end);const state=minutes>=end?"Horario concluido":minutes>=start&&minutes<end?"Ahora":sequence.next?.id===entry.id?"Siguiente":"Programada";return <div className={`taskRow continuityRow ${state==="Ahora"?"currentActivity":""}`} key={`${entry.kind}-${entry.id}`}><span><strong>{entry.start}-{entry.end}</strong><small>{entry.kind} · {entry.status}</small></span><span>{entry.title}</span><strong>{state}</strong></div>;})}{sequence.entries.length===0&&<p className="muted">Aún no existe una agenda para este lugar. Reporta a tu jefe antes de iniciar para evitar tiempo muerto.</p>}</div>{gaps.length>0&&<div className="gapWarnings"><strong>Espacios sin actividad programada:</strong>{gaps.map((gap)=><span key={`${gap.start}-${gap.end}`}>{gap.start}-{gap.end} ({gap.minutes} min)</span>)}</div>}</article>;
 }
 
-function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
-  const canValidate = canGovern(user) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role);
-  const canAuthorizeCash = user.role === "CAJERO" || canValidate;
+function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
   const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
 
   // Autorreparación: si una caja se abrió antes de que existiera cashOpenConfirmedAt (o el
@@ -5691,13 +5729,15 @@ function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborat
     <article className="wide panelCard storeOpeningBoard">
       <div className="sectionHead">
         <div>
-          <h2>Estado de apertura de tiendas</h2>
-          <span>Gerente abre puertas → colaboradores se registran → cajera autoriza caja y ERP → gerente autoriza apertura. Sólo cuenta como puntual entre 8:00 y 8:15.</span>
+          <h2>Estado de apertura y cierre de tiendas</h2>
+          <span>Gerente de tienda autoriza → cajero autoriza → con ambas, indicación para todo el personal de abrir/cerrar cortinas y puertas. Apertura puntual sólo entre 8:00 y 8:15.</span>
         </div>
       </div>
       <div className="openingCards">
         {branches.map((branch) => {
           const check = checks.find((item) => item.id === `${today}-${branch}`) ?? { id: `${today}-${branch}`, branch, date: today, minimumStaff: false, systemsReady: false, processComplete: false };
+          const canManage = canAuthorizeAsManager(user, branch);
+          const canCashier = canAuthorizeAsCashier(user, branch);
           // cashSessions viene de una tabla con permisos por sucursal/dueño: un auxiliar o
           // una cajera de la otra caja puede no tener acceso a esa fila aunque la tienda ya
           // haya abierto. cashOpenConfirmedAt (guardado en el checklist) es visible para
@@ -5706,28 +5746,47 @@ function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborat
           const branchStaff = collaborators.filter((employee) => employee.branch === branch);
           const branchAttendance = attendance.filter((entry) => entry.date === today && entry.in && branchStaff.some((employee) => employee.id === entry.employeeId));
           const staffPresent = branchAttendance.length;
+
+          // ---- Apertura ----
+          // "opened" se confía directamente a openedAt (el momento ya confirmado), sin
+          // volver a exigir los pasos del checklist: si se agregan pasos nuevos más adelante,
+          // una tienda que ya quedó abierta hoy no debe "recerrarse" sola en las pantallas de
+          // quienes no vuelvan a pasar por ese paso. readyToOpenDoors sólo gatea el botón
+          // mientras la tienda sigue sin abrir.
+          const managerAuthorized = Boolean(check.managerAuthorizedAt);
+          const cashierAuthorized = cashOpen && Boolean(check.erpReady);
+          const readyToOpenDoors = managerAuthorized && cashierAuthorized && check.minimumStaff && check.systemsReady && check.processComplete;
           const doorsOpen = Boolean(check.doorsOpenedAt);
-          const cashierReady = cashOpen && Boolean(check.erpReady);
-          const ready = doorsOpen && cashierReady && check.minimumStaff && check.systemsReady && check.processComplete;
-          const opened = Boolean(check.openedAt) && ready;
+          const opened = Boolean(check.openedAt);
           const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
+
+          // ---- Cierre ----
+          const managerClosingAuthorized = Boolean(check.managerClosingAuthorizedAt);
+          const cashCutSubmitted = cashCuts.some((cut) => cut.branch === branch && cut.date === today);
+          const cashierClosingAuthorized = cashCutSubmitted && Boolean(check.cashierClosingAuthorizedAt);
+          const readyToClose = managerClosingAuthorized && cashierClosingAuthorized;
+          const closed = Boolean(check.closedAt);
+
+          const resetOpening = { managerAuthorizedAt: undefined, managerAuthorizedById: undefined, openedAt: undefined, openedById: undefined, doorsOpenedAt: undefined, doorsOpenedById: undefined };
+
           return (
-            <div className={`openingCard ${opened ? "opened" : ""}`} key={branch}>
+            <div className={`openingCard ${opened ? "opened" : ""} ${closed ? "closedCard" : ""}`} key={branch}>
               <div className="sectionHead">
                 <div>
                   <h3>{branch}</h3>
-                  <span>{opened ? `Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : "Pendiente de validación"}</span>
+                  <span>{closed ? `Cerrada ${new Date(check.closedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : opened ? `Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : "Pendiente de validación"}</span>
                 </div>
-                <strong className={`statusPill ${opened ? "ok" : "warn"}`}>{opened ? "TIENDA ABIERTA" : "TIENDA CERRADA"}</strong>
+                <strong className={`statusPill ${closed ? "muted" : opened ? "ok" : "warn"}`}>{closed ? "TIENDA CERRADA · FIN DEL DÍA" : opened ? "TIENDA ABIERTA" : "TIENDA CERRADA"}</strong>
+              </div>
+
+              <strong className="openingSectionLabel">Apertura</strong>
+              <div className="openingStep">
+                <label><input type="checkbox" checked={managerAuthorized} readOnly /> 1. Gerente de tienda autoriza apertura {managerAuthorized && <small>{new Date(check.managerAuthorizedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.managerAuthorizedById)?.name ?? check.managerAuthorizedById}</small>}</label>
+                {!managerAuthorized && canManage && !opened && <button className="ghost compact" onClick={() => onUpdate(branch, { managerAuthorizedAt: new Date().toISOString(), managerAuthorizedById: user.id })}>Autorizar apertura</button>}
               </div>
 
               <div className="openingStep">
-                <label><input type="checkbox" checked={doorsOpen} readOnly /> 1. Gerente abrió puertas {doorsOpen && <small>{new Date(check.doorsOpenedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}</small>}</label>
-                {!doorsOpen && canValidate && !opened && <button className="ghost compact" onClick={() => onUpdate(branch, { doorsOpenedAt: new Date().toISOString(), doorsOpenedById: user.id })}>Registrar apertura de puertas</button>}
-              </div>
-
-              <div className="openingStep">
-                <label><input type="checkbox" checked={check.minimumStaff} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, openedAt: undefined, openedById: undefined })} /> 2. Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
+                <label><input type="checkbox" checked={check.minimumStaff} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, ...resetOpening })} /> Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
                 <div className="openingStaffList">
                   {branchStaff.map((employee) => {
                     const entry = branchAttendance.find((item) => item.employeeId === employee.id);
@@ -5737,23 +5796,46 @@ function StoreOpeningBoard({user,today,cashSessions,checks,attendance,collaborat
               </div>
 
               <div className="openingStep">
-                <label><input type="checkbox" checked={cashOpen} readOnly /> 3a. Caja abierta por cajera/encargado</label>
-                {!cashOpen && ["CAJERO", "GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role) && <button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}
-                <label><input type="checkbox" checked={Boolean(check.erpReady)} disabled={!canAuthorizeCash || !cashOpen || opened} onChange={(event) => onUpdate(branch, { erpReady: event.target.checked, cashierAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierAuthorizedById: event.target.checked ? user.id : undefined, openedAt: undefined, openedById: undefined })} /> 3b. Cajera autoriza sistema ERP Visorus {check.erpReady && check.cashierAuthorizedAt && <small>{new Date(check.cashierAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierAuthorizedById)?.name ?? check.cashierAuthorizedById}</small>}</label>
+                <label><input type="checkbox" checked={cashOpen} readOnly /> Caja abierta por cajero/encargado</label>
+                {!cashOpen && canCashier && <button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}
+                <label><input type="checkbox" checked={Boolean(check.erpReady)} disabled={!canCashier || !cashOpen || !managerAuthorized || opened} onChange={(event) => onUpdate(branch, { erpReady: event.target.checked, cashierAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierAuthorizedById: event.target.checked ? user.id : undefined, openedAt: undefined, openedById: undefined, doorsOpenedAt: undefined, doorsOpenedById: undefined })} /> 2. Cajero autoriza apertura (caja + sistema ERP Visorus) {check.erpReady && check.cashierAuthorizedAt && <small>{new Date(check.cashierAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierAuthorizedById)?.name ?? check.cashierAuthorizedById}</small>}</label>
               </div>
 
               <div className="openingStep">
-                <label><input type="checkbox" checked={check.systemsReady} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, openedAt: undefined, openedById: undefined })} /> Sistema, POS, impresora e internet funcionales</label>
-                <label><input type="checkbox" checked={check.processComplete} disabled={!canValidate || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, openedAt: undefined, openedById: undefined })} /> Proceso completo de seguridad y apertura</label>
+                <label><input type="checkbox" checked={check.systemsReady} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, ...resetOpening })} /> Sistema, POS, impresora e internet funcionales</label>
+                <label><input type="checkbox" checked={check.processComplete} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, ...resetOpening })} /> Proceso completo de seguridad y apertura</label>
               </div>
 
-              {canValidate && !opened && <button className="primary" disabled={!ready} onClick={() => onUpdate(branch, { openedAt: new Date().toISOString(), openedById: user.id })}>4. Gerente autoriza apertura final</button>}
+              {managerAuthorized && cashierAuthorized && !doorsOpen && (
+                <p className="ok">🔓 Indicación para todo el personal: abrir cortinas y puertas.</p>
+              )}
+              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={() => onUpdate(branch, { doorsOpenedAt: new Date().toISOString(), doorsOpenedById: user.id, openedAt: new Date().toISOString(), openedById: user.id })}>3. Confirmar cortinas y puertas abiertas</button>}
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
-                  Confirmó {collaborators.find((employee) => employee.id === check.openedById)?.name ?? check.openedById}
+                  Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
                   {onTime ? " · Apertura puntual (8:00-8:15): se reconoció con +1 punto a quien participó y al personal ya registrado." : " · Apertura fuera de la ventana 8:00-8:15: no aplica reconocimiento."}
                 </p>
               )}
+
+              {opened && !closed && (
+                <>
+                  <strong className="openingSectionLabel">Cierre</strong>
+                  <div className="openingStep">
+                    <label><input type="checkbox" checked={managerClosingAuthorized} readOnly /> 1. Gerente de tienda autoriza cierre {managerClosingAuthorized && <small>{new Date(check.managerClosingAuthorizedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.managerClosingAuthorizedById)?.name ?? check.managerClosingAuthorizedById}</small>}</label>
+                    {!managerClosingAuthorized && canManage && <button className="ghost compact" onClick={() => onUpdate(branch, { managerClosingAuthorizedAt: new Date().toISOString(), managerClosingAuthorizedById: user.id })}>Autorizar cierre</button>}
+                  </div>
+                  <div className="openingStep">
+                    <label><input type="checkbox" checked={cashCutSubmitted} readOnly /> Corte de caja del día capturado</label>
+                    {!cashCutSubmitted && canCashier && <button className="ghost compact" onClick={onOpenCash}>Ir a hacer corte de caja</button>}
+                    <label><input type="checkbox" checked={Boolean(check.cashierClosingAuthorizedAt)} disabled={!canCashier || !cashCutSubmitted || !managerClosingAuthorized} onChange={(event) => onUpdate(branch, { cashierClosingAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierClosingAuthorizedById: event.target.checked ? user.id : undefined, closedAt: undefined, closedById: undefined })} /> 2. Cajero autoriza cierre (corte entregado) {check.cashierClosingAuthorizedAt && <small>{new Date(check.cashierClosingAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierClosingAuthorizedById)?.name ?? check.cashierClosingAuthorizedById}</small>}</label>
+                  </div>
+                  {readyToClose && (
+                    <p className="warn">🔒 Indicación para todo el personal: cerrar cortinas y puertas.</p>
+                  )}
+                  {canManage && <button className="primary" disabled={!readyToClose} onClick={() => onUpdate(branch, { closedAt: new Date().toISOString(), closedById: user.id })}>3. Confirmar cortinas y puertas cerradas</button>}
+                </>
+              )}
+              {closed && <p className="muted">Cerró {collaborators.find((employee) => employee.id === check.closedById)?.name ?? check.closedById} · {new Date(check.closedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}</p>}
             </div>
           );
         })}

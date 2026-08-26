@@ -505,6 +505,22 @@ h2 {
   background: var(--ok-soft);
 }
 
+.openingCard.closedCard {
+  border-color: var(--border);
+  background: var(--surface-hover);
+}
+
+.openingSectionLabel {
+  display: block;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
 .openingCard label {
   display: flex;
   align-items: center;
@@ -1075,6 +1091,43 @@ h2 {
   border-radius: 6px;
   border: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.evidenceThumb {
+  cursor: zoom-in;
+}
+
+.lightboxBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 12, 9, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 1000;
+}
+
+.lightboxFrame {
+  position: relative;
+  max-width: min(92vw, 900px);
+  max-height: 90vh;
+  display: grid;
+  gap: 0.6rem;
+  justify-items: end;
+}
+
+.lightboxFrame img {
+  max-width: 100%;
+  max-height: 82vh;
+  object-fit: contain;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.lightboxClose {
+  background: var(--surface);
 }
 
 .evidenceCaptured > div {
