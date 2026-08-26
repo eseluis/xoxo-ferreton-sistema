@@ -1670,6 +1670,9 @@ function App() {
           {canAccessView(user, "garantias") && <button className={view === "garantias" ? "active" : ""} onClick={() => navigate("garantias")}>
             <ShieldCheck size={18} /> Garantias
           </button>}
+          {canAccessView(user, "evidencias") && <button className={view === "evidencias" ? "active" : ""} onClick={() => navigate("evidencias")}>
+            <Camera size={18} /> Evidencias
+          </button>}
           <button className={view === "tareas" ? "active" : ""} onClick={() => navigate("tareas")}>
             <ClipboardList size={18} /> Tareas
           </button>
@@ -1837,6 +1840,7 @@ function App() {
           />
         )}
         {view === "garantias" && <WarrantyView user={user} collaborators={collaborators} addWarranty={addWarranty} updateWarranty={updateWarranty} warranties={warranties} />}
+        {view === "evidencias" && <EvidenceGalleryView user={user} today={today} collaborators={collaborators} dailyTasks={dailyTasks} activityRuns={activityRuns} />}
         {view === "tareas" && (
           <TasksView
             user={user}
@@ -1909,6 +1913,7 @@ function titleFor(view: string) {
       caja: "Caja e incidencias",
       finanzas: "Proveedores y cuentas por pagar",
       garantias: "Garantias a proveedores",
+      evidencias: "Evidencia fotográfica del día",
       tareas: "Tareas asignadas",
       solicitudes: "Solicitudes y reportes internos",
       reportes: "Reportes imprimibles",
@@ -5347,6 +5352,113 @@ function ReportsView({
             />
           ))}
         </ReportSection>
+      </article>
+    </section>
+  );
+}
+
+type EvidenceGalleryItem = {
+  id: string;
+  employeeId: string;
+  kind: "Tarea" | "Actividad" | "Aseo";
+  title: string;
+  scheduled: string;
+  status: string;
+  before?: EvidenceCapture;
+  after?: EvidenceCapture;
+  single?: EvidenceCapture;
+};
+
+function evidenceStatusClass(status: string) {
+  if (status === "Completada" || status === "Completada con retraso") return "ok";
+  if (status === "Vencida" || status === "Incidencia") return "danger";
+  return "warn";
+}
+
+function EvidenceGalleryView({
+  user,
+  today,
+  collaborators,
+  dailyTasks,
+  activityRuns,
+}: {
+  user: Employee;
+  today: string;
+  collaborators: Employee[];
+  dailyTasks: DailyTask[];
+  activityRuns: ActivityRun[];
+}) {
+  const [employeeFilter, setEmployeeFilter] = useState("Todos");
+  const [onlyMissing, setOnlyMissing] = useState(false);
+
+  const visibleEmployees = canViewAll(user)
+    ? collaborators
+    : collaborators.filter((employee) => employee.branch === user.branch || employee.supervisorId === user.id || employee.id === user.id);
+  const visibleIds = new Set(visibleEmployees.map((employee) => employee.id));
+
+  const items: EvidenceGalleryItem[] = [
+    ...dailyTasks
+      .filter((task) => task.date === today && task.requiresPhoto && visibleIds.has(task.employeeId))
+      .map((task) => ({
+        id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title,
+        scheduled: `${task.start}-${task.end}`, status: task.status,
+        before: task.beforeEvidenceCapture, after: task.afterEvidenceCapture,
+      })),
+    ...activityRuns
+      .filter((run) => run.date === today && run.evidence && run.evidence !== "none" && visibleIds.has(run.employeeId))
+      .map((run) => ({
+        id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title,
+        scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, status: run.status,
+        before: run.beforeEvidenceCapture, after: run.afterEvidenceCapture, single: run.evidenceCapture,
+      })),
+  ];
+
+  const withPhotos = items.filter((item) => item.before || item.after || item.single);
+  const missingPhotos = items.filter((item) => !item.before && !item.after && !item.single);
+  const filteredByEmployee = (list: EvidenceGalleryItem[]) => list.filter((item) => employeeFilter === "Todos" || item.employeeId === employeeFilter);
+  const shown = filteredByEmployee(onlyMissing ? missingPhotos : withPhotos);
+
+  return (
+    <section className="stack">
+      <article className="panelCard">
+        <div className="sectionHead">
+          <div>
+            <h2>Evidencia fotográfica del día</h2>
+            <span>Tareas y actividades que requieren foto, con lo que cada colaborador subió hoy.</span>
+          </div>
+          <span className="inlineTimes">
+            <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
+              <option value="Todos">Todos los colaboradores</option>
+              {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+            </select>
+            <select value={onlyMissing ? "faltantes" : "con-foto"} onChange={(event) => setOnlyMissing(event.target.value === "faltantes")}>
+              <option value="con-foto">Con evidencia subida ({filteredByEmployee(withPhotos).length})</option>
+              <option value="faltantes">Evidencia pendiente ({filteredByEmployee(missingPhotos).length})</option>
+            </select>
+          </span>
+        </div>
+        {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente hoy." : "Aún no hay fotos subidas hoy."}</p>}
+        <div className="evidenceGallery">
+          {shown.map((item) => (
+            <article className="evidenceGalleryCard" key={`${item.kind}-${item.id}`}>
+              <div className="sectionHead">
+                <div>
+                  <strong>{collaborators.find((employee) => employee.id === item.employeeId)?.name ?? item.employeeId}</strong>
+                  <small>{item.kind} · {item.title} · {item.scheduled}</small>
+                </div>
+                <span className={`statusPill ${evidenceStatusClass(item.status)}`}>{item.status}</span>
+              </div>
+              {(item.before || item.after) && (
+                <div className="beforeAfterEvidence">
+                  <div><strong>Antes</strong>{item.before ? <EvidenceCaptured value={item.before} label="Antes" onClear={() => {}} retakeLabel="" readOnly /> : <p className="muted">Pendiente</p>}</div>
+                  <div><strong>Después</strong>{item.after ? <EvidenceCaptured value={item.after} label="Después" onClear={() => {}} retakeLabel="" readOnly /> : <p className="muted">Pendiente</p>}</div>
+                </div>
+              )}
+              {item.single && <EvidenceCaptured value={item.single} label={item.title} onClear={() => {}} retakeLabel="" readOnly />}
+              {!item.before && !item.after && !item.single && <p className="danger">Sin evidencia subida todavía.</p>}
+            </article>
+          ))}
+        </div>
       </article>
     </section>
   );

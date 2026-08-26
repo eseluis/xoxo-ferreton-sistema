@@ -1523,6 +1523,22 @@ h2 {
   }
 }
 
+.evidenceGallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.9rem;
+  margin-top: 0.8rem;
+}
+
+.evidenceGalleryCard {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+
 .guideHero {
   display: flex;
   gap: 16px;
