@@ -48,6 +48,7 @@ import {
   cloudLoad,
   cloudRefresh,
   cloudSave,
+  flushPendingCloudSaves,
   changeOwnPassword,
   getSession,
   isCloudReady,
@@ -522,17 +523,28 @@ function workSequenceFor(
 }
 
 const load = <T,>(key: string, fallback: T): T => {
-  const raw = localStorage.getItem(key);
-  return raw ? (JSON.parse(raw) as T) : fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    // Un respaldo local incompleto no debe impedir que abra la aplicación.
+    localStorage.removeItem(key);
+    return fallback;
+  }
 };
 
 let lastCloudMutationAt = 0;
 const save = (key: string, value: unknown) => {
   lastCloudMutationAt = Date.now();
-  localStorage.setItem(key, JSON.stringify(value));
-  markCloudPending(key, value);
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) {
+    console.error("No se pudo actualizar el respaldo local", error);
+  }
+  let revision: string | undefined;
+  try { revision = markCloudPending(key, value); } catch (error) {
+    console.error("No se pudo preparar el respaldo pendiente", error);
+  }
   void cloudSave(key, value)
-    .then(() => clearCloudPending(key))
+    .then(() => clearCloudPending(key, revision))
     .catch((error) => console.error("No se pudo guardar la evidencia en la nube; se conserva localmente para reintento", error));
 };
 
@@ -870,10 +882,13 @@ function App() {
     void refreshOperationalState();
     const interval = window.setInterval(() => void refreshOperationalState(), 8000);
     const refreshOnFocus = () => void refreshOperationalState();
+    const flushOnOnline = () => void flushPendingCloudSaves();
     window.addEventListener("focus", refreshOnFocus);
+    window.addEventListener("online", flushOnOnline);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", refreshOnFocus);
+      window.removeEventListener("online", flushOnOnline);
     };
   }, [isAuthenticated]);
 

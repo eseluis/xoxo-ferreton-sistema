@@ -11,20 +11,49 @@ const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | unde
 
 export const isCloudReady = Boolean(supabaseUrl && supabaseAnonKey);
 const pendingStorageKey = (key: string) => `xoxo.pending.${key}`;
+const pendingPrefix = "xoxo.pending.";
 
-function pendingValue<T>(key: string): T | undefined {
+type PendingRecord<T> = {
+  revision: string;
+  value: T;
+};
+
+const mutationQueues = new Map<string, Promise<void>>();
+
+function isPendingRecord<T>(value: unknown): value is PendingRecord<T> {
+  return Boolean(value && typeof value === "object" && "revision" in value && "value" in value);
+}
+
+function pendingRecord<T>(key: string): PendingRecord<T> | undefined {
   if (typeof window === "undefined") return undefined;
   const raw = window.localStorage.getItem(pendingStorageKey(key));
   if (!raw) return undefined;
-  try { return JSON.parse(raw) as T; } catch { return undefined; }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (isPendingRecord<T>(parsed)) return parsed;
+    // Compatibilidad con pendientes guardados por versiones anteriores.
+    return { revision: "legacy", value: parsed as T };
+  } catch {
+    window.localStorage.removeItem(pendingStorageKey(key));
+    return undefined;
+  }
 }
 
-export function markCloudPending(key: string, value: unknown) {
-  if (typeof window !== "undefined") window.localStorage.setItem(pendingStorageKey(key), JSON.stringify(value));
+export function markCloudPending(key: string, value: unknown): string {
+  const revision = crypto.randomUUID();
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(pendingStorageKey(key), JSON.stringify({ revision, value }));
+  }
+  return revision;
 }
 
-export function clearCloudPending(key: string) {
-  if (typeof window !== "undefined") window.localStorage.removeItem(pendingStorageKey(key));
+export function clearCloudPending(key: string, revision?: string) {
+  if (typeof window === "undefined") return;
+  if (revision === undefined) return;
+  const pending = pendingRecord(key);
+  if (!pending || pending.revision === revision) {
+    window.localStorage.removeItem(pendingStorageKey(key));
+  }
 }
 export const supabase = isCloudReady
   ? createClient(supabaseUrl!, supabaseAnonKey!, {
@@ -106,10 +135,10 @@ const moduleTables: Record<string, string> = {
 
 export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
-  const pending = pendingValue<T>(key);
-  if (pending !== undefined) {
-    try { await cloudSave(key, pending); clearCloudPending(key); } catch { return pending; }
-    return pending;
+  const pending = pendingRecord<T>(key);
+  if (pending) {
+    try { await cloudSave(key, pending.value); clearCloudPending(key, pending.revision); } catch { return pending.value; }
+    return pending.value;
   }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
@@ -126,10 +155,10 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
 // de cloudLoad, no sustituye el estado actual cuando hay una falla de red.
 export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   if (!supabase) return undefined;
-  const pending = pendingValue<T>(key);
-  if (pending !== undefined) {
-    try { await cloudSave(key, pending); clearCloudPending(key); } catch { /* conservar para el siguiente intento */ }
-    return pending;
+  const pending = pendingRecord<T>(key);
+  if (pending) {
+    try { await cloudSave(key, pending.value); clearCloudPending(key, pending.revision); } catch { /* conservar para el siguiente intento */ }
+    return pending.value;
   }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
@@ -142,7 +171,7 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   return data.value as T;
 }
 
-export async function cloudSave(key: string, value: unknown) {
+async function performCloudSave(key: string, value: unknown) {
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
@@ -168,4 +197,33 @@ export async function cloudSave(key: string, value: unknown) {
     updated_by: data.user.id,
   });
   if (error) throw error;
+}
+
+// Serializa los guardados de cada módulo. Así una respuesta lenta no puede
+// confirmar una versión anterior después de una modificación más reciente.
+export function cloudSave(key: string, value: unknown): Promise<void> {
+  const previous = mutationQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(() => performCloudSave(key, value));
+  mutationQueues.set(key, current);
+  void current.finally(() => {
+    if (mutationQueues.get(key) === current) mutationQueues.delete(key);
+  }).catch(() => undefined);
+  return current;
+}
+
+export async function flushPendingCloudSaves(): Promise<void> {
+  if (!supabase || typeof window === "undefined") return;
+  const keys = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+    .filter((key): key is string => Boolean(key?.startsWith(pendingPrefix)))
+    .map((key) => key.slice(pendingPrefix.length));
+  await Promise.all(keys.map(async (key) => {
+    const pending = pendingRecord<unknown>(key);
+    if (!pending) return;
+    try {
+      await cloudSave(key, pending.value);
+      clearCloudPending(key, pending.revision);
+    } catch {
+      // Se conserva para el siguiente intento automático.
+    }
+  }));
 }
