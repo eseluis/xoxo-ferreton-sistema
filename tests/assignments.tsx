@@ -1,8 +1,8 @@
 // Local-only fixture: no authentication, saves or production data.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { EvidenceCaptured, RequestsView, TasksView } from "../src/App";
-import { defaultEmployees, type DailyTask } from "../src/data";
+import { EvidenceCaptured, RequestsView, TasksView, MyWorkFocus } from "../src/App";
+import { defaultEmployees, defaultActivitySchedules, defaultShiftConfigs, type DailyTask } from "../src/data";
 import "../src/styles.css";
 
 const manager = defaultEmployees.find((employee) => employee.id === "001")!;
@@ -21,6 +21,7 @@ function Fixture() {
     status: "Abierta" as const, confidentiality: "Normal" as const, response: "",
   }]);
   return <main style={{ padding: 24 }}><h1>Pruebas locales · no se guardan datos</h1>
+    <MyWorkFocus user={colleague} date="2026-08-30" location={colleague.branch} schedules={defaultActivitySchedules} tasks={tasks} runs={[]} shift={defaultShiftConfigs.find(shift => shift.key === colleague.shift)} onNavigate={() => {}} />
     <EvidenceCaptured value={picture} label="Evidencia de prueba" readOnly onClear={() => {}} retakeLabel="" />
     <TasksView user={manager} collaborators={defaultEmployees} dailyTasks={tasks} setDailyTasks={setTasks} workLocations={[]} assignWorkLocation={() => {}} />
     <RequestsView user={manager} collaborators={defaultEmployees} internalRequests={requests} setInternalRequests={(next) => setRequests(next as typeof requests)} addInternalRequest={(event) => event.preventDefault()} />

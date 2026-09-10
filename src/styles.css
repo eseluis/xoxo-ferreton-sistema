@@ -2261,3 +2261,11 @@ textarea {
     padding: 0;
   }
 }
+.myWorkFocus { border: 1px solid var(--border-strong); border-left: 6px solid var(--ok); background: var(--surface); }
+.myWorkFocus .sectionHead { align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.workFocusMain h3 { margin: 8px 0; font-size: clamp(1.25rem, 3vw, 1.8rem); color: var(--accent2); overflow-wrap: anywhere; }
+.workFocusMain p { line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.workFocusNext { display: flex; gap: 12px; flex-wrap: wrap; padding: 14px 0; border-top: 1px solid var(--border); }
+.workFocusNotice { color: var(--warn); }
+.workFocusActions { display: flex; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 600px) { .workFocusActions button { width: 100%; } }

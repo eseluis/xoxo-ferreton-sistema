@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { selectWorkFocus, workTimeAt, type WorkItem } from "./workFocus";
 import {
   canAssign,
   canGovern,
@@ -2138,6 +2139,47 @@ function profileFor(role: Role) {
   return roleProfiles.find((profile) => profile.role === role);
 }
 
+export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, shift, onNavigate }: {
+  user: Employee; date: string; location: string; schedules: ActivitySchedule[];
+  tasks: DailyTask[]; runs: ActivityRun[]; cleaning?: CleaningRole;
+  shift?: ShiftConfig; onNavigate: (view: string) => void;
+}) {
+  const targeted = schedules.filter(item => item.employeeIds?.includes(user.id) && (!item.branch || item.branch === location));
+  const routine = targeted.length ? targeted : schedules.filter(item => item.ownerRoles.includes(user.role) && (!item.branch || item.branch === location));
+  const ownRuns = runs.filter(run => run.employeeId === user.id && run.date === date);
+  const items: WorkItem[] = routine.map(item => {
+    const run = ownRuns.find(entry => entry.itemType === "Actividad" && entry.itemId === item.id);
+    return { id: `Actividad-${item.id}`, kind: "Actividad", title: item.name, start: item.start, end: item.end,
+      instructions: item.instructions, startedAt: run?.startedAt, completedAt: run?.completedAt, status: run?.status ?? "Programada" };
+  });
+  if (cleaning) {
+    const run = ownRuns.find(entry => entry.itemType === "Aseo" && entry.itemId === cleaning.activity);
+    items.push({ id: `Aseo-${cleaning.activity}`, kind: "Aseo", title: cleaning.activity, start: cleaning.start, end: cleaning.end,
+      instructions: cleaning.details, startedAt: run?.startedAt, completedAt: run?.completedAt, status: run?.status ?? "Programada" });
+  }
+  // Keep a started activity visible even if its schedule has since been edited.
+  ownRuns.filter(run => run.startedAt && !run.completedAt && !items.some(item => item.id === `${run.itemType}-${run.itemId}`))
+    .forEach(run => items.push({ id: `${run.itemType}-${run.itemId}`, kind: run.itemType, title: run.title,
+      start: run.scheduledStart, end: run.scheduledEnd, startedAt: run.startedAt, status: run.status }));
+  tasks.filter(task => task.employeeId === user.id && task.date === date).forEach(task => items.push({
+    id: `Tarea-${task.id}`, kind: "Tarea", title: task.title, start: task.start, end: task.end,
+    instructions: task.notes, startedAt: task.startedAt, completedAt: task.completedAt, status: task.status,
+    blocked: task.paused || task.approvalStatus === "Pendiente",
+  }));
+  const currentTime = workTimeAt();
+  const focus = selectWorkFocus(items, currentTime, shift);
+  const blocked = focus.pending.filter(item => item.blocked || ["Pausada", "Incidencia"].includes(item.status));
+  return <article className="wide panelCard myWorkFocus">
+    <div className="sectionHead"><div><h2>Qué debo estar haciendo ahora</h2><span>{user.name} · {location} · {currentTime} h</span></div><span className="statusPill">{focus.label}</span></div>
+    {focus.current ? <div className="workFocusMain"><small>{focus.current.kind} · {focus.current.start}–{focus.current.end}</small><h3>{focus.current.title}</h3><p>{focus.current.instructions || "Consulta el detalle de la actividad y registra tu avance al realizarla."}</p></div>
+      : <div className="workFocusMain"><h3>{!focus.inShift ? "Tu turno no está activo" : focus.pending.length === 0 && items.length > 0 ? "Completaste tu agenda de hoy" : "Sin actividad asignada para este momento"}</h3><p>{!focus.inShift ? `Horario de turno: ${shift?.start}–${shift?.end}.` : "Consulta lo que sigue o pide indicaciones a tu responsable."}</p></div>}
+    <div className="workFocusNext"><strong>Después</strong><span>{focus.next ? `${focus.next.start}–${focus.next.end} · ${focus.next.title}` : "No hay otra actividad futura programada hoy."}</span></div>
+    {focus.overdue.length > 0 && <p className="workFocusNotice">{focus.overdue.length} actividad(es) con horario vencido sin completar. Revisa tus pendientes.</p>}
+    {blocked.length > 0 && <p className="workFocusNotice">{blocked.length} tarea(s) pausada(s), con incidencia o esperando autorización.</p>}
+    <div className="workFocusActions"><button className="primary" onClick={() => onNavigate("asistencia")}>Ver mi agenda y registrar avance</button><button className="ghost" onClick={() => onNavigate("tareas")}>Ver mis tareas</button></div>
+  </article>;
+}
+
 function Dashboard({
   user,
   attendance,
@@ -2213,6 +2255,7 @@ function Dashboard({
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
+  const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} shift={shiftMap[user.shift]} onNavigate={onNavigate} />;
   const openingBoard = <StoreOpeningBoard user={user} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
@@ -2228,6 +2271,7 @@ function Dashboard({
     const coworkersToday = collaborators.filter((employee) => employee.id !== user.id && locationFor(employee) === branchToday);
     const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
+      {myWorkFocus}
       {openingBoard}
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
@@ -2248,6 +2292,7 @@ function Dashboard({
   }
   return (
     <section className="grid">
+      {myWorkFocus}
       {openingBoard}
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
