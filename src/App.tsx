@@ -24,6 +24,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   canAssign,
   canGovern,
@@ -47,6 +48,8 @@ import {
 import {
   cloudLoad,
   cloudRefresh,
+  cloudRefreshChanged,
+  invalidateCloudRefreshTokens,
   cloudSave,
   flushPendingCloudSaves,
   changeOwnPassword,
@@ -544,8 +547,11 @@ const save = (key: string, value: unknown) => {
     console.error("No se pudo preparar el respaldo pendiente", error);
   }
   void cloudSave(key, value)
-    .then(() => clearCloudPending(key, revision))
-    .catch((error) => console.error("No se pudo guardar la evidencia en la nube; se conserva localmente para reintento", error));
+    .then(() => { clearCloudPending(key, revision); window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } })); })
+    .catch((error) => {
+      console.error("No se pudo guardar la evidencia en la nube; se conserva localmente para reintento", error);
+      window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: error instanceof Error ? error.message : "No se pudo confirmar el guardado en la nube." } }));
+    });
 };
 
 type WorkLocation = {
@@ -660,6 +666,15 @@ function arrivalPunctuality(minutes: number): { label: string; className: string
 }
 
 function App() {
+  const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const { key, error } = (event as CustomEvent<{ key: string; error: string }>).detail;
+      setSyncErrors((previous) => ({ ...previous, [key]: error }));
+    };
+    window.addEventListener("xoxo-sync", listener);
+    return () => window.removeEventListener("xoxo-sync", listener);
+  }, []);
   const [clockNow, setClockNow] = useState(() => new Date());
   const [activeId, setActiveId] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -741,7 +756,9 @@ function App() {
 
   useEffect(() => {
     if (!isCloudReady || !isAuthenticated) return;
+    let cancelled = false;
     const hydrate = async () => {
+      const mutationAtStart = lastCloudMutationAt;
       const [
         cloudCollaborators,
         cloudAttendance,
@@ -795,6 +812,7 @@ function App() {
         cloudLoad("xoxo.slaReviews", slaReviews),
         cloudLoad("xoxo.storeOpeningChecks", storeOpeningChecks),
       ]);
+      if (cancelled || mutationAtStart !== lastCloudMutationAt) return;
       const organizationOverrides: Record<string, Partial<Employee>> = {
         "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
         "008": { branch: "Matriz", shift: "A", supervisorId: "003" }, "009": { branch: "Matriz", shift: "A", supervisorId: "003" },
@@ -836,6 +854,38 @@ function App() {
       if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
     };
     void hydrate();
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let active = true;
+    let busy = false;
+    const refreshAssignments = async () => {
+      if (busy || document.visibilityState === "hidden" || Date.now() - lastCloudMutationAt < 12000) return;
+      busy = true;
+      const version = lastCloudMutationAt;
+      try {
+        const [tasks, runs, requests, instances] = await Promise.all([
+          cloudRefreshChanged<DailyTask[]>("xoxo.dailyTasks"),
+          cloudRefreshChanged<ActivityRun[]>("xoxo.activityRuns"),
+          cloudRefreshChanged<InternalRequest[]>("xoxo.internalRequests"),
+          cloudRefreshChanged<ProcessInstance[]>("xoxo.processInstances"),
+        ]);
+        if (!active || version !== lastCloudMutationAt) {
+          invalidateCloudRefreshTokens();
+          return;
+        }
+        if (tasks) setDailyTasks(tasks);
+        if (runs) setActivityRuns(runs);
+        if (requests) setInternalRequests(requests);
+        if (instances) setProcessInstances(instances);
+      } catch (error) {
+        console.error("No se pudo consultar las asignaciones", error);
+      } finally { busy = false; }
+    };
+    const interval = window.setInterval(() => void refreshAssignments(), 15000);
+    return () => { active = false; window.clearInterval(interval); };
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -843,8 +893,12 @@ function App() {
     let refreshing = false;
     const refreshOperationalState = async () => {
       if (refreshing) return;
+      // Las evidencias incluyen fotografías en base64. No descargar todos los
+      // módulos mientras la pestaña está oculta: esto agotaba el egress del plan.
+      if (document.visibilityState === "hidden") return;
       if (Date.now() - lastCloudMutationAt < 12000) return;
       refreshing = true;
+      const mutationAtRefreshStart = lastCloudMutationAt;
       try {
         const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures, latestCollaborators, latestCleaningRole, latestSlaReviews] = await Promise.all([
           cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
@@ -863,6 +917,8 @@ function App() {
           cloudRefresh<CleaningRole[]>("xoxo.cleaningRole"),
           cloudRefresh<SlaReview[]>("xoxo.slaReviews"),
         ]);
+        // A refresh started before a local edit must not replace that edit.
+        if (lastCloudMutationAt !== mutationAtRefreshStart) return;
         if (latestTasks) setDailyTasks(latestTasks);
         if (latestProcesses) setProcessInstances(latestProcesses);
         if (latestRequests) setInternalRequests(latestRequests);
@@ -880,8 +936,12 @@ function App() {
       }
     };
     void refreshOperationalState();
-    const interval = window.setInterval(() => void refreshOperationalState(), 8000);
-    const refreshOnFocus = () => void refreshOperationalState();
+    // Antes eran 8 segundos (450 consultas/hora por sesión). Cinco minutos son
+    // suficientes como respaldo; los cambios propios se muestran de inmediato.
+    const interval = window.setInterval(() => void refreshOperationalState(), 5 * 60 * 1000);
+    const refreshOnFocus = () => {
+      if (Date.now() - lastCloudMutationAt > 30000) void refreshOperationalState();
+    };
     const flushOnOnline = () => void flushPendingCloudSaves();
     window.addEventListener("focus", refreshOnFocus);
     window.addEventListener("online", flushOnOnline);
@@ -948,8 +1008,13 @@ function App() {
       setActiveId(employeeNumber);
       setIsAuthenticated(true);
       setLoginPassword("");
-    } catch {
-      setLoginError("Numero de colaborador o contrasena incorrecta.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      setLoginError(
+        message.includes("fetch") || message.includes("conectar") || message.includes("network") || message.includes("servidor") || message.includes("503")
+          ? "El servidor de acceso está temporalmente fuera de servicio. El sistema ya reintentó 3 veces; vuelve a intentarlo en unos minutos."
+          : "Numero de colaborador o contrasena incorrecta.",
+      );
     }
   };
 
@@ -969,6 +1034,8 @@ function App() {
   // Asignar/quitar actividad directamente desde el panel de inicio (tabla de equipo), sin
   // pasar por la pantalla de Tareas. Sólo lo usan roles con canGovern.
   const addQuickTask = (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => {
+    const recipient = collaborators.find((person) => person.id === employeeId);
+    if (!recipient || !canAssign(user, recipient) || !title.trim()) return;
     const start = timeNow();
     const endMinutes = Math.min(23 * 60 + 59, timeToMinutes(start) + 60);
     const end = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
@@ -1446,6 +1513,8 @@ function App() {
   const addInternalRequest = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    if (!collaborators.some((person) => person.id === String(form.get("recipientId")))) return;
+    if (!String(form.get("title")).trim() || !String(form.get("message")).trim()) return;
     const next: InternalRequest[] = [
       {
         id: crypto.randomUUID(),
@@ -1760,6 +1829,7 @@ function App() {
       </aside>
 
       <main>
+        {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert"><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" onClick={() => window.location.reload()}>Reintentar y recargar</button></div>}
         <header className="topbar">
           <div>
             <div className="systemClock"><Clock size={18}/><span><strong>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(clockNow)}</strong><small>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",weekday:"long",day:"2-digit",month:"long",year:"numeric"}).format(clockNow)} · Oaxaca de Juárez</small></span></div>
@@ -2858,17 +2928,43 @@ function AttendanceView({
 }
 
 function ImageLightbox({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
-  return (
-    <div className="lightboxBackdrop" onClick={onClose}>
+  const [scale, setScale] = useState(1);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "Tab") {
+        const buttons = closeRef.current?.parentElement?.querySelectorAll<HTMLButtonElement>("button");
+        if (!buttons?.length) return;
+        const first = buttons[0], last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.body.style.overflow = overflow; document.removeEventListener("keydown", onKey); previousFocus?.focus(); };
+  }, [onClose]);
+  return createPortal(
+    <div className="lightboxBackdrop" role="dialog" aria-modal="true" aria-label={label} onClick={onClose}>
       <div className="lightboxFrame" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="ghost compact lightboxClose" onClick={onClose}>Cerrar ✕</button>
-        <img src={src} alt={label} />
+        <div className="lightboxToolbar">
+          <span>{label} · {Math.round(scale * 100)}%</span>
+          <button type="button" className="ghost compact" onClick={() => setScale(Math.max(1, scale - 0.5))}>Reducir</button>
+          <button type="button" className="ghost compact" onClick={() => setScale(Math.min(4, scale + 0.5))}>Ampliar</button>
+          <button type="button" className="ghost compact" onClick={() => setScale(1)}>Ajustar</button>
+          <button ref={closeRef} type="button" className="ghost compact lightboxClose" onClick={onClose}>Cerrar ✕</button>
+        </div>
+        <div className="lightboxViewport"><img src={src} alt={label} style={{ width: `${scale * 100}%`, maxWidth: "none", maxHeight: scale === 1 ? "78vh" : "none" }} /></div>
       </div>
-    </div>
+    </div>, document.body
   );
 }
 
-function EvidenceCaptured({
+export function EvidenceCaptured({
   value,
   label,
   onClear,
@@ -2884,7 +2980,7 @@ function EvidenceCaptured({
   const [zoomed, setZoomed] = useState(false);
   return (
     <div className="evidenceCaptured">
-      <img src={value.dataUrl} alt={label} className="evidenceThumb" onClick={() => setZoomed(true)} />
+      <button type="button" className="evidencePreview" onClick={() => setZoomed(true)} aria-label={`Ampliar ${label}`}><img src={value.dataUrl} alt={label} className="evidenceThumb" /><span>Ampliar</span></button>
       {zoomed && <ImageLightbox src={value.dataUrl} label={label} onClose={() => setZoomed(false)} />}
       <div>
         <small>
@@ -4303,7 +4399,19 @@ function StoreSummaryPanel({
   );
 }
 
-function TasksView({
+function HistoryFilters({ from, to, employee, employees, onFrom, onTo, onEmployee }: {
+  from: string; to: string; employee: string; employees: Employee[];
+  onFrom: (value: string) => void; onTo: (value: string) => void; onEmployee: (value: string) => void;
+}) {
+  return <div className="historyFilters">
+    <label>Desde<input type="date" value={from} max={to || undefined} onInput={(event) => onFrom(event.currentTarget.value)} onChange={(event) => onFrom(event.target.value)} /></label>
+    <label>Hasta<input type="date" value={to} min={from || undefined} onInput={(event) => onTo(event.currentTarget.value)} onChange={(event) => onTo(event.target.value)} /></label>
+    <label>Colaborador<select value={employee} onChange={(event) => onEmployee(event.target.value)}><option value="Todos">Todos los colaboradores</option>{employees.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
+    <button type="button" className="ghost compact" onClick={() => { onFrom(""); onTo(""); onEmployee("Todos"); }}>Limpiar filtros</button>
+  </div>;
+}
+
+export function TasksView({
   user,
   collaborators,
   dailyTasks,
@@ -4322,15 +4430,20 @@ function TasksView({
   const isAuxiliary = user.role === "AUXILIAR";
   const [taskError, setTaskError] = useState("");
   const [reviewStatus, setReviewStatus] = useState("Todas");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const assignable = collaborators.filter((employee) => canAssign(user, employee));
   const addTask = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const employeeId=String(form.get("employeeId"));const start=String(form.get("start"));const end=String(form.get("end"));const notes=String(form.get("notes")).trim();
+    const taskDate = String(form.get("date"));
+    if (!assignable.some((employee) => employee.id === employeeId)) { setTaskError("Selecciona un colaborador al que puedas asignar tareas."); return; }
+    if (!taskDate || !String(form.get("title")).trim()) { setTaskError("Indica la fecha y el título de la tarea."); return; }
     if(timeToMinutes(end)<=timeToMinutes(start)){setTaskError("La hora final debe ser posterior a la hora inicial.");return;}
     if(notes.length<20){setTaskError("La misión necesita instrucciones completas de al menos 20 caracteres.");return;}
     const targetEmployee=collaborators.find((employee)=>employee.id===employeeId);
-    const overlaps=dailyTasks.filter((task)=>task.employeeId===employeeId&&task.date===today&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
+    const overlaps=dailyTasks.filter((task)=>task.employeeId===employeeId&&task.date===taskDate&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
     const overlapLimit=targetEmployee?.role==="AUXILIAR"?2:1;
     if(overlaps.length>=overlapLimit){setTaskError(targetEmployee?.role==="AUXILIAR"?"Un auxiliar no puede tener más de 2 tareas en el mismo horario.":`Horario ocupado por: ${overlaps[0].title} (${overlaps[0].start}-${overlaps[0].end}).`);return;}
     const targetedSchedule=defaultActivitySchedules.filter((activity)=>activity.employeeIds?.includes(employeeId));
@@ -4345,7 +4458,7 @@ function TasksView({
         employeeId,
         assignedById: user.id,
         assignedAt: new Date().toISOString(),
-        date: today,
+        date: taskDate,
         start,
         end,
         status: "Pendiente",
@@ -4365,13 +4478,21 @@ function TasksView({
   };
 
   const updateTaskStatus = (id: string, status: DailyTask["status"]) => {
+    const target = dailyTasks.find((task) => task.id === id);
+    if (!target) return;
+    if (status === "Completada" && target.requiresPhoto && (!target.beforeEvidenceCapture || !target.afterEvidenceCapture)) {
+      setTaskError("Para completar la tarea faltan las fotos de antes y después. Se capturan en la jornada del colaborador."); return;
+    }
+    setTaskError("");
     setDailyTasks(
       dailyTasks.map((task) =>
         task.id === id
           ? {
               ...task,
               status,
-              paused: status === "Pausada" || status === "Incidencia" ? true : task.paused,
+              paused: status === "Pausada" || status === "Incidencia",
+              startedAt: status === "En proceso" || status === "Completada" ? task.startedAt || new Date().toISOString() : task.startedAt,
+              completedAt: status === "Completada" ? task.completedAt || new Date().toISOString() : undefined,
               approvalStatus: status === "Pausada" || status === "Incidencia" ? "Pendiente" : task.approvalStatus,
             }
           : task,
@@ -4401,15 +4522,19 @@ function TasksView({
     : dailyTasks.filter((task) => task.employeeId === user.id || task.assignedById === user.id);
   const reviewedTasks = visibleTasks
     .filter((task) => reviewStatus === "Todas" || task.status === reviewStatus)
-    .filter((task) => reviewEmployee === "Todos" || task.employeeId === reviewEmployee);
+    .filter((task) => reviewEmployee === "Todos" || task.employeeId === reviewEmployee)
+    .filter((task) => (!dateFrom || task.date >= dateFrom) && (!dateTo || task.date <= dateTo))
+    .sort((a, b) => b.date.localeCompare(a.date) || (b.assignedAt || "").localeCompare(a.assignedAt || ""));
   const canDirectAllTasks = ["001", "002", "003"].includes(user.id);
   const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.id === "006");
 
   return (
     <section className="grid two">
       {!isAuxiliary && <form className="panelCard form" onSubmit={addTask}>
-        <h2>Asignar tarea del dia</h2>
+        <h2>Asignar tarea</h2>
+        <label>Fecha de la tarea<input name="date" type="date" defaultValue={today} required /></label>
         <select name="employeeId" required>
+          <option value="">Selecciona al colaborador responsable</option>
           {assignable.map((employee) => (
             <option key={employee.id} value={employee.id}>
               {employee.name} - {employee.roleLabel}
@@ -4435,7 +4560,7 @@ function TasksView({
         <textarea name="notes" placeholder="Misión bien redactada: objetivo, pasos, resultado esperado y evidencia" required />
         <label className="auditClose"><input name="requiresPhoto" type="checkbox" defaultChecked /> Exigir foto antes y después de la tarea</label>
         {taskError&&<p className="loginError">{taskError}</p>}
-        <button className="primary">Asignar</button>
+        <button className="primary" disabled={!assignable.length}>Asignar</button>
       </form>}
 
       {canGovern(user) && <article className="panelCard"><div className="sectionHead"><div><h2>Lugar de trabajo de hoy</h2><span>Auxiliares y Jan reciben los procesos del lugar asignado.</span></div></div><div className="taskList">{locationTargets.map((employee)=>{const assigned=workLocations.find((item)=>item.employeeId===employee.id&&item.date===today)?.location??employee.branch;return <div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel}</small></span><select value={assigned} onChange={(event)=>assignWorkLocation(employee.id,event.target.value as WorkLocation["location"])}><option>Matriz</option><option>Sucursal Centro</option></select></div>;})}</div></article>}
@@ -4448,12 +4573,14 @@ function TasksView({
 
       <article className="panelCard">
         <div className="sectionHead">
-          <div><h2>Revisión de tareas</h2><span>Asignadas, en proceso, incidencias y terminadas.{canViewAll(user)?` · ${visibleTasks.length} tareas de todo el personal`:""}</span></div>
+          <div><h2>Historial y seguimiento de tareas</h2><span>{reviewedTasks.length} tareas · Asignadas, en proceso, incidencias y terminadas.</span></div>
           <span className="inlineTimes">
-            {canViewAll(user) && <select value={reviewEmployee} onChange={(event)=>setReviewEmployee(event.target.value)}><option value="Todos">Todos los colaboradores</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select>}
             <select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select>
           </span>
         </div>
+        <HistoryFilters from={dateFrom} to={dateTo} employee={reviewEmployee} employees={collaborators.filter((person) => visibleTasks.some((task) => task.employeeId === person.id))} onFrom={setDateFrom} onTo={setDateTo} onEmployee={setReviewEmployee} />
+        {taskError && <p role="alert" className="loginError">{taskError}</p>}
+        {!reviewedTasks.length && <p className="muted">No hay tareas con estos filtros.</p>}
         <div className="taskList">
           {reviewedTasks.map((task) => (
             <div className="taskFollowCard" key={task.id}>
@@ -4470,7 +4597,7 @@ function TasksView({
                       </select>
                     </span>
                   ) : <small>{collaborators.find((employee) => employee.id === task.employeeId)?.name} · {task.priority}</small>}
-                  <small>Asignó {collaborators.find((employee) => employee.id === task.assignedById)?.name ?? task.assignedById}{task.assignedAt ? ` · ${new Date(task.assignedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}` : ""}</small>
+                  <small>Fecha: {task.date} · Asignó {collaborators.find((employee) => employee.id === task.assignedById)?.name ?? task.assignedById}{task.assignedAt ? ` · ${new Date(task.assignedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}` : ""}</small>
                   {canDirectAllTasks ? <span className="inlineTimes"><input type="time" value={task.start} onChange={(event)=>updateTaskPatch(task.id,{start:event.target.value})}/><input type="time" value={task.end} onChange={(event)=>updateTaskPatch(task.id,{end:event.target.value})}/></span> : <small>{task.start}-{task.end}</small>}
                 </span>
                 <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
@@ -5105,7 +5232,7 @@ function CashView({
   );
 }
 
-function RequestsView({
+export function RequestsView({
   user,
   collaborators,
   internalRequests,
@@ -5118,15 +5245,26 @@ function RequestsView({
   addInternalRequest: (event: React.FormEvent<HTMLFormElement>) => void;
   setInternalRequests: (value: InternalRequest[]) => void;
 }) {
-  const recipients = collaborators.filter((employee) => ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"].includes(employee.role));
+  const recipients = collaborators;
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [employeeFilter, setEmployeeFilter] = useState("Todos");
+  const [statusFilter, setStatusFilter] = useState("Todas");
   const visibleRequests = internalRequests.filter((request) => {
     if (request.requestedById === user.id || request.recipientId === user.id) return true;
     if (request.confidentiality === "Confidencial") return false;
     return canGovern(user);
   });
   const updateRequest = (id: string, patch: Partial<InternalRequest>) => {
+    const target = visibleRequests.find((request) => request.id === id);
+    if (!target || !(target.recipientId === user.id || canGovern(user))) return;
     setInternalRequests(internalRequests.map((request) => (request.id === id ? { ...request, ...patch } : request)));
   };
+  const filteredRequests = visibleRequests
+    .filter((request) => (!dateFrom || request.date >= dateFrom) && (!dateTo || request.date <= dateTo))
+    .filter((request) => employeeFilter === "Todos" || request.requestedById === employeeFilter || request.recipientId === employeeFilter)
+    .filter((request) => statusFilter === "Todas" || request.status === statusFilter)
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   return (
     <section className="grid two">
@@ -5159,6 +5297,7 @@ function RequestsView({
           </label>
         </div>
         <select name="recipientId" required>
+          <option value="">Selecciona al responsable de atenderla</option>
           {recipients.map((recipient) => (
             <option key={recipient.id} value={recipient.id}>
               {recipient.name} - {recipient.roleLabel}
@@ -5180,16 +5319,19 @@ function RequestsView({
       <article className="panelCard">
         <div className="sectionHead">
           <div>
-            <h2>Bandeja de seguimiento</h2>
-            <span>{visibleRequests.length} registros visibles para tu usuario</span>
+            <h2>Historial y seguimiento de solicitudes</h2>
+            <span>{filteredRequests.length} registros · El colaborador filtra por remitente o destinatario.</span>
           </div>
         </div>
+        <HistoryFilters from={dateFrom} to={dateTo} employee={employeeFilter} employees={collaborators.filter((person) => visibleRequests.some((request) => request.requestedById === person.id || request.recipientId === person.id))} onFrom={setDateFrom} onTo={setDateTo} onEmployee={setEmployeeFilter} />
+        <label>Estado<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todas</option><option>Abierta</option><option>En revision</option><option>Atendida</option><option>Cerrada</option></select></label>
+        {!filteredRequests.length && <p className="muted">No hay solicitudes con estos filtros.</p>}
         <div className="requestList">
-          {visibleRequests.map((request) => {
+          {filteredRequests.map((request) => {
             const author = collaborators.find((employee) => employee.id === request.requestedById);
             const authorName = request.requestedById === "sistema" ? "Sistema (SLA automatico)" : author?.name ?? "Sin autor";
             const recipient = collaborators.find((employee) => employee.id === request.recipientId);
-            const canAnswer = request.recipientId === user.id || canGovern(user);
+            const canAnswer = request.recipientId === user.id || (canGovern(user) && request.confidentiality !== "Confidencial");
             const isMine = request.requestedById === user.id;
             const hasResponse = request.response.trim().length > 0;
             const responder = collaborators.find((employee) => employee.id === request.respondedById);
@@ -5518,6 +5660,7 @@ function EvidenceGalleryView({
   activityRuns: ActivityRun[];
 }) {
   const [employeeFilter, setEmployeeFilter] = useState("Todos");
+  const [evidenceDate, setEvidenceDate] = useState(today);
   const [onlyMissing, setOnlyMissing] = useState(false);
 
   const visibleEmployees = canViewAll(user)
@@ -5527,14 +5670,14 @@ function EvidenceGalleryView({
 
   const items: EvidenceGalleryItem[] = [
     ...dailyTasks
-      .filter((task) => task.date === today && task.requiresPhoto && visibleIds.has(task.employeeId))
+      .filter((task) => task.date === evidenceDate && task.requiresPhoto && visibleIds.has(task.employeeId))
       .map((task) => ({
         id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title,
         scheduled: `${task.start}-${task.end}`, status: task.status,
         before: task.beforeEvidenceCapture, after: task.afterEvidenceCapture,
       })),
     ...activityRuns
-      .filter((run) => run.date === today && run.evidence && run.evidence !== "none" && visibleIds.has(run.employeeId))
+      .filter((run) => run.date === evidenceDate && run.evidence && run.evidence !== "none" && visibleIds.has(run.employeeId))
       .map((run) => ({
         id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title,
         scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, status: run.status,
@@ -5552,10 +5695,11 @@ function EvidenceGalleryView({
       <article className="panelCard">
         <div className="sectionHead">
           <div>
-            <h2>Evidencia fotográfica del día</h2>
-            <span>Tareas y actividades que requieren foto, con lo que cada colaborador subió hoy.</span>
+            <h2>Historial de evidencias</h2>
+            <span>Fotos de tareas y actividades de la fecha seleccionada. Pulsa Ampliar para ver los detalles.</span>
           </div>
           <span className="inlineTimes">
+            <label>Fecha<input type="date" value={evidenceDate} onChange={(event) => setEvidenceDate(event.target.value)} /></label>
             <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
               <option value="Todos">Todos los colaboradores</option>
               {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
@@ -5566,7 +5710,7 @@ function EvidenceGalleryView({
             </select>
           </span>
         </div>
-        {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente hoy." : "Aún no hay fotos subidas hoy."}</p>}
+        {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente para estos filtros." : "No hay fotos para estos filtros."}</p>}
         <div className="evidenceGallery">
           {shown.map((item) => (
             <article className="evidenceGalleryCard" key={`${item.kind}-${item.id}`}>

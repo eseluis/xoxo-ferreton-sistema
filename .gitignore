@@ -6,3 +6,5 @@ dist/
 .vercel/
 .netlify/
 npm-debug.log*
+backups/*.json
+!backups/.gitkeep

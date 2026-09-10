@@ -1125,12 +1125,21 @@ h2 {
 
 .lightboxFrame {
   position: relative;
-  max-width: min(92vw, 900px);
+  width: 96vw;
+  max-width: 1600px;
   max-height: 90vh;
   display: grid;
   gap: 0.6rem;
   justify-items: end;
 }
+
+.lightboxToolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: white; }
+.lightboxToolbar button { background: var(--surface); }
+.lightboxViewport { width: 100%; max-height: 80vh; overflow: auto; }
+.lightboxViewport img { display: block; height: auto; }
+.evidencePreview { display: grid; gap: 4px; padding: 0; background: transparent; color: inherit; border: 0; cursor: zoom-in; }
+.historyFilters { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.historyFilters label { display: grid; gap: 4px; }
 
 .lightboxFrame img {
   max-width: 100%;

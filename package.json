@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "check": "tsc --noEmit && vite build",
+    "backup:structure": "node scripts/backup-structure.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

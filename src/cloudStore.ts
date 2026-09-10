@@ -16,9 +16,24 @@ const pendingPrefix = "xoxo.pending.";
 type PendingRecord<T> = {
   revision: string;
   value: T;
+  changes?: unknown[];
 };
 
 const mutationQueues = new Map<string, Promise<void>>();
+// Keep the last observed rows so editing one item never re-sends unrelated,
+// potentially stale assignments from another collaborator's session.
+const observedRows = new Map<string, Map<string, string>>();
+const assignmentModule = (key: string) => key === "xoxo.dailyTasks" || key === "xoxo.internalRequests";
+const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances";
+const localVersions = new Map<string, number>();
+function changedRows(key: string, value: unknown): unknown[] | undefined {
+  if (!incrementalModule(key) || !Array.isArray(value)) return undefined;
+  return value.filter((row) => observedRows.get(key)?.get(String(row.id)) !== JSON.stringify(row));
+}
+function rememberRows(key: string, rows: unknown[]) {
+  if (!incrementalModule(key)) return;
+  observedRows.set(key, new Map(rows.map((row) => [String((row as { id: string }).id), JSON.stringify(row)])));
+}
 
 function isPendingRecord<T>(value: unknown): value is PendingRecord<T> {
   return Boolean(value && typeof value === "object" && "revision" in value && "value" in value);
@@ -41,8 +56,13 @@ function pendingRecord<T>(key: string): PendingRecord<T> | undefined {
 
 export function markCloudPending(key: string, value: unknown): string {
   const revision = crypto.randomUUID();
+  const delta = changedRows(key, value);
+  const previous = pendingRecord(key);
+  const changes = delta === undefined ? undefined : Array.from(new Map(
+    [...(previous?.changes ?? []), ...delta].map((row) => [String((row as { id: string }).id), row]),
+  ).values());
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(pendingStorageKey(key), JSON.stringify({ revision, value }));
+    window.localStorage.setItem(pendingStorageKey(key), JSON.stringify({ revision, value, changes }));
   }
   return revision;
 }
@@ -74,24 +94,45 @@ export async function getSession(): Promise<Session | null> {
 }
 
 export function employeeEmail(employeeNumber: string) {
-  const normalized = employeeNumber.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const normalized = employeeNumber.trim().replace(/[^0-9]/g, "");
   return `${normalized}@usuarios.xoxo-ferreton.local`;
 }
 
 export async function signIn(employeeNumber: string, password: string) {
   if (!supabase) throw new Error("La conexion segura no esta configurada.");
-  const { data, error } = await supabase.auth.signInWithPassword({
-    email: employeeEmail(employeeNumber),
-    password,
-  });
-  if (error) throw error;
-  return data.session;
+  const normalized = employeeNumber.trim().replace(/[^0-9]/g, "");
+  if (!normalized) throw new Error("Número de colaborador inválido.");
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const loginRequest = supabase.auth.signInWithPassword({ email: employeeEmail(normalized), password });
+      const timeout = new Promise<never>((_, reject) =>
+        window.setTimeout(() => reject(new Error("Servidor de acceso temporalmente no disponible.")), 15000),
+      );
+      const { data, error } = await Promise.race([loginRequest, timeout]);
+      if (error) {
+        const retryable = error.status === 500 || error.status === 502 || error.status === 503 || error.message.toLowerCase().includes("fetch");
+        if (!retryable) throw error;
+        lastError = error;
+      } else {
+        return data.session;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : "";
+      if (!message.includes("fetch") && !message.includes("servidor") && !message.includes("network")) throw error;
+      lastError = error;
+    }
+    if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 1000 * (attempt + 1)));
+  }
+  throw lastError instanceof Error ? lastError : new Error("Servidor de acceso temporalmente no disponible.");
 }
 
 export async function signOut() {
   if (!supabase) return;
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
+  observedRows.clear();
+  changeTokens.clear();
 }
 
 export async function manageEmployeeAccess(employee: { id: string; name: string; role: string; branch: string }, password: string) {
@@ -109,7 +150,11 @@ export async function changeOwnPassword(password: string) {
 }
 
 export function sessionEmployeeNumber(session: Session | null) {
-  return String(session?.user.user_metadata?.employee_number ?? "");
+  const metadataNumber = String(session?.user.user_metadata?.employee_number ?? "").replace(/[^0-9]/g, "");
+  if (metadataNumber) return metadataNumber;
+  const email = session?.user.email ?? "";
+  const legacyMatch = email.match(/^(\d+)@usuarios\.xoxo-ferreton\.local$/i);
+  return legacyMatch?.[1] ?? "";
 }
 
 const moduleTables: Record<string, string> = {
@@ -137,13 +182,16 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
   const pending = pendingRecord<T>(key);
   if (pending) {
-    try { await cloudSave(key, pending.value); clearCloudPending(key, pending.revision); } catch { return pending.value; }
-    return pending.value;
+    try { await cloudSave(key, pending.value, pending.changes); clearCloudPending(key, pending.revision); } catch { return pending.value; }
+    if (pendingRecord(key)) return pendingRecord<T>(key)!.value;
   }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
+    const version = localVersions.get(key);
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
     if (error) return fallback;
+    if (version !== localVersions.get(key)) return pendingRecord<T>(key)?.value ?? fallback;
+    rememberRows(key, data.map((row) => row.payload));
     return data.map((row) => row.payload) as T;
   }
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
@@ -157,13 +205,16 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   if (!supabase) return undefined;
   const pending = pendingRecord<T>(key);
   if (pending) {
-    try { await cloudSave(key, pending.value); clearCloudPending(key, pending.revision); } catch { /* conservar para el siguiente intento */ }
-    return pending.value;
+    try { await cloudSave(key, pending.value, pending.changes); clearCloudPending(key, pending.revision); } catch { return pending.value; }
+    if (pendingRecord(key)) return pendingRecord<T>(key)!.value;
   }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
+    const version = localVersions.get(key);
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
     if (error) return undefined;
+    if (version !== localVersions.get(key)) return undefined;
+    rememberRows(key, data.map((row) => row.payload));
     return data.map((row) => row.payload) as T;
   }
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
@@ -171,18 +222,38 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   return data.value as T;
 }
 
-async function performCloudSave(key: string, value: unknown) {
+const changeTokens = new Map<string, string>();
+export function invalidateCloudRefreshTokens() { changeTokens.clear(); }
+export async function cloudRefreshChanged<T>(key: string): Promise<T | undefined> {
+  if (!supabase || !moduleTables[key]) return undefined;
+  // Poll metadata, not the photographs embedded in every payload.
+  const { data, error } = await supabase.from(moduleTables[key]).select("updated_at")
+    .order("updated_at", { ascending: false }).limit(1);
+  if (error) return undefined;
+  const token = data[0]?.updated_at ?? "empty";
+  if (changeTokens.get(key) === token && !pendingRecord(key)) return undefined;
+  const latest = await cloudRefresh<T>(key);
+  if (latest !== undefined && !pendingRecord(key)) changeTokens.set(key, token);
+  return latest;
+}
+
+async function performCloudSave(key: string, value: unknown, changes?: unknown[]) {
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
   const moduleTable = moduleTables[key];
   if (moduleTable) {
-    let { error } = await supabase.rpc("sync_module_records", {
+    const rows = changes ?? value;
+    if (Array.isArray(rows) && rows.length === 0) return;
+    const rpcName = assignmentModule(key) ? "sync_assignment_records" : "sync_module_records";
+    let { error } = await supabase.rpc(rpcName, {
       module_name: key.replace("xoxo.", ""),
-      records: value,
+      records: rows,
     });
     // Compatibilidad durante la publicación de la migración de sincronización.
-    if (error?.code === "PGRST202" || error?.message?.includes("sync_module_records")) {
+    if (error?.code === "PGRST202" || error?.message?.includes(rpcName)) {
+      if (assignmentModule(key)) throw new Error("Falta aplicar supabase-fix-assignments.sql en Supabase. La asignación sigue pendiente de guardar.");
+      if (incrementalModule(key)) throw new Error("Falta aplicar supabase-fix-shared-sync.sql en Supabase. Los cambios siguen pendientes de guardar.");
       ({ error } = await supabase.rpc("replace_module_records", {
         module_name: key.replace("xoxo.", ""), records: value,
       }));
@@ -201,9 +272,13 @@ async function performCloudSave(key: string, value: unknown) {
 
 // Serializa los guardados de cada módulo. Así una respuesta lenta no puede
 // confirmar una versión anterior después de una modificación más reciente.
-export function cloudSave(key: string, value: unknown): Promise<void> {
+export function cloudSave(key: string, value: unknown, pendingChanges?: unknown[]): Promise<void> {
+  // Freeze the changed records before network waits or another refresh.
+  const changes = pendingChanges ?? pendingRecord(key)?.changes ?? changedRows(key, value);
+  localVersions.set(key, (localVersions.get(key) ?? 0) + 1);
+  if (incrementalModule(key) && Array.isArray(value)) rememberRows(key, value);
   const previous = mutationQueues.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(() => performCloudSave(key, value));
+  const current = previous.catch(() => undefined).then(() => performCloudSave(key, value, changes));
   mutationQueues.set(key, current);
   void current.finally(() => {
     if (mutationQueues.get(key) === current) mutationQueues.delete(key);
@@ -220,7 +295,7 @@ export async function flushPendingCloudSaves(): Promise<void> {
     const pending = pendingRecord<unknown>(key);
     if (!pending) return;
     try {
-      await cloudSave(key, pending.value);
+      await cloudSave(key, pending.value, pending.changes);
       clearCloudPending(key, pending.revision);
     } catch {
       // Se conserva para el siguiente intento automático.
