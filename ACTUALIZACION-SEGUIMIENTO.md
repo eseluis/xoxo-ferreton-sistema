@@ -35,3 +35,9 @@ El historial muestra los registros guardados y su estado actual; no reconstruye 
 Validación: `node tests/cloud-sync.cjs` reproduce el guardado desde dos sesiones, la recuperación de pendientes después de recargar y la ausencia de la función de sincronización. `npm run check` comprueba tipos y compilación.
 
 La función sync_assignment_records y las políticas de asignaciones se aplicaron en producción. Se conservaron los conteos de 1 tarea, 52 solicitudes y 156 registros de actividad. El código se publica desde main mediante la integración existente con Vercel. La edición simultánea del mismo registro todavía no tiene resolución de conflictos por campo; las sesiones con versiones anteriores deben recargarse.
+
+## Una tarea adicional por horario (11 de septiembre de 2026)
+
+Las tareas asignadas pueden coincidir con las rutinas predeterminadas. Para todos los puestos se permite solo una tarea asignada pendiente por colaborador y horario; también se rechazan cruces parciales. Las tareas completadas o retiradas liberan el horario; las pausadas conservan su espacio. Una tarea puede comenzar exactamente cuando termina la anterior.
+
+La validación se aplica al crear, asignar desde el panel, cambiar colaborador u horario y reabrir tareas. La migración `supabase-fix-task-schedule.sql` ya se aplicó en Supabase. Una prueba transaccional con el perfil 003 verificó alta, rechazo de cruces, horarios consecutivos, edición y liberación al retirar, sin conservar registros de prueba. `node tests/task-schedule.cjs` cubre los mismos límites del cliente.

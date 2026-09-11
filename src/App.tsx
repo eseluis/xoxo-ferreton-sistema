@@ -26,6 +26,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { selectWorkFocus, workTimeAt, type WorkItem } from "./workFocus";
+import { taskScheduleError } from "./taskSchedule";
 import {
   canAssign,
   canGovern,
@@ -1037,10 +1038,12 @@ function App() {
   // pasar por la pantalla de Tareas. Sólo lo usan roles con canGovern.
   const addQuickTask = (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => {
     const recipient = collaborators.find((person) => person.id === employeeId);
-    if (!recipient || !canAssign(user, recipient) || !title.trim()) return;
-    const start = timeNow();
+    if (!recipient || !canAssign(user, recipient) || !title.trim()) return "No puedes asignar una tarea a este colaborador.";
+    const start = workTimeAt();
     const endMinutes = Math.min(23 * 60 + 59, timeToMinutes(start) + 60);
     const end = `${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
+    const scheduleError = taskScheduleError({ employeeId, date: today, start, end }, dailyTasks);
+    if (scheduleError) return scheduleError;
     const next: DailyTask[] = [
       ...dailyTasks,
       {
@@ -1052,6 +1055,7 @@ function App() {
       },
     ];
     persistDailyTasks(next);
+    return "";
   };
 
   const removingTasks = useRef(new Set<string>());
@@ -2189,12 +2193,17 @@ export function MyWorkFocus({ user, date, location, schedules, tasks, runs, clea
   }));
   const currentTime = workTimeAt();
   const focus = selectWorkFocus(items, currentTime, shift);
+  const additionalTask = focus.current?.kind !== "Tarea" && focus.inShift
+    ? tasks.find(task => task.employeeId === user.id && task.date === date && task.status !== "Completada" && !task.completedAt
+      && !task.paused && !["Pausada", "Incidencia"].includes(task.status) && task.approvalStatus !== "Pendiente"
+      && task.start <= currentTime && task.end > currentTime) : undefined;
   const blocked = focus.pending.filter(item => item.blocked || ["Pausada", "Incidencia"].includes(item.status));
   return <article className="wide panelCard myWorkFocus">
     <div className="sectionHead"><div><h2>Qué debo estar haciendo ahora</h2><span>{user.name} · {location} · {currentTime} h</span></div><span className="statusPill">{focus.label}</span></div>
     {focus.current ? <div className="workFocusMain"><small>{focus.current.kind} · {focus.current.start}–{focus.current.end}</small><h3>{focus.current.title}</h3><TaskDescription task={{ notes: focus.current.instructions ?? "", requiresPhoto: focus.current.kind === "Tarea" ? tasks.find(task => `Tarea-${task.id}` === focus.current?.id)?.requiresPhoto : focus.current.kind === "Aseo" || routine.find(item => `Actividad-${item.id}` === focus.current?.id)?.evidence === "photo" }} /></div>
       : <div className="workFocusMain"><h3>{!focus.inShift ? "Tu turno no está activo" : focus.pending.length === 0 && items.length > 0 ? "Completaste tu agenda de hoy" : "Sin actividad asignada para este momento"}</h3><p>{!focus.inShift ? `Horario de turno: ${shift?.start}–${shift?.end}.` : "Consulta lo que sigue o pide indicaciones a tu responsable."}</p></div>}
     <div className="workFocusNext"><strong>Después</strong><span>{focus.next ? `${focus.next.start}–${focus.next.end} · ${focus.next.title}` : "No hay otra actividad futura programada hoy."}</span></div>
+    {additionalTask && <div><h3>Tarea adicional para este horario: {additionalTask.title}</h3><TaskDescription task={additionalTask} /></div>}
     {focus.overdue.length > 0 && <p className="workFocusNotice">{focus.overdue.length} actividad(es) con horario vencido sin completar. Revisa tus pendientes.</p>}
     {blocked.length > 0 && <p className="workFocusNotice">{blocked.length} tarea(s) pausada(s), con incidencia o esperando autorización.</p>}
     <div className="workFocusActions"><button className="primary" onClick={() => onNavigate("asistencia")}>Ver mi agenda y registrar avance</button><button className="ghost" onClick={() => onNavigate("tareas")}>Ver mis tareas</button></div>
@@ -2245,7 +2254,7 @@ function Dashboard({
   cashCuts: CashCut[];
   storeOpeningChecks: StoreOpeningCheck[];
   updateStoreOpening: (branch: StoreOpeningCheck["branch"], patch: Partial<StoreOpeningCheck>) => void;
-  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => string;
   removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
 }) {
   const [, setTick] = useState(0);
@@ -2485,7 +2494,7 @@ function TeamActivityBoard({
   activityRuns: ActivityRun[];
   shiftMap: Record<string, ShiftConfig>;
   attendance: Attendance[];
-  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => string;
   removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
 }) {
   return (
@@ -2530,7 +2539,7 @@ function TeamActivityRow({
   employeeTasks: DailyTask[];
   live: ReturnType<typeof liveStatusFor>;
   todaysAttendance?: Attendance;
-  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => void;
+  addQuickTask: (employeeId: string, title: string, notes: string, affectsEvaluation: boolean) => string;
   removeTaskWithDecision: (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => void;
 }) {
   const [showAdd, setShowAdd] = useState(false);
@@ -2539,13 +2548,16 @@ function TeamActivityRow({
   const [affectsEvaluation, setAffectsEvaluation] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeNote, setRemoveNote] = useState("");
+  const [quickTaskError, setQuickTaskError] = useState("");
 
   const pending = employeeTasks.filter((task) => ["Pendiente", "En proceso", "Pausada", "Incidencia"].includes(task.status));
   const completed = employeeTasks.filter((task) => task.status === "Completada");
 
   const submitAdd = () => {
     if (title.trim().length < 3) return;
-    addQuickTask(employee.id, title.trim(), notes.trim(), affectsEvaluation);
+    const error = addQuickTask(employee.id, title.trim(), notes.trim(), affectsEvaluation);
+    setQuickTaskError(error);
+    if (error) return;
     setTitle(""); setNotes(""); setAffectsEvaluation(true); setShowAdd(false);
   };
 
@@ -2601,6 +2613,8 @@ function TeamActivityRow({
       </div>
       {showAdd ? (
         <div className="teamActivityAdd">
+          <p className="muted">Puede coincidir con la rutina. Solo una tarea adicional por horario.</p>
+          {quickTaskError && <p role="alert" className="loginError">{quickTaskError}</p>}
           <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Título de la actividad" />
           <input value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Instrucción breve (opcional)" />
           <label><input type="checkbox" checked={affectsEvaluation} onChange={(event) => setAffectsEvaluation(event.target.checked)} /> Afecta evaluación</label>
@@ -4512,13 +4526,8 @@ export function TasksView({
     if (!taskDate || !String(form.get("title")).trim()) { setTaskError("Indica la fecha y el título de la tarea."); return; }
     if(timeToMinutes(end)<=timeToMinutes(start)){setTaskError("La hora final debe ser posterior a la hora inicial.");return;}
     if(notes.length<20){setTaskError("La misión necesita instrucciones completas de al menos 20 caracteres.");return;}
-    const targetEmployee=collaborators.find((employee)=>employee.id===employeeId);
-    const overlaps=dailyTasks.filter((task)=>task.employeeId===employeeId&&task.date===taskDate&&task.status!=="Completada"&&timeToMinutes(start)<timeToMinutes(task.end)&&timeToMinutes(end)>timeToMinutes(task.start));
-    const overlapLimit=targetEmployee?.role==="AUXILIAR"?2:1;
-    if(overlaps.length>=overlapLimit){setTaskError(targetEmployee?.role==="AUXILIAR"?"Un auxiliar no puede tener más de 2 tareas en el mismo horario.":`Horario ocupado por: ${overlaps[0].title} (${overlaps[0].start}-${overlaps[0].end}).`);return;}
-    const targetedSchedule=defaultActivitySchedules.filter((activity)=>activity.employeeIds?.includes(employeeId));
-    const fixedConflict=targetEmployee&&(targetedSchedule.length?targetedSchedule:defaultActivitySchedules.filter((activity)=>!activity.employeeIds?.length&&activity.ownerRoles.includes(targetEmployee.role))).find((activity)=>activity.area!=="Operación"&&timeToMinutes(start)<timeToMinutes(activity.end)&&timeToMinutes(end)>timeToMinutes(activity.start));
-    if(fixedConflict){setTaskError(`Ese horario choca con una actividad fija: ${fixedConflict.name} (${fixedConflict.start}-${fixedConflict.end}).`);return;}
+    const scheduleError = taskScheduleError({ employeeId, date: taskDate, start, end }, dailyTasks);
+    if (scheduleError) { setTaskError(scheduleError); return; }
     setTaskError("");
     const next: DailyTask[] = [
       ...dailyTasks,
@@ -4553,6 +4562,8 @@ export function TasksView({
     if (status === "Completada" && target.requiresPhoto && (!target.beforeEvidenceCapture || !target.afterEvidenceCapture)) {
       setTaskError("Para completar la tarea faltan las fotos de antes y después. Se capturan en la jornada del colaborador."); return;
     }
+    const scheduleError = taskScheduleError({ ...target, status, completedAt: status === "Completada" ? target.completedAt : undefined }, dailyTasks);
+    if (scheduleError) { setTaskError(scheduleError); return; }
     setTaskError("");
     setDailyTasks(
       dailyTasks.map((task) =>
@@ -4571,6 +4582,13 @@ export function TasksView({
   };
 
   const updateTaskPatch = (id: string, patch: Partial<DailyTask>) => {
+    const target = dailyTasks.find(task => task.id === id);
+    if (!target) return;
+    if (["employeeId", "date", "start", "end", "status", "completedAt"].some(key => key in patch)) {
+      const error = taskScheduleError({ ...target, ...patch }, dailyTasks);
+      if (error) { setTaskError(error); return; }
+    }
+    setTaskError("");
     setDailyTasks(dailyTasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
   };
 
@@ -4603,6 +4621,7 @@ export function TasksView({
     <section className="grid two">
       {!isAuxiliary && <form className="panelCard form" onSubmit={addTask}>
         <h2>Asignar tarea</h2>
+        <p className="muted">Puedes complementar una actividad de rutina en el mismo horario. No se permite otra tarea asignada que se cruce, incluso parcialmente.</p>
         <label>Fecha de la tarea<input name="date" type="date" defaultValue={today} required /></label>
         <select name="employeeId" required>
           <option value="">Selecciona al colaborador responsable</option>

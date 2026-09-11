@@ -1,0 +1,24 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require('typescript');
+const api = {};
+vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/taskSchedule.ts','utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{exports:api});
+const validate = api.taskScheduleError;
+const first = {id:'photos',employeeId:'008',date:'2026-09-11',start:'10:00',end:'11:00',title:'Obtener 10 fotos',status:'Pendiente'};
+const candidate = {...first,id:'receive',title:'Recibir mercancía'};
+assert.equal(validate(first, []), ''); // Default routine does not occupy an assigned-task slot.
+assert.match(validate(candidate,[first]), /Solo se permite una tarea/);
+assert.ok(validate({...candidate,start:'10:30',end:'11:30'},[first]));
+assert.ok(validate({...candidate,start:'09:00',end:'12:00'},[first]));
+assert.equal(validate({...candidate,start:'11:00',end:'12:00'},[first]), '');
+assert.equal(validate({...candidate,start:'09:00',end:'10:00'},[first]), '');
+assert.equal(validate({...candidate,employeeId:'009'},[first]), '');
+assert.equal(validate({...candidate,date:'2026-09-12'},[first]), '');
+assert.equal(validate(first,[first]), '');
+assert.equal(validate(candidate,[{...first,status:'Completada'}]), '');
+assert.equal(validate(candidate,[{...first,removedAt:'2026-09-11'}]), '');
+assert.ok(validate(candidate,[{...first,status:'Pausada'}]));
+assert.ok(validate({...candidate,start:'11:00',end:'10:00'},[]));
+assert.ok(validate({...candidate,start:'01:00 p.m.'},[]));
+console.log('PASS: una tarea adicional, cruces parciales, límites, fechas, colaboradores, edición, pausas y tareas retiradas/completadas');
