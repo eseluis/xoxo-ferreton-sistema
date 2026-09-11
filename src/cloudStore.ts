@@ -34,6 +34,25 @@ function rememberRows(key: string, rows: unknown[]) {
   if (!incrementalModule(key)) return;
   observedRows.set(key, new Map(rows.map((row) => [String((row as { id: string }).id), JSON.stringify(row)])));
 }
+function visiblePayloads(key: string, data: { payload: any }[]) {
+  return data.map(row => row.payload).filter(row => key !== "xoxo.dailyTasks" || !row.removedAt);
+}
+
+export async function archiveCloudTask(id: string, note: string) {
+  if (!supabase) throw new Error("No hay conexión con Supabase.");
+  const key = "xoxo.dailyTasks";
+  const pending = pendingRecord(key);
+  if (pending) {
+    await cloudSave(key, pending.value, pending.changes);
+    clearCloudPending(key, pending.revision);
+  }
+  await mutationQueues.get(key);
+  localVersions.set(key, (localVersions.get(key) ?? 0) + 1);
+  const { error } = await supabase.rpc("archive_daily_task", { task_id: id, removal_note: note });
+  if (error) throw new Error(error.message);
+  observedRows.get(key)?.delete(id);
+  changeTokens.clear();
+}
 
 function isPendingRecord<T>(value: unknown): value is PendingRecord<T> {
   return Boolean(value && typeof value === "object" && "revision" in value && "value" in value);
@@ -191,8 +210,9 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
     if (error) return fallback;
     if (version !== localVersions.get(key)) return pendingRecord<T>(key)?.value ?? fallback;
-    rememberRows(key, data.map((row) => row.payload));
-    return data.map((row) => row.payload) as T;
+    const rows = visiblePayloads(key, data);
+    rememberRows(key, rows);
+    return rows as T;
   }
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
   if (error || !data) return fallback;
@@ -214,8 +234,9 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
     const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
     if (error) return undefined;
     if (version !== localVersions.get(key)) return undefined;
-    rememberRows(key, data.map((row) => row.payload));
-    return data.map((row) => row.payload) as T;
+    const rows = visiblePayloads(key, data);
+    rememberRows(key, rows);
+    return rows as T;
   }
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
   if (error || !data) return undefined;

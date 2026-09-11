@@ -13,6 +13,10 @@ const client = {
   rpc: async (name, args) => {
     calls.push({ name, records: args.records });
     if (failure) return { error: failure };
+    if (name === 'archive_daily_task') {
+      rows = rows.map(row => row.id === args.task_id ? {...row, removedAt:'2026-09-10'} : row);
+      return {error:null};
+    }
     for (const row of args.records) rows = [...rows.filter(x => x.id !== row.id), row];
     return { error: null };
   },
@@ -59,4 +63,16 @@ function boot() {
   assert.equal(calls.length, before + 1);
   assert.equal(calls.at(-1).name, 'sync_module_records');
   console.log('PASS: una migración faltante nunca activa el reemplazo destructivo');
+  failure = null;
+  rows = [{id:'withdraw',status:'Pendiente'}, {id:'keep',status:'Completada'}];
+  await api.cloudLoad('xoxo.dailyTasks', []);
+  await api.archiveCloudTask('withdraw', 'Prueba');
+  assert.ok(rows.find(row => row.id === 'withdraw').removedAt);
+  const visible = await api.cloudRefresh('xoxo.dailyTasks');
+  assert.equal(visible.length, 1);
+  assert.equal(visible[0].id, 'keep');
+  failure = {message:'Sin permiso'};
+  await assert.rejects(api.archiveCloudTask('keep', 'Prueba'), /Sin permiso/);
+  assert.equal(rows.find(row => row.id === 'keep').removedAt, undefined);
+  console.log('PASS: retirar persiste, conserva otros registros y propaga errores de permisos');
 })().catch(error => { console.error(error); process.exitCode = 1; });

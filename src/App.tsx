@@ -52,6 +52,7 @@ import {
   cloudRefreshChanged,
   invalidateCloudRefreshTokens,
   cloudSave,
+  archiveCloudTask,
   flushPendingCloudSaves,
   changeOwnPassword,
   getSession,
@@ -1053,11 +1054,26 @@ function App() {
     persistDailyTasks(next);
   };
 
-  const removeTaskWithDecision = (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => {
-    persistDailyTasks(dailyTasks.filter((item) => item.id !== task.id));
+  const removingTasks = useRef(new Set<string>());
+  const removeTaskWithDecision = async (task: DailyTask, decision: "Sin efecto" | "Penalizar", note: string) => {
+    if (removingTasks.current.has(task.id)) return;
+    removingTasks.current.add(task.id);
+    lastCloudMutationAt = Date.now();
+    try {
+      await archiveCloudTask(task.id, `${decision}: ${note.trim() || "Retirada desde Tareas"}`);
+      lastCloudMutationAt = Date.now();
+      setDailyTasks(current => {
+        const next = current.filter(item => item.id !== task.id);
+        try { localStorage.setItem("xoxo.dailyTasks", JSON.stringify(next)); } catch { /* cloud is authoritative */ }
+        return next;
+      });
+      setSyncErrors(current => ({ ...current, "xoxo.dailyTasks": "" }));
     if (decision === "Penalizar" && task.affectsEvaluation !== false) {
       reviewSla("Tarea", task.id, task.employeeId, "Incumplimiento", note || `Se retiró "${task.title}" sin cumplirse.`);
     }
+    } catch (error) {
+      setSyncErrors(current => ({ ...current, "xoxo.dailyTasks": `No se pudo quitar la tarea: ${error instanceof Error ? error.message : "Intenta nuevamente."}` }));
+    } finally { removingTasks.current.delete(task.id); }
   };
 
   const persistProcessInstances = (next: ProcessInstance[]) => {
@@ -1986,6 +2002,7 @@ function App() {
             collaborators={collaborators}
             dailyTasks={dailyTasks}
             setDailyTasks={persistDailyTasks}
+            onRemoveTask={(task) => removeTaskWithDecision(task, "Sin efecto", "Retirada desde Tareas")}
             workLocations={workLocations}
             assignWorkLocation={assignWorkLocation}
           />
@@ -2139,6 +2156,10 @@ function profileFor(role: Role) {
   return roleProfiles.find((profile) => profile.role === role);
 }
 
+export function TaskDescription({ task }: { task: Pick<DailyTask, "notes" | "requiresPhoto"> }) {
+  return <div className="taskDescription"><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}</div>;
+}
+
 export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, shift, onNavigate }: {
   user: Employee; date: string; location: string; schedules: ActivitySchedule[];
   tasks: DailyTask[]; runs: ActivityRun[]; cleaning?: CleaningRole;
@@ -2171,7 +2192,7 @@ export function MyWorkFocus({ user, date, location, schedules, tasks, runs, clea
   const blocked = focus.pending.filter(item => item.blocked || ["Pausada", "Incidencia"].includes(item.status));
   return <article className="wide panelCard myWorkFocus">
     <div className="sectionHead"><div><h2>Qué debo estar haciendo ahora</h2><span>{user.name} · {location} · {currentTime} h</span></div><span className="statusPill">{focus.label}</span></div>
-    {focus.current ? <div className="workFocusMain"><small>{focus.current.kind} · {focus.current.start}–{focus.current.end}</small><h3>{focus.current.title}</h3><p>{focus.current.instructions || "Consulta el detalle de la actividad y registra tu avance al realizarla."}</p></div>
+    {focus.current ? <div className="workFocusMain"><small>{focus.current.kind} · {focus.current.start}–{focus.current.end}</small><h3>{focus.current.title}</h3><TaskDescription task={{ notes: focus.current.instructions ?? "", requiresPhoto: focus.current.kind === "Tarea" ? tasks.find(task => `Tarea-${task.id}` === focus.current?.id)?.requiresPhoto : focus.current.kind === "Aseo" || routine.find(item => `Actividad-${item.id}` === focus.current?.id)?.evidence === "photo" }} /></div>
       : <div className="workFocusMain"><h3>{!focus.inShift ? "Tu turno no está activo" : focus.pending.length === 0 && items.length > 0 ? "Completaste tu agenda de hoy" : "Sin actividad asignada para este momento"}</h3><p>{!focus.inShift ? `Horario de turno: ${shift?.start}–${shift?.end}.` : "Consulta lo que sigue o pide indicaciones a tu responsable."}</p></div>}
     <div className="workFocusNext"><strong>Después</strong><span>{focus.next ? `${focus.next.start}–${focus.next.end} · ${focus.next.title}` : "No hay otra actividad futura programada hoy."}</span></div>
     {focus.overdue.length > 0 && <p className="workFocusNotice">{focus.overdue.length} actividad(es) con horario vencido sin completar. Revisa tus pendientes.</p>}
@@ -2552,6 +2573,7 @@ function TeamActivityRow({
               <span>
                 {task.title}
                 <small> {task.status} · asignó {collaborators.find((person) => person.id === task.assignedById)?.name ?? task.assignedById}{task.affectsEvaluation === false ? " · no afecta evaluación" : ""}</small>
+                <TaskDescription task={task} />
               </span>
               {removingId === task.id ? (
                 <div className="teamActivityRemove">
@@ -2848,6 +2870,7 @@ function AttendanceView({
                     </span>
                   </div>
                   {task.startedAt && !task.completedAt && <LiveStopwatch startedAt={task.startedAt} slaMinutes={sla} />}
+                  <TaskDescription task={task} />
                   <div className="taskProgressInputs">
                     <input
                       value={task.currentStep ?? ""}
@@ -4463,6 +4486,7 @@ export function TasksView({
   setDailyTasks,
   workLocations,
   assignWorkLocation,
+  onRemoveTask,
 }: {
   user: Employee;
   collaborators: Employee[];
@@ -4470,6 +4494,7 @@ export function TasksView({
   setDailyTasks: (value: DailyTask[]) => void;
   workLocations: WorkLocation[];
   assignWorkLocation: (employeeId: string, location: WorkLocation["location"]) => void;
+  onRemoveTask: (task: DailyTask) => void;
 }) {
   const today = todayKey();
   const isAuxiliary = user.role === "AUXILIAR";
@@ -4558,7 +4583,8 @@ export function TasksView({
   };
 
   const deleteTask = (id: string) => {
-    setDailyTasks(dailyTasks.filter((task) => task.id !== id));
+    const task = dailyTasks.find(item => item.id === id);
+    if (task) onRemoveTask(task);
   };
 
   const [reviewEmployee, setReviewEmployee] = useState("Todos");
@@ -4647,7 +4673,8 @@ export function TasksView({
                 </span>
                 <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
               </div>
-              {canDirectAllTasks && <textarea value={task.notes} onChange={(event)=>updateTaskPatch(task.id,{notes:event.target.value})} placeholder="Instrucciones de la tarea"/>}
+              <TaskDescription task={task} />
+              {canDirectAllTasks && <label>Editar descripción e instrucciones<textarea value={task.notes} onChange={(event)=>updateTaskPatch(task.id,{notes:event.target.value})} placeholder="Qué hacer, pasos a seguir y resultado esperado"/></label>}
               <div className="taskFollowGrid">
                 <div>
                   <small>Paso actual</small>
