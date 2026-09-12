@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { selectWorkFocus, workTimeAt, type WorkItem } from "./workFocus";
 import { taskScheduleError } from "./taskSchedule";
+import { aseoRunCountsInRange, autoPointsInRange, qualityPointsInRange, shiftDateKey } from "./cleaningScoreboard";
 import {
   canAssign,
   canGovern,
@@ -84,6 +85,19 @@ type Evaluation = {
   note: string;
   personalSales: number;
   salesGoal: number;
+};
+
+// Calificacion de calidad del aseo, capturada por un superior cada ~3 dias para el periodo
+// indicado. Se suma a los puntos automaticos (a tiempo/con retraso, ver cleaningScoreboard.ts)
+// para formar el marcador de aseo, visible solo para 001, 002, 003 y Julio (009).
+type CleaningEvaluation = {
+  employeeId: string;
+  evaluatorId: string;
+  periodStart: string;
+  periodEnd: string;
+  qualityScore: number;
+  note: string;
+  createdAt: string;
 };
 
 type CashIncident = {
@@ -484,6 +498,10 @@ const areaLeaderViews = new Set([
 ]);
 
 function canAccessView(employee: Employee, targetView: string) {
+  // Caso especial: el marcador de aseo tiene su propia lista de 4 autorizados,
+  // sin importar el rol (incluye a Julio, que es JEFE_AREA, y excluye a otros
+  // puestos directivos que sí ven el resto de las pantallas).
+  if (targetView === "marcador-aseo") return canViewCleaningBoard(employee);
   if (employee.role === "AUXILIAR") return auxiliaryViews.has(targetView);
   if (employee.role === "JEFE_AREA") return areaLeaderViews.has(targetView);
   return true;
@@ -661,6 +679,19 @@ const ARRIVAL_BLOCK_AT = 8 * 60 + 45; // 8:45 — a partir de aquí se bloquea e
 // (permisos, avisos o imprevistos ya autorizados fuera del sistema).
 const LATE_ATTENDANCE_OVERRIDE_IDS = ["001", "002", "003", "005"];
 
+// Marcador de aseo: acceso exclusivo a 001, 002, 003 y Julio (009); nadie mas lo ve ni
+// califica. Los 4 pueden capturar calificacion de calidad. Cada calificacion notifica a
+// 001, 002 y 003 (sin autonotificar a quien la capturo) via Solicitudes.
+const CLEANING_BOARD_VIEWER_IDS = ["001", "002", "003", "009"];
+const CLEANING_BOARD_GRADER_IDS = ["001", "002", "003", "009"];
+const CLEANING_BOARD_DIRECTOR_IDS = ["001", "002", "003"];
+function canViewCleaningBoard(employee: Employee) {
+  return CLEANING_BOARD_VIEWER_IDS.includes(employee.id);
+}
+function canGradeCleaning(employee: Employee) {
+  return CLEANING_BOARD_GRADER_IDS.includes(employee.id);
+}
+
 function arrivalPunctuality(minutes: number): { label: string; className: string } {
   if (minutes <= ARRIVAL_ON_TIME_END) return { label: "A tiempo", className: "ok" };
   if (minutes <= ARRIVAL_LATE_END) return { label: "Tarde", className: "warn" };
@@ -720,6 +751,12 @@ function App() {
   const [note, setNote] = useState("");
   const [personalSales, setPersonalSales] = useState(0);
   const [salesGoal, setSalesGoal] = useState(1000);
+  const [cleaningEvaluations, setCleaningEvaluations] = useState<CleaningEvaluation[]>(() => load("xoxo.cleaningEvaluations", []));
+  const [cleaningTargetId, setCleaningTargetId] = useState("009");
+  const [cleaningPeriodStart, setCleaningPeriodStart] = useState(() => shiftDateKey(todayKey(), -2));
+  const [cleaningPeriodEnd, setCleaningPeriodEnd] = useState(() => todayKey());
+  const [cleaningQualityScore, setCleaningQualityScore] = useState(10);
+  const [cleaningNote, setCleaningNote] = useState("");
 
   useEffect(() => {
     const interval = window.setInterval(() => setClockNow(new Date()), 1000);
@@ -788,6 +825,7 @@ function App() {
         cloudWorkLocations,
         cloudSlaReviews,
         cloudStoreOpeningChecks,
+        cloudCleaningEvaluations,
       ] = await Promise.all([
         cloudLoad("xoxo.collaborators", collaborators),
         cloudLoad("xoxo.attendance", attendance),
@@ -814,6 +852,7 @@ function App() {
         cloudLoad("xoxo.workLocations", workLocations),
         cloudLoad("xoxo.slaReviews", slaReviews),
         cloudLoad("xoxo.storeOpeningChecks", storeOpeningChecks),
+        cloudLoad("xoxo.cleaningEvaluations", cleaningEvaluations),
       ]);
       if (cancelled || mutationAtStart !== lastCloudMutationAt) return;
       const organizationOverrides: Record<string, Partial<Employee>> = {
@@ -852,6 +891,7 @@ function App() {
       setWorkLocations(cloudWorkLocations);
       setSlaReviews(cloudSlaReviews);
       setStoreOpeningChecks(cloudStoreOpeningChecks);
+      setCleaningEvaluations(cloudCleaningEvaluations);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
       if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
       if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
@@ -1123,6 +1163,44 @@ function App() {
     save("xoxo.evaluations", next);
     setNote("");
     setPersonalSales(0);
+  };
+
+  // Calificacion de calidad de aseo por periodo (cada ~3 dias). Reemplaza la calificacion
+  // previa del mismo superior para el mismo colaborador y periodo en vez de duplicarla.
+  const submitCleaningEvaluation = () => {
+    if (!canGradeCleaning(user) || !cleaningTargetId || cleaningPeriodStart > cleaningPeriodEnd) return;
+    const next = cleaningEvaluations.filter(
+      (entry) =>
+        !(
+          entry.employeeId === cleaningTargetId &&
+          entry.evaluatorId === user.id &&
+          entry.periodStart === cleaningPeriodStart &&
+          entry.periodEnd === cleaningPeriodEnd
+        ),
+    );
+    next.push({
+      employeeId: cleaningTargetId,
+      evaluatorId: user.id,
+      periodStart: cleaningPeriodStart,
+      periodEnd: cleaningPeriodEnd,
+      qualityScore: cleaningQualityScore,
+      note: cleaningNote,
+      createdAt: new Date().toISOString(),
+    });
+    setCleaningEvaluations(next);
+    save("xoxo.cleaningEvaluations", next);
+    const targetName = collaborators.find((employee) => employee.id === cleaningTargetId)?.name ?? cleaningTargetId;
+    CLEANING_BOARD_DIRECTOR_IDS.filter((id) => id !== user.id).forEach((recipientId) => {
+      escalate(
+        `Calificación de aseo: ${targetName}`,
+        `${user.name} calificó el aseo de ${targetName} del ${cleaningPeriodStart} al ${cleaningPeriodEnd} con ${cleaningQualityScore} puntos.${cleaningNote ? ` Nota: ${cleaningNote}` : ""}`,
+        recipientId,
+        "Media",
+        user.id,
+      );
+    });
+    setCleaningNote("");
+    setCleaningQualityScore(10);
   };
 
   const addCashIncident = (event: React.FormEvent<HTMLFormElement>) => {
@@ -1567,7 +1645,17 @@ function App() {
     save("xoxo.activityRuns", next);
   };
 
-  const escalate = (title: string, message: string, recipientId: string | undefined, priority: InternalRequest["priority"] = "Alta") => {
+  // requestedById por defecto queda "sistema" (alertas automaticas de SLA/procesos, sin autor
+  // humano). Las llamadas que sí vienen de una persona (p. ej. una calificación de aseo) deben
+  // pasar su propio id: además de mostrar el nombre real, el guardado en Supabase solo acepta
+  // una fila cuyo dueño coincida con quien la crea, salvo que ya administre esa sucursal.
+  const escalate = (
+    title: string,
+    message: string,
+    recipientId: string | undefined,
+    priority: InternalRequest["priority"] = "Alta",
+    requestedById: string = "sistema",
+  ) => {
     if (!recipientId) return;
     const next: InternalRequest[] = [
       {
@@ -1575,7 +1663,7 @@ function App() {
         type: "Reporte",
         title,
         message,
-        requestedById: "sistema",
+        requestedById,
         recipientId,
         date: today,
         priority,
@@ -1811,6 +1899,9 @@ function App() {
           {canAccessView(user, "evaluacion") && <button className={view === "evaluacion" ? "active" : ""} onClick={() => navigate("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
           </button>}
+          {canAccessView(user, "marcador-aseo") && <button className={view === "marcador-aseo" ? "active" : ""} onClick={() => navigate("marcador-aseo")}>
+            <Sparkles size={18} /> Marcador de aseo
+          </button>}
           {canAccessView(user, "caja") && <button className={view === "caja" ? "active" : ""} onClick={() => navigate("caja")}>
             <WalletCards size={18} /> Caja
           </button>}
@@ -1962,6 +2053,26 @@ function App() {
             slaReviews={slaReviews}
           />
         )}
+        {view === "marcador-aseo" && canViewCleaningBoard(user) && (
+          <CleaningScoreboardView
+            user={user}
+            collaborators={collaborators}
+            activitySchedules={activitySchedules}
+            activityRuns={activityRuns}
+            cleaningEvaluations={cleaningEvaluations}
+            cleaningTargetId={cleaningTargetId}
+            setCleaningTargetId={setCleaningTargetId}
+            cleaningPeriodStart={cleaningPeriodStart}
+            setCleaningPeriodStart={setCleaningPeriodStart}
+            cleaningPeriodEnd={cleaningPeriodEnd}
+            setCleaningPeriodEnd={setCleaningPeriodEnd}
+            cleaningQualityScore={cleaningQualityScore}
+            setCleaningQualityScore={setCleaningQualityScore}
+            cleaningNote={cleaningNote}
+            setCleaningNote={setCleaningNote}
+            submitCleaningEvaluation={submitCleaningEvaluation}
+          />
+        )}
         {view === "caja" && (
           <CashView
             user={user}
@@ -2070,6 +2181,7 @@ function titleFor(view: string) {
       auditorias: "Auditoría de procesos",
       expansion: "Apertura y expansión de sucursales",
       evaluacion: "Evaluacion diaria",
+      "marcador-aseo": "Marcador de aseo",
       caja: "Caja e incidencias",
       finanzas: "Proveedores y cuentas por pagar",
       garantias: "Garantias a proveedores",
@@ -4369,6 +4481,194 @@ function EvaluationView(props: {
               <strong>{(entry.scores.reduce((a, b) => a + b, 0) / entry.scores.length).toFixed(1)}</strong>
             </div>
           ))}
+        </div>
+      </article>
+    </section>
+  );
+}
+
+// Colaboradores con al menos un bloque de aseo asignado en el calendario vigente
+// (areas "Aseo", "Aseo Centro", "Aseo y exhibición", etc.). Se calcula en vivo para
+// reflejar cambios de calendario sin tocar este componente.
+function cleaningParticipantIds(schedules: ActivitySchedule[]): string[] {
+  const ids = new Set<string>();
+  schedules
+    .filter((schedule) => schedule.area.toLowerCase().includes("aseo"))
+    .forEach((schedule) => (schedule.employeeIds ?? []).forEach((id) => ids.add(id)));
+  return Array.from(ids);
+}
+
+const CLEANING_ALL_TIME_START = "2000-01-01";
+const CLEANING_ALL_TIME_END = "2100-01-01";
+const CLEANING_QUALITY_SCALE = [
+  { value: 10, label: "10 - Excelente" },
+  { value: 8, label: "8 - Bien" },
+  { value: 6, label: "6 - Regular" },
+  { value: 4, label: "4 - Deficiente" },
+];
+
+function CleaningScoreboardView(props: {
+  user: Employee;
+  collaborators: Employee[];
+  activitySchedules: ActivitySchedule[];
+  activityRuns: ActivityRun[];
+  cleaningEvaluations: CleaningEvaluation[];
+  cleaningTargetId: string;
+  setCleaningTargetId: (id: string) => void;
+  cleaningPeriodStart: string;
+  setCleaningPeriodStart: (date: string) => void;
+  cleaningPeriodEnd: string;
+  setCleaningPeriodEnd: (date: string) => void;
+  cleaningQualityScore: number;
+  setCleaningQualityScore: (score: number) => void;
+  cleaningNote: string;
+  setCleaningNote: (note: string) => void;
+  submitCleaningEvaluation: () => void;
+}) {
+  const canGrade = canGradeCleaning(props.user);
+  const today = todayKey();
+  const participants = cleaningParticipantIds(props.activitySchedules)
+    .map((id) => props.collaborators.find((employee) => employee.id === id))
+    .filter((employee): employee is Employee => Boolean(employee));
+
+  const rows = participants
+    .map((employee) => {
+      const autoAllTime = autoPointsInRange(props.activityRuns, employee.id, CLEANING_ALL_TIME_START, CLEANING_ALL_TIME_END);
+      const qualityAllTime = qualityPointsInRange(props.cleaningEvaluations, employee.id, CLEANING_ALL_TIME_START, CLEANING_ALL_TIME_END);
+      const periodCounts = aseoRunCountsInRange(props.activityRuns, employee.id, props.cleaningPeriodStart, props.cleaningPeriodEnd);
+      const lastEvaluation = props.cleaningEvaluations
+        .filter((entry) => entry.employeeId === employee.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+      const daysSinceLastEvaluation = lastEvaluation
+        ? Math.floor((new Date(today).getTime() - new Date(lastEvaluation.periodEnd).getTime()) / 86400000)
+        : undefined;
+      return {
+        employee,
+        total: autoAllTime + qualityAllTime,
+        autoAllTime,
+        qualityAllTime,
+        periodCounts,
+        lastEvaluation,
+        pendingReview: daysSinceLastEvaluation === undefined || daysSinceLastEvaluation >= 3,
+      };
+    })
+    .sort((a, b) => b.total - a.total);
+
+  const history = [...props.cleaningEvaluations].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+
+  return (
+    <section className="grid two">
+      <article className="panelCard">
+        <div className="sectionHead">
+          <h2>Marcador de aseo</h2>
+          <span>Acumulado permanente · visible solo para 001, 002, 003 y Julio</span>
+        </div>
+        <p className="muted">
+          Puntos automaticos por bloque de aseo con evidencia fotografica: 2 a tiempo, 1 con retraso, 0 sin completar.
+          Cada ~3 dias un superior agrega puntos de calidad (10/8/6/4) por colaborador y periodo.
+        </p>
+        <div className="taskList">
+          {rows.map((row, index) => (
+            <div className="taskRow" key={row.employee.id}>
+              <span>
+                #{index + 1} {row.employee.name}
+                <small> {row.employee.area} · {row.employee.branch}</small>
+                {row.pendingReview && <small className="warn"> · pendiente de calificar (van {row.lastEvaluation ? "3+ días" : "sin calificar nunca"})</small>}
+              </span>
+              <strong>{row.total} pts</strong>
+              <small>
+                {row.autoAllTime} automáticos · {row.qualityAllTime} de calidad
+              </small>
+            </div>
+          ))}
+          {rows.length === 0 && <p className="muted">No hay colaboradores con bloques de aseo asignados en el calendario.</p>}
+        </div>
+
+        <h3>Detalle del periodo</h3>
+        <div className="moneyInputs">
+          <label>
+            Desde
+            <input type="date" value={props.cleaningPeriodStart} onChange={(event) => props.setCleaningPeriodStart(event.target.value)} />
+          </label>
+          <label>
+            Hasta
+            <input type="date" value={props.cleaningPeriodEnd} onChange={(event) => props.setCleaningPeriodEnd(event.target.value)} />
+          </label>
+        </div>
+        <div className="taskList">
+          {rows.map((row) => (
+            <div className="taskRow" key={`period-${row.employee.id}`}>
+              <span>{row.employee.name}</span>
+              <small>
+                {row.periodCounts.onTime} a tiempo · {row.periodCounts.late} con retraso · {row.periodCounts.incomplete} sin completar
+              </small>
+            </div>
+          ))}
+        </div>
+      </article>
+
+      <article className="panelCard">
+        {canGrade ? (
+          <>
+            <div className="sectionHead">
+              <h2>Calificar calidad de aseo</h2>
+              <span>Cadencia recomendada: cada 3 días</span>
+            </div>
+            <select value={props.cleaningTargetId} onChange={(event) => props.setCleaningTargetId(event.target.value)}>
+              {participants.map((employee) => (
+                <option key={employee.id} value={employee.id}>
+                  {employee.name} - {employee.area}
+                </option>
+              ))}
+            </select>
+            <div className="moneyInputs">
+              <label>
+                Periodo desde
+                <input type="date" value={props.cleaningPeriodStart} onChange={(event) => props.setCleaningPeriodStart(event.target.value)} />
+              </label>
+              <label>
+                Periodo hasta
+                <input type="date" value={props.cleaningPeriodEnd} onChange={(event) => props.setCleaningPeriodEnd(event.target.value)} />
+              </label>
+            </div>
+            <select value={props.cleaningQualityScore} onChange={(event) => props.setCleaningQualityScore(Number(event.target.value))}>
+              {CLEANING_QUALITY_SCALE.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <textarea
+              value={props.cleaningNote}
+              onChange={(event) => props.setCleaningNote(event.target.value)}
+              placeholder="Observaciones de calidad del periodo (opcional)"
+            />
+            <button className="primary" onClick={props.submitCleaningEvaluation}>
+              Guardar calificación
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="sectionHead">
+              <h2>Calificación de calidad</h2>
+              <span>Solo lectura</span>
+            </div>
+            <p className="muted">Tu cuenta ve el marcador completo, pero no tiene permiso para capturar calificación de calidad.</p>
+          </>
+        )}
+
+        <h3>Calificaciones guardadas</h3>
+        <div className="taskList">
+          {history.map((entry) => (
+            <div className="taskRow" key={`${entry.employeeId}-${entry.evaluatorId}-${entry.periodStart}-${entry.periodEnd}`}>
+              <span>
+                {props.collaborators.find((employee) => employee.id === entry.employeeId)?.name}
+                <small> {entry.periodStart} a {entry.periodEnd} · calificó {props.collaborators.find((employee) => employee.id === entry.evaluatorId)?.name ?? entry.evaluatorId}</small>
+              </span>
+              <strong>{entry.qualityScore} pts</strong>
+            </div>
+          ))}
+          {history.length === 0 && <p className="muted">Aún no hay calificaciones de calidad registradas.</p>}
         </div>
       </article>
     </section>

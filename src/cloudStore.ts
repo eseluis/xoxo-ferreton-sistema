@@ -195,6 +195,7 @@ const moduleTables: Record<string, string> = {
   "xoxo.processInstances": "process_instance_records",
   "xoxo.internalRequests": "internal_request_records",
   "xoxo.activityRuns": "activity_run_records",
+  "xoxo.cleaningEvaluations": "cleaning_evaluation_records",
 };
 
 export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {

@@ -41,3 +41,18 @@ La función sync_assignment_records y las políticas de asignaciones se aplicaro
 Las tareas asignadas pueden coincidir con las rutinas predeterminadas. Para todos los puestos se permite solo una tarea asignada pendiente por colaborador y horario; también se rechazan cruces parciales. Las tareas completadas o retiradas liberan el horario; las pausadas conservan su espacio. Una tarea puede comenzar exactamente cuando termina la anterior.
 
 La validación se aplica al crear, asignar desde el panel, cambiar colaborador u horario y reabrir tareas. La migración `supabase-fix-task-schedule.sql` ya se aplicó en Supabase. Una prueba transaccional con el perfil 003 verificó alta, rechazo de cruces, horarios consecutivos, edición y liberación al retirar, sin conservar registros de prueba. `node tests/task-schedule.cjs` cubre los mismos límites del cliente.
+
+## Marcador de aseo (12 de septiembre de 2026)
+
+Nueva pantalla "Marcador de aseo", con acceso exclusivo a 001, 002, 003 y Julio (009); ningún otro puesto la ve, incluido Daniel (005) que sí tiene otros accesos ampliados en el sistema. Los 4 ven el marcador completo y los 4 pueden capturar calificación de calidad (a Julio se le habilitó explícitamente, no solo lectura).
+
+Cada calificación registrada notifica automáticamente a 001, 002 y 003 (sin autonotificar a quien la capturó) mediante el módulo de Solicitudes existente, con el nombre real de quien calificó, a quién, el periodo y el puntaje.
+
+- Puntos automáticos por cada bloque de aseo del calendario ya evidenciado con foto (antes/después, obligatoria para poder marcarlo completado): 2 puntos si se completó a tiempo, 1 si se completó con retraso, 0 si no se completó. Se calculan en vivo a partir de las actividades de aseo ya registradas; no requieren captura adicional.
+- Cada superior agrega, aproximadamente cada 3 días, una calificación de calidad (10/8/6/4) por colaborador y por el periodo de fechas que elija, con una nota opcional. El marcador señala a quién le toca calificación (3 días o más desde la última, o nunca calificado).
+- El total por colaborador es acumulado permanente (puntos automáticos de todo el historial + suma de todas las calificaciones de calidad); la sección "Detalle del periodo" muestra el desglose de a tiempo/con retraso/sin completar solo para el rango de fechas elegido.
+- Quiénes aparecen en el marcador se calcula del calendario de actividades vigente (cualquier bloque cuya área contenga "Aseo"), no de una lista fija: si cambia el calendario de aseo, el marcador se ajusta solo.
+
+Activación: ejecutar `supabase-fix-cleaning-evaluations.sql` en el editor SQL de Supabase (crea la tabla `cleaning_evaluation_records`, sus políticas y actualiza `sync_module_records`/`replace_module_records` para reconocer el nuevo módulo) y publicar la aplicación actualizada después. No publicar primero: el cliente requiere el módulo `cleaningEvaluations` reconocido por esas funciones.
+
+Validación local: `node tests/cleaning-scoreboard.cjs` cubre los puntos automáticos (a tiempo/con retraso/sin completar), la suma por periodo, la acumulación de calidad y la aritmética de fechas. `npm run check` comprueba tipos y compilación. Falta la verificación en Supabase con varias cuentas (001/002/003 y Julio calificando, confirmar que las notificaciones llegan a los otros 3, y que 005 no ve la pantalla) una vez aplicada la migración.
