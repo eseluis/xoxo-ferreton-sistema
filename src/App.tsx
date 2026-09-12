@@ -3016,10 +3016,11 @@ function AttendanceView({
                       placeholder="Incidencia que detiene la tarea"
                     />
                   </div>
-                  {task.requiresPhoto && task.startedAt && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div><div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div></div>}
+                  {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
+                  {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
                     {!task.startedAt && (
-                      <button className="ghost compact" onClick={() => startDailyTask(task)}>
+                      <button className="ghost compact" disabled={task.paused || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
                         Iniciar tarea
                       </button>
                     )}
@@ -3030,7 +3031,7 @@ function AttendanceView({
                     >
                       Reportar incidencia y pausar
                     </button>
-                    <button className="primary compact" disabled={task.paused || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture))} onClick={() => completeTask(task)}>
+                    <button className="primary compact" disabled={task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture))} onClick={() => completeTask(task)}>
                       Marcar completada
                     </button>
                   </div>
@@ -3244,22 +3245,28 @@ function PhotoCapture({
 
   const snap = async () => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
-    setBusy(true);
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      setBusy(false);
+    if (!video || !video.videoWidth) {
+      setCameraError("La cámara aún no está lista. Intenta de nuevo en un momento.");
       return;
     }
-    ctx.drawImage(video, 0, 0);
-    const raw = canvas.toDataURL("image/jpeg", 0.85);
-    const [compressed, geo] = await Promise.all([compressImage(raw), captureGeolocation()]);
-    onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
-    setBusy(false);
-    closeCamera();
+    setBusy(true);
+    setCameraError("");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("No se pudo preparar la cámara.");
+      ctx.drawImage(video, 0, 0);
+      const raw = canvas.toDataURL("image/jpeg", 0.85);
+      const [compressed, geo] = await Promise.all([compressImage(raw), captureGeolocation()]);
+      onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
+      closeCamera();
+    } catch {
+      setCameraError("No se pudo procesar la foto. Intenta de nuevo o usa Subir foto.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleFile = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -3267,13 +3274,26 @@ function PhotoCapture({
     event.target.value = "";
     if (!file) return;
     setBusy(true);
+    setCameraError("");
     const reader = new FileReader();
     reader.onload = async () => {
-      const [compressed, geo] = await Promise.all([compressImage(String(reader.result)), captureGeolocation()]);
-      onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
+      try {
+        const [compressed, geo] = await Promise.all([compressImage(String(reader.result)), captureGeolocation()]);
+        onCapture({ dataUrl: compressed, capturedAt: new Date().toISOString(), ...geo });
+      } catch {
+        setCameraError("No se pudo procesar esta imagen. Usa una foto JPG, PNG o WebP, o toma una nueva con la cámara.");
+      } finally {
+        setBusy(false);
+      }
+    };
+    reader.onerror = () => {
+      setCameraError("No se pudo leer el archivo. Selecciona otra foto.");
       setBusy(false);
     };
-    reader.readAsDataURL(file);
+    try { reader.readAsDataURL(file); } catch {
+      setCameraError("No se pudo abrir el archivo. Selecciona otra foto.");
+      setBusy(false);
+    }
   };
 
   if (value) {
@@ -3296,13 +3316,13 @@ function PhotoCapture({
         </div>
       ) : (
         <div className="evidenceButtons">
-          <button type="button" className="ghost compact" onClick={openCamera}>
+          <button type="button" className="ghost compact" disabled={busy} onClick={openCamera}>
             <Camera size={15} /> Abrir camara
           </button>
-          <button type="button" className="ghost compact" onClick={() => fileInputRef.current?.click()}>
-            Subir foto
+          <button type="button" className="ghost compact" disabled={busy} onClick={() => fileInputRef.current?.click()}>
+            {busy ? "Procesando foto..." : "Subir foto"}
           </button>
-          <input ref={fileInputRef} type="file" accept="image/*" capture="environment" hidden onChange={handleFile} />
+          <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFile} />
         </div>
       )}
       {cameraError && <small className="danger">{cameraError}</small>}

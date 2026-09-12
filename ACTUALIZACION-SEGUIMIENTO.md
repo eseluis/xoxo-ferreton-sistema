@@ -55,4 +55,12 @@ Cada calificación registrada notifica automáticamente a 001, 002 y 003 (sin au
 
 Activación: ejecutar `supabase-fix-cleaning-evaluations.sql` en el editor SQL de Supabase (crea la tabla `cleaning_evaluation_records`, sus políticas y actualiza `sync_module_records`/`replace_module_records` para reconocer el nuevo módulo) y publicar la aplicación actualizada después. No publicar primero: el cliente requiere el módulo `cleaningEvaluations` reconocido por esas funciones.
 
+La migración se aplicó el 12 de septiembre de 2026. Se comprobó que la tabla existe, ambas funciones reconocen el módulo y hay cuatro políticas RLS. El commit `15a2b9f` se publicó correctamente en Vercel. Sigue pendiente una prueba de notificaciones con cuentas reales.
+
 Validación local: `node tests/cleaning-scoreboard.cjs` cubre los puntos automáticos (a tiempo/con retraso/sin completar), la suma por periodo, la acumulación de calidad y la aritmética de fechas. `npm run check` comprueba tipos y compilación. Falta la verificación en Supabase con varias cuentas (001/002/003 y Julio calificando, confirmar que las notificaciones llegan a los otros 3, y que 005 no ve la pantalla) una vez aplicada la migración.
+
+## Captura de fotos en tareas asignadas (12 de septiembre de 2026)
+
+La foto inicial ahora se puede registrar antes de iniciar la tarea; el botón de inicio espera esa foto cuando la evidencia es obligatoria. La foto final aparece tras iniciar, y la tarea solo puede completarse con ambas capturas. La selección de archivo ya no fuerza la cámara del sistema operativo, y los errores de lectura o procesamiento se muestran en pantalla sin dejar el control bloqueado en “Guardando...”. Las tareas que ya estaban iniciadas conservan la posibilidad de registrar ambas fotos.
+
+En Supabase se encontraron cuatro tareas recientes que requieren fotos; dos estaban iniciadas y ninguna tenía evidencia guardada. La corrección se verificó con `npm run check` y todas las suites `tests/*.cjs`. Falta una prueba de captura en un teléfono con la cuenta de un colaborador.
