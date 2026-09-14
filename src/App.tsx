@@ -75,7 +75,40 @@ type Attendance = {
   lunchOut?: string;
   lunchIn?: string;
   out?: string;
+  arrivalLocation?: LocationCheck;
 };
+
+type LocationCheck = { lat?: number; lng?: number; accuracyM?: number; distanceM?: number; status: "verified" | "outside" | "unavailable" | "imprecise"; capturedAt: string };
+const STORE_COORDS = {
+  Matriz: { lat: 17.0246166, lng: -96.7347993 },
+  "Sucursal Centro": { lat: 17.0575465, lng: -96.7205804 },
+} as const;
+const STORE_RADIUS_M = 100;
+function distanceMeters(a: {lat:number;lng:number}, b: {lat:number;lng:number}) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat-a.lat)*rad;
+  const dLng = (b.lng-a.lng)*rad;
+  const h = Math.sin(dLat/2)**2 + Math.cos(a.lat*rad)*Math.cos(b.lat*rad)*Math.sin(dLng/2)**2;
+  return 6371000*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+async function checkStoreLocation(branch: string): Promise<LocationCheck> {
+  const capturedAt = new Date().toISOString();
+  const geo = await captureGeolocation(true);
+  const store = STORE_COORDS[branch as keyof typeof STORE_COORDS];
+  if (!store || geo.lat === undefined || geo.lng === undefined) return { status:"unavailable", capturedAt };
+  const distanceM = Math.round(distanceMeters(store, {lat:geo.lat,lng:geo.lng}));
+  const status = !geo.accuracyM || geo.accuracyM > 100 ? "imprecise" : distanceM + geo.accuracyM <= STORE_RADIUS_M ? "verified" : distanceM - geo.accuracyM > STORE_RADIUS_M ? "outside" : "imprecise";
+  return { ...geo, distanceM, status, capturedAt };
+}
+function locationLabel(check?: LocationCheck) {
+  if (!check) return "Sin verificación";
+  return check.status === "verified" ? `En sucursal · ${check.distanceM} m` : check.status === "outside" ? `Fuera del área · ${check.distanceM} m` : check.status === "imprecise" ? "Ubicación imprecisa" : "Ubicación no disponible";
+}
+
+type DexterPilotRecord = { id:string; employeeId:string; periodStart:string; periodEnd:string; leftUnits:number; rightUnits:number; scores:number[]; criticalFault:boolean; note:string; proposals:string; updatedAt:string; updatedById:string };
+const DEXTER_CRITERIA = [
+  ["Limpieza permanente del área",15],["Orden y mostrador libre",15],["Proceso de atención al cliente",20],["Uso correcto del sistema",20],["Conocimiento del producto Dexter",10],["Venta complementaria",5],["Precios, existencias y exhibición",5],["Propuestas de estrategia",5],["Liderazgo y cumplimiento del área",5],
+] as const;
 
 type Evaluation = {
   employeeId: string;
@@ -261,7 +294,7 @@ function compressImage(sourceDataUrl: string, maxDim = 640, quality = 0.55): Pro
 // Estampa de ubicacion "mejor esfuerzo": si el colaborador niega el permiso
 // o el dispositivo no tiene GPS, la evidencia se guarda igual, solo sin
 // coordenadas.
-function captureGeolocation(): Promise<{ lat?: number; lng?: number; accuracyM?: number }> {
+function captureGeolocation(fresh = false): Promise<{ lat?: number; lng?: number; accuracyM?: number }> {
   return new Promise((resolve) => {
     if (!navigator.geolocation) {
       resolve({});
@@ -277,7 +310,7 @@ function captureGeolocation(): Promise<{ lat?: number; lng?: number; accuracyM?:
         clearTimeout(timer);
         resolve({});
       },
-      { enableHighAccuracy: false, timeout: 3500, maximumAge: 60000 },
+      { enableHighAccuracy: fresh, timeout: fresh ? 10000 : 3500, maximumAge: fresh ? 0 : 60000 },
     );
   });
 }
@@ -498,6 +531,7 @@ const areaLeaderViews = new Set([
 ]);
 
 function canAccessView(employee: Employee, targetView: string) {
+  if (targetView === "piloto-dexter") return employee.id === "003";
   // Caso especial: el marcador de aseo tiene su propia lista de 4 autorizados,
   // sin importar el rol (incluye a Julio, que es JEFE_AREA, y excluye a otros
   // puestos directivos que sí ven el resto de las pantallas).
@@ -606,6 +640,7 @@ type StoreOpeningCheck = {
   managerId?: string;
   openedAt?: string;
   openedById?: string;
+  openingLocation?: LocationCheck;
   // Checklist detallado del proceso real de apertura. Orden: 1) gerente autoriza,
   // 2) cajero autoriza (caja + ERP), 3) con ambas autorizaciones, indicación para todos
   // de abrir cortinas y puertas (doorsOpenedAt/openedAt es esa confirmación final).
@@ -740,6 +775,20 @@ function App() {
   const [workLocations, setWorkLocations] = useState<WorkLocation[]>(() => load("xoxo.workLocations", []));
   const [slaReviews, setSlaReviews] = useState<SlaReview[]>(() => load("xoxo.slaReviews", []));
   const [storeOpeningChecks, setStoreOpeningChecks] = useState<StoreOpeningCheck[]>(() => load("xoxo.storeOpeningChecks", []));
+  const [dexterPilot, setDexterPilot] = useState<DexterPilotRecord[]>([]);
+  const [dexterPilotError, setDexterPilotError] = useState("");
+  useEffect(() => {
+    if (!isAuthenticated || activeId !== "003") { setDexterPilot([]); return; }
+    let cancelled = false;
+    void cloudLoad<DexterPilotRecord[]>("xoxo.dexterPilot", []).then((rows) => { if (!cancelled) setDexterPilot(rows); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated, activeId]);
+  const persistDexterPilot = async (record: DexterPilotRecord) => {
+    if (activeId !== "003") return;
+    const next = [...dexterPilot.filter((item) => item.id !== record.id), record];
+    try { await cloudSave("xoxo.dexterPilot", next); setDexterPilot(next); setDexterPilotError(""); }
+    catch (error) { setDexterPilotError(error instanceof Error ? error.message : "No se pudo guardar el piloto."); }
+  };
   const [dailyClosures, setDailyClosures] = useState<DailyClosure[]>(() => load("xoxo.dailyClosures", []));
   const [shiftConfigs, setShiftConfigs] = useState<ShiftConfig[]>(() => load("xoxo.shiftConfigs", defaultShiftConfigs));
   const [activitySchedules, setActivitySchedules] = useState<ActivitySchedule[]>(() =>
@@ -1126,10 +1175,11 @@ function App() {
   };
 
   const updateAttendance = async (field: keyof Attendance) => {
+    const arrivalLocation = field === "in" ? await checkStoreLocation(user.branch) : undefined;
     const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
     const existing = latest.find((entry) => entry.employeeId === user.id && entry.date === today) ?? myAttendance;
     const next = latest.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
-    next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow() });
+    next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow(), ...(arrivalLocation ? {arrivalLocation} : {}) });
     setAttendance(next);
     save("xoxo.attendance", next);
   };
@@ -1899,6 +1949,9 @@ function App() {
           {canAccessView(user, "evaluacion") && <button className={view === "evaluacion" ? "active" : ""} onClick={() => navigate("evaluacion")}>
             <CalendarCheck size={18} /> Evaluacion
           </button>}
+          {canAccessView(user, "piloto-dexter") && <button className={view === "piloto-dexter" ? "active" : ""} onClick={() => navigate("piloto-dexter")}>
+            <CalendarCheck size={18} /> Piloto Dexter
+          </button>}
           {canAccessView(user, "marcador-aseo") && <button className={view === "marcador-aseo" ? "active" : ""} onClick={() => navigate("marcador-aseo")}>
             <Sparkles size={18} /> Marcador de aseo
           </button>}
@@ -2053,6 +2106,7 @@ function App() {
             slaReviews={slaReviews}
           />
         )}
+        {view === "piloto-dexter" && user.id === "003" && <DexterPilotView collaborators={collaborators} records={dexterPilot} error={dexterPilotError} onSave={persistDexterPilot} />}
         {view === "marcador-aseo" && canViewCleaningBoard(user) && (
           <CleaningScoreboardView
             user={user}
@@ -2168,6 +2222,58 @@ function App() {
   );
 }
 
+function DexterPilotView({collaborators,records,error,onSave}:{collaborators:Employee[];records:DexterPilotRecord[];error:string;onSave:(record:DexterPilotRecord)=>void}) {
+  const eligible = collaborators.filter((employee) => employee.branch === "Sucursal Centro" && employee.name !== "Vacante");
+  const [employeeId,setEmployeeId] = useState(eligible[0]?.id ?? "");
+  const [periodStart,setPeriodStart] = useState(() => todayKey());
+  const [periodEnd,setPeriodEnd] = useState(() => todayKey());
+  const id = `${periodStart}:${periodEnd}:${employeeId}`;
+  const current = records.find((row) => row.id === id);
+  const [leftUnits,setLeftUnits] = useState(0);
+  const [rightUnits,setRightUnits] = useState(0);
+  const [scores,setScores] = useState<number[]>(DEXTER_CRITERIA.map(() => 0));
+  const [criticalFault,setCriticalFault] = useState(false);
+  const [note,setNote] = useState("");
+  const [proposals,setProposals] = useState("");
+  useEffect(() => {
+    setLeftUnits(current?.leftUnits ?? 0); setRightUnits(current?.rightUnits ?? 0);
+    setScores(current?.scores ?? DEXTER_CRITERIA.map(() => 0));
+    setCriticalFault(current?.criticalFault ?? false); setNote(current?.note ?? ""); setProposals(current?.proposals ?? "");
+  }, [id, current?.updatedAt]);
+  const total = scores.reduce((sum,score) => sum + score, 0);
+  const units = leftUnits + rightUnits;
+  const authorized = total >= 75 && !criticalFault;
+  const saveRecord = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!eligible.some((person) => person.id === employeeId) || periodStart > periodEnd) return;
+    onSave({ id, employeeId, periodStart, periodEnd, leftUnits, rightUnits, scores, criticalFault, note:note.trim(), proposals:proposals.trim(), updatedAt:new Date().toISOString(), updatedById:"003" });
+  };
+  return <div className="contentGrid">
+    <form className="wide panelCard form" onSubmit={saveRecord}>
+      <div className="sectionHead"><div><h2>Comisión Dexter InstaFácil</h2><span>Solo Sucursal Centro · $10 por cerradura válida · evaluación mínima 75/100</span></div></div>
+      <div className="reportFilters">
+        <label>Colaborador<select value={employeeId} onChange={(event)=>setEmployeeId(event.target.value)}>{eligible.map((person)=><option key={person.id} value={person.id}>{person.name} ({person.id})</option>)}</select></label>
+        <label>Inicio del periodo<input type="date" value={periodStart} onChange={(event)=>setPeriodStart(event.target.value)} required /></label>
+        <label>Fin del periodo<input type="date" value={periodEnd} onChange={(event)=>setPeriodEnd(event.target.value)} required /></label>
+      </div>
+      <div className="reportFilters">
+        <label>Cerraduras izquierdas válidas<input type="number" min="0" step="1" value={leftUnits} onChange={(event)=>setLeftUnits(Math.max(0,Math.floor(Number(event.target.value)||0)))} /></label>
+        <label>Cerraduras derechas válidas<input type="number" min="0" step="1" value={rightUnits} onChange={(event)=>setRightUnits(Math.max(0,Math.floor(Number(event.target.value)||0)))} /></label>
+      </div>
+      <p className="muted">Captura las cantidades después de cotejar las ventas en Visorus. Excluye cancelaciones y devoluciones.</p>
+      <h3>Evaluación del periodo</h3>
+      <div className="reportFilters">{DEXTER_CRITERIA.map(([label,max],index)=><label key={label}>{label} (máx. {max})<input type="number" min="0" max={max} step="1" value={scores[index]} onChange={(event)=>setScores(scores.map((value,i)=>i===index?Math.min(max,Math.max(0,Math.floor(Number(event.target.value)||0))):value))} /></label>)}</div>
+      <label>Propuestas de mejora<textarea value={proposals} onChange={(event)=>setProposals(event.target.value)} placeholder="Exhibición, demostración, venta cruzada o estrategia comercial" /></label>
+      <label>Observaciones y evidencia<textarea value={note} onChange={(event)=>setNote(event.target.value)} placeholder="Hechos observados, fechas y referencias de ventas" /></label>
+      <label><input type="checkbox" checked={criticalFault} onChange={(event)=>setCriticalFault(event.target.checked)} /> Falta crítica comprobada: anula la comisión del periodo</label>
+      <div className="sectionHead"><strong>{total}/100 puntos · {units} unidades · potencial ${units*10} MXN</strong><strong className={`statusPill ${authorized?"ok":"warn"}`}>{authorized?`Autorizable: $${units*10} MXN`:"No autorizable"}</strong></div>
+      <button className="primary" disabled={!employeeId || periodStart>periodEnd}>Guardar periodo</button>
+      {error && <p className="loginError" role="alert">No se guardó: {error}</p>}
+    </form>
+    <article className="wide panelCard"><h2>Resultados guardados</h2><div className="operationTable"><div className="operationRow head"><span>Periodo</span><span>Colaborador</span><span>Unidades</span><span>Puntos</span><span>Comisión</span></div>{[...records].sort((a,b)=>b.periodEnd.localeCompare(a.periodEnd)).map((row)=>{const score=row.scores.reduce((sum,value)=>sum+value,0);const amount=(row.leftUnits+row.rightUnits)*10;return <div className="operationRow" key={row.id}><span>{row.periodStart} a {row.periodEnd}</span><span>{collaborators.find((person)=>person.id===row.employeeId)?.name ?? row.employeeId}</span><span>{row.leftUnits+row.rightUnits}</span><span>{score}/100</span><strong>{score>=75&&!row.criticalFault?`$${amount} MXN`:"No autorizable"}</strong></div>})}</div></article>
+  </div>;
+}
+
 function titleFor(view: string) {
   return (
     {
@@ -2181,6 +2287,7 @@ function titleFor(view: string) {
       auditorias: "Auditoría de procesos",
       expansion: "Apertura y expansión de sucursales",
       evaluacion: "Evaluacion diaria",
+      "piloto-dexter": "Piloto de comisiones Dexter",
       "marcador-aseo": "Marcador de aseo",
       caja: "Caja e incidencias",
       finanzas: "Proveedores y cuentas por pagar",
@@ -2906,6 +3013,7 @@ function AttendanceView({
                 <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
                 <button onClick={() => updateAttendance("out")}>Salida {myAttendance?.out && <span>{myAttendance.out}</span>}</button>
               </div>
+              {myAttendance?.in && <p className="muted">Ubicación al registrar entrada: {locationLabel(myAttendance.arrivalLocation)}{myAttendance.arrivalLocation?.accuracyM ? ` · precisión ±${Math.round(myAttendance.arrivalLocation.accuracyM)} m` : ""}</p>}
               {arrivalBlocked && (
                 <p className="loginError">
                   Ya pasaron las 8:45 y no registraste tu entrada: hoy cuenta como día no laborable. Si tenías permiso o aviso previo, pide a un director que la registre por ti.
@@ -6434,7 +6542,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
                 <div className="openingStaffList">
                   {branchStaff.map((employee) => {
                     const entry = branchAttendance.find((item) => item.employeeId === employee.id);
-                    return <span key={employee.id} className={entry ? "ok" : "muted"}>{employee.name}: {entry?.in ?? "pendiente"}</span>;
+                    return <span key={employee.id} className={entry?.arrivalLocation?.status === "verified" ? "ok" : "muted"}>{employee.name}: {entry?.in ?? "pendiente"}{entry?.in ? ` · ${locationLabel(entry.arrivalLocation)}` : ""}</span>;
                   })}
                 </div>
               </div>
@@ -6453,11 +6561,12 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
               {managerAuthorized && cashierAuthorized && !doorsOpen && (
                 <p className="ok">🔓 Indicación para todo el personal: abrir cortinas y puertas.</p>
               )}
-              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={() => onUpdate(branch, { doorsOpenedAt: new Date().toISOString(), doorsOpenedById: user.id, openedAt: new Date().toISOString(), openedById: user.id })}>3. Confirmar cortinas y puertas abiertas</button>}
+              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={async () => { const openingLocation = await checkStoreLocation(branch); const openedAt = new Date().toISOString(); onUpdate(branch, { doorsOpenedAt: openedAt, doorsOpenedById: user.id, openedAt, openedById: user.id, openingLocation }); }}>3. Confirmar cortinas y puertas abiertas</button>}
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
                   Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
                   {onTime ? " · Apertura puntual (8:00-8:15): se reconoció con +1 punto a quien participó y al personal ya registrado." : " · Apertura fuera de la ventana 8:00-8:15: no aplica reconocimiento."}
+                  <br />Ubicación: {locationLabel(check.openingLocation)}{check.openingLocation?.accuracyM ? ` · precisión ±${Math.round(check.openingLocation.accuracyM)} m` : ""}
                 </p>
               )}
 
