@@ -113,6 +113,9 @@ export type DailyTask = {
   supervisorComment?: string;
   incidentNote?: string;
   paused?: boolean;
+  pausedAt?: string;
+  pausedMinutes?: number;
+  pauseReason?: string;
   approvalStatus?: "No requerida" | "Pendiente" | "Aprobada";
   slaMinutes?: number;
   startedAt?: string;

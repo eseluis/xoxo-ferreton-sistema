@@ -27,6 +27,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { selectWorkFocus, workTimeAt, type WorkItem } from "./workFocus";
 import { taskScheduleError } from "./taskSchedule";
+import { CentroOperationView } from "./CentroOperationView";
+import { CENTRO_PRIORITY, isCentroSupervisor } from "./centroOperation";
+import { activeMinutes, resumePriority, type PriorityClock } from "./priorityPause";
+import { fetchCentroContext, saveCentroRecord } from "./centroStore";
 import { aseoRunCountsInRange, autoPointsInRange, qualityPointsInRange, shiftDateKey } from "./cleaningScoreboard";
 import {
   canAssign,
@@ -358,7 +362,7 @@ type InternalRequest = {
   respondedById?: string;
 };
 
-type SlaState = "Pendiente" | "En curso" | "Por vencer" | "Vencida" | "Completada" | "Completada con retraso";
+type SlaState = "Pendiente" | "En curso" | "Por vencer" | "Vencida" | "Completada" | "Completada con retraso" | "Pausada";
 
 type ActivityRun = {
   id: string;
@@ -378,6 +382,10 @@ type ActivityRun = {
   completedAt?: string;
   status: SlaState;
   escalated?: boolean;
+  pausedAt?: string;
+  pausedMinutes?: number;
+  pauseReason?: string;
+  employeeComment?: string;
 };
 
 const SLA_WARN_RATIO = 0.8;
@@ -388,12 +396,13 @@ function minutesBetween(startIso?: string, endIso?: string) {
   return Math.max(0, (end - new Date(startIso).getTime()) / 60000);
 }
 
-function slaStatus(run: { startedAt?: string; completedAt?: string; slaMinutes: number }): SlaState {
+function slaStatus(run: PriorityClock & { slaMinutes: number }): SlaState {
+  if (run.pausedAt && !run.completedAt) return "Pausada";
   if (run.completedAt) {
-    return minutesBetween(run.startedAt, run.completedAt) > run.slaMinutes ? "Completada con retraso" : "Completada";
+    return activeMinutes(run) > run.slaMinutes ? "Completada con retraso" : "Completada";
   }
   if (!run.startedAt) return "Pendiente";
-  const elapsed = minutesBetween(run.startedAt);
+  const elapsed = activeMinutes(run);
   if (elapsed > run.slaMinutes) return "Vencida";
   if (elapsed >= run.slaMinutes * SLA_WARN_RATIO) return "Por vencer";
   return "En curso";
@@ -463,7 +472,7 @@ function liveStatusFor(
     const sla = runningTask.slaMinutes ?? 60;
     candidates.push({
       label: runningTask.title,
-      status: slaStatus({ startedAt: runningTask.startedAt, completedAt: undefined, slaMinutes: sla }),
+      status: slaStatus({ ...runningTask, completedAt: undefined, slaMinutes: sla }),
       elapsed: formatElapsed(runningTask.startedAt),
     });
   }
@@ -531,6 +540,7 @@ const areaLeaderViews = new Set([
 ]);
 
 function canAccessView(employee: Employee, targetView: string) {
+  if (targetView === "operacion-centro") return true; // Daily assignment is checked at render and in the server.
   if (targetView === "piloto-dexter") return employee.id === "003";
   // Caso especial: el marcador de aseo tiene su propia lista de 4 autorizados,
   // sin importar el rol (incluye a Julio, que es JEFE_AREA, y excluye a otros
@@ -615,6 +625,8 @@ type WorkLocation = {
   date: string;
   location: "Matriz" | "Sucursal Centro";
   assignedById: string;
+  start?: string;
+  end?: string;
 };
 
 type SlaReview = {
@@ -735,6 +747,7 @@ function arrivalPunctuality(minutes: number): { label: string; className: string
 }
 
 function App() {
+  const [priorityBusy, setPriorityBusy] = useState(false);
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
   useEffect(() => {
     const listener = (event: Event) => {
@@ -1062,6 +1075,24 @@ function App() {
   }, [evaluations, today, user.id]);
   const shiftMap = Object.fromEntries(shiftConfigs.map((shift) => [shift.key, shift])) as Record<string, ShiftConfig>;
   const currentWorkLocation = workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch;
+  const canSeeCentro = currentWorkLocation === "Sucursal Centro" || isCentroSupervisor(user);
+  const centroArrival = useRef("");
+  useEffect(() => {
+    if (!isAuthenticated || currentWorkLocation !== "Sucursal Centro" || !myAttendance?.in || myAttendance.out) return;
+    const arrivalKey = `${today}-${user.id}`;
+    if (centroArrival.current !== arrivalKey) { centroArrival.current = arrivalKey; setView("operacion-centro"); }
+  }, [isAuthenticated, currentWorkLocation, myAttendance?.in, myAttendance?.out, today, user.id]);
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let alive = true;
+    const refresh = async () => {
+      if (document.visibilityState === "hidden") return;
+      const next = await cloudRefresh<WorkLocation[]>("xoxo.workLocations");
+      if (alive && next) setWorkLocations(next);
+    };
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { alive = false; clearInterval(timer); };
+  }, [isAuthenticated]);
   const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole, currentWorkLocation);
   const currentCleaningRow = getEditableCleaningRow(user, cleaningRole, currentWorkLocation);
   const userTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
@@ -1175,13 +1206,14 @@ function App() {
   };
 
   const updateAttendance = async (field: keyof Attendance) => {
-    const arrivalLocation = field === "in" ? await checkStoreLocation(user.branch) : undefined;
+    const arrivalLocation = field === "in" ? await checkStoreLocation(currentWorkLocation) : undefined;
     const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
     const existing = latest.find((entry) => entry.employeeId === user.id && entry.date === today) ?? myAttendance;
     const next = latest.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
     next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow(), ...(arrivalLocation ? {arrivalLocation} : {}) });
     setAttendance(next);
     save("xoxo.attendance", next);
+    if (field === "in" && currentWorkLocation === "Sucursal Centro") setView("operacion-centro");
   };
 
   // Registrar la entrada de otro colaborador cuando ya pasó la hora de autochecado (8:45),
@@ -1286,6 +1318,31 @@ function App() {
     save("xoxo.workLocations", next);
   };
 
+  const pauseForPriority = (reason: string) => {
+    const nextTasks = dailyTasks.map(task => task.employeeId === user.id && task.date === today && task.status === "En proceso"
+      ? { ...task, status: "Pausada" as const, paused: true, pausedAt: new Date().toISOString(), pauseReason: reason, employeeComment: `${task.employeeComment ?? ""}\nPausa por ${reason}: ${new Date().toISOString()}. Conservar avance y retomar.`.trim() } : task);
+    if (nextTasks.some((task, index) => task !== dailyTasks[index])) { setDailyTasks(nextTasks); save("xoxo.dailyTasks", nextTasks); }
+    const nextRuns = activityRuns.map(run => run.employeeId === user.id && run.date === today && run.startedAt && !run.completedAt && !run.pausedAt
+      ? { ...run, status: "Pausada" as const, pausedAt: new Date().toISOString(), pauseReason: reason, employeeComment: `${run.employeeComment ?? ""}\nPausa por ${reason}; retomar al terminar.`.trim() } : run);
+    if (nextRuns.some((run, index) => run !== activityRuns[index])) { setActivityRuns(nextRuns); save("xoxo.activityRuns", nextRuns); }
+  };
+  const pauseAllForPriority = async (reason: string) => {
+    if (priorityBusy) return;
+    setPriorityBusy(true);
+    pauseForPriority(reason);
+    try {
+      if (currentWorkLocation === "Sucursal Centro") {
+        const context = await fetchCentroContext(today);
+        for (const record of context.records.filter(r => r.owner_id === user.id && r.status === "En curso")) {
+          await saveCentroRecord(today, record.task_id, record.version, "pause", record.data, reason);
+        }
+        window.dispatchEvent(new Event("centro-refresh"));
+      }
+      setSyncErrors(previous => ({ ...previous, "prioridad": "" }));
+    } catch (e) { setSyncErrors(previous => ({ ...previous, "prioridad": e instanceof Error ? e.message : "No se confirmó la pausa de Centro." })); }
+    finally { setPriorityBusy(false); }
+  };
+
   const reviewSla = (sourceType: SlaReview["sourceType"], sourceId: string, employeeId: string, decision: SlaReview["decision"], note: string) => {
     const review: SlaReview = { id: crypto.randomUUID(), sourceType, sourceId, employeeId, date: today, decision, scoreImpact: decision === "Incumplimiento" ? -1 : 0, note, reviewedById: user.id, reviewedAt: new Date().toISOString() };
     const next = [...slaReviews.filter((item) => !(item.sourceType === sourceType && item.sourceId === sourceId)), review];
@@ -1313,11 +1370,11 @@ function App() {
       if (patch.openedAt) {
         const onTime = (() => {
           const minutes = minutesOfDayMx(patch.openedAt!);
-          return minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END;
+          return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 50 && minutes <= 9 * 60 + 10 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END;
         })();
         if (onTime) {
           const attendedIds = attendance
-            .filter((entry) => entry.date === today && entry.in && collaborators.find((employee) => employee.id === entry.employeeId)?.branch === branch)
+            .filter((entry) => entry.date === today && entry.in && !entry.out && (workLocations.find(item => item.employeeId === entry.employeeId && item.date === today)?.location ?? collaborators.find((employee) => employee.id === entry.employeeId)?.branch) === branch)
             .map((entry) => entry.employeeId);
           const participantIds = Array.from(new Set([...attendedIds, existing.doorsOpenedById, existing.cashierAuthorizedById, user.id].filter(Boolean))) as string[];
           const grantedAt = new Date().toISOString();
@@ -1329,7 +1386,7 @@ function App() {
             date: today,
             decision: "Reconocimiento",
             scoreImpact: 1,
-            note: `Apertura puntual de ${branch}: checklist completo entre 8:00 y 8:15.`,
+            note: `Apertura puntual de ${branch}: checklist completo entre ${branch === "Sucursal Centro" ? "8:50 y 9:10" : "8:00 y 8:15"}.`,
             reviewedById: user.id,
             reviewedAt: grantedAt,
           }));
@@ -1770,10 +1827,10 @@ function App() {
   }) => {
     const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
     const existing = activityRuns.find((run) => run.id === id);
-    if (existing?.startedAt) return;
+    if (existing?.startedAt && !existing.pausedAt) return;
     const startedAt = new Date().toISOString();
     const next = existing
-      ? activityRuns.map((run) => (run.id === id ? { ...run, startedAt, status: "En curso" as SlaState } : run))
+      ? activityRuns.map((run) => (run.id === id ? { ...resumePriority(run), startedAt: run.startedAt ?? startedAt, status: "En curso" as SlaState } : run))
       : [
           ...activityRuns,
           {
@@ -1817,13 +1874,15 @@ function App() {
   };
 
   const startDailyTask = (task: DailyTask) => {
-    if (task.startedAt) return;
+    if (task.startedAt && !task.pausedAt) return;
+    if (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) return;
     persistDailyTasks(
       dailyTasks.map((entry) =>
         entry.id === task.id
           ? {
-              ...entry,
-              startedAt: new Date().toISOString(),
+              ...resumePriority(entry),
+              paused: false,
+              startedAt: entry.startedAt ?? new Date().toISOString(),
               status: "En proceso",
               slaMinutes: entry.slaMinutes ?? Math.max(15, timeToMinutes(entry.end) - timeToMinutes(entry.start)),
             }
@@ -1843,7 +1902,7 @@ function App() {
           task.slaMinutes &&
           !task.escalated &&
           !["Completada", "Pausada"].includes(task.status) &&
-          slaStatus({ startedAt: task.startedAt, completedAt: undefined, slaMinutes: task.slaMinutes }) === "Vencida",
+          slaStatus({ ...task, completedAt: undefined, slaMinutes: task.slaMinutes }) === "Vencida",
       );
       if (runsToEscalate.length) {
         persistActivityRuns(
@@ -1994,6 +2053,7 @@ function App() {
       </aside>
 
       <main>
+        <div className="globalPriority"><strong>{CENTRO_PRIORITY}</strong><span>Atiende, conserva el avance y retoma. Una condición de seguridad bloquea la actividad.</span><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Cliente")}>Atender cliente</button><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Seguridad")}>Pausar por seguridad</button>{canSeeCentro && <button className="primary" onClick={() => navigate("operacion-centro")}>Operación Centro</button>}</div>
         {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert"><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" onClick={() => window.location.reload()}>Reintentar y recargar</button></div>}
         <header className="topbar">
           <div>
@@ -2010,6 +2070,9 @@ function App() {
             </button>
           </div>
         </header>
+
+        {view === "operacion-centro" && canSeeCentro && <CentroOperationView user={user} collaborators={collaborators} today={today} openingChecks={storeOpeningChecks} onNavigate={navigate} onPriorityPause={pauseForPriority} onAssignmentsChanged={() => { void cloudRefresh<WorkLocation[]>("xoxo.workLocations").then(next => { if (next) setWorkLocations(next); }); }} />}
+        {view === "operacion-centro" && !canSeeCentro && <p>No estás asignado a Centro hoy. Consulta tus tareas o tu asignación con dirección.</p>}
 
         {view === "panel" && (
           <Dashboard
@@ -2047,11 +2110,11 @@ function App() {
             updateAttendance={updateAttendance}
             registerAttendanceFor={registerAttendanceFor}
             myEval={myEval}
-            shift={shiftMap[user.shift]}
+            shift={{ ...shiftMap[user.shift], ...workLocations.find(item => item.employeeId === user.id && item.date === today) }}
             activitySchedules={activitySchedules}
             workLocation={workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch}
-            cleaningAssignment={currentCleaningAssignment}
-            cleaningRow={currentCleaningRow}
+            cleaningAssignment={currentWorkLocation === "Sucursal Centro" ? "Consulta tu agenda dinámica en Operación Centro" : currentCleaningAssignment}
+            cleaningRow={currentWorkLocation === "Sucursal Centro" ? undefined : currentCleaningRow}
             dailyTasks={userTasks}
             allDailyTasks={dailyTasks}
             setDailyTasks={persistDailyTasks}
@@ -2278,6 +2341,7 @@ function titleFor(view: string) {
   return (
     {
       panel: "Panel de control",
+      "operacion-centro": "Operación diaria · Centro",
       tableroFinanciero: "Tablero financiero gerencial",
       kpis: "Indicadores por puesto y sucursal",
       asistencia: "Registro diario",
@@ -2417,6 +2481,7 @@ export function MyWorkFocus({ user, date, location, schedules, tasks, runs, clea
       && !task.paused && !["Pausada", "Incidencia"].includes(task.status) && task.approvalStatus !== "Pendiente"
       && task.start <= currentTime && task.end > currentTime) : undefined;
   const blocked = focus.pending.filter(item => item.blocked || ["Pausada", "Incidencia"].includes(item.status));
+  if (location === "Sucursal Centro") return <article className="wide panelCard myWorkFocus"><h2>Tu agenda dinámica de Centro</h2><p>{CENTRO_PRIORITY}. Las actividades se distribuyen según puesto, horario y personal disponible.</p><button className="primary" onClick={() => onNavigate("operacion-centro")}>Abrir mi operación de hoy</button><button className="ghost" onClick={() => onNavigate("tareas")}>Ver tareas adicionales</button></article>;
   return <article className="wide panelCard myWorkFocus">
     <div className="sectionHead"><div><h2>Qué debo estar haciendo ahora</h2><span>{user.name} · {location} · {currentTime} h</span></div><span className="statusPill">{focus.label}</span></div>
     {focus.current ? <div className="workFocusMain"><small>{focus.current.kind} · {focus.current.start}–{focus.current.end}</small><h3>{focus.current.title}</h3><TaskDescription task={{ notes: focus.current.instructions ?? "", requiresPhoto: focus.current.kind === "Tarea" ? tasks.find(task => `Tarea-${task.id}` === focus.current?.id)?.requiresPhoto : focus.current.kind === "Aseo" || routine.find(item => `Actividad-${item.id}` === focus.current?.id)?.evidence === "photo" }} /></div>
@@ -2499,13 +2564,13 @@ function Dashboard({
   const liveStatuses = visibleForMonitor.map((employee) => ({ employee, live: liveStatusFor(employee, activityRuns, dailyTasks, shiftMap, today) }));
   const idleNow = liveStatuses.filter((entry) => entry.live.state === "idle").length;
   const reviewedSourceIds = new Set(slaReviews.filter((item) => item.date === today).map((item) => `${item.sourceType}-${item.sourceId}`));
-  const breachedTasks = dailyTasks.filter((task) => task.date === today && task.startedAt && !task.completedAt && task.slaMinutes && slaStatus({ startedAt: task.startedAt, slaMinutes: task.slaMinutes }) === "Vencida" && !reviewedSourceIds.has(`Tarea-${task.id}`));
+  const breachedTasks = dailyTasks.filter((task) => task.date === today && task.startedAt && !task.completedAt && task.slaMinutes && slaStatus({ ...task, slaMinutes: task.slaMinutes }) === "Vencida" && !reviewedSourceIds.has(`Tarea-${task.id}`));
   const breachedRuns = activityRuns.filter((run) => run.date === today && run.startedAt && !run.completedAt && slaStatus(run) === "Vencida" && !reviewedSourceIds.has(`Actividad-${run.id}`));
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
   const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} shift={shiftMap[user.shift]} onNavigate={onNavigate} />;
-  const openingBoard = <StoreOpeningBoard user={user} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
+  const openingBoard = <StoreOpeningBoard user={{...user, branch:locationFor(user)}} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators.map(employee => ({...employee, branch:locationFor(employee)}))} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
     const myAttendance = todaysAttendance.find((entry) => entry.employeeId === user.id);
@@ -2522,7 +2587,7 @@ function Dashboard({
     return <section className="grid">
       {myWorkFocus}
       {openingBoard}
-      <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Itinerario obligatorio: llegada a Matriz 8:00, salida 8:15 en vehículo de la empresa, llegada a Centro 8:45 y apertura 8:55.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
+      <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Consulta tu horario asignado y la agenda dinámica de Centro. Apertura completa: 8:50–9:10.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
@@ -2533,8 +2598,8 @@ function Dashboard({
         <p><strong>Aseo:</strong> {myCleaning}</p>
         <p><strong>Lugar de trabajo hoy:</strong> {locationFor(user)}</p><p><strong>Jefe inmediato:</strong> {supervisorFor(user, collaborators)?.name ?? "Gerencia"}</p>
       </article>
-      <SequenceCard sequence={ownSequence} location={locationFor(user)} />
-      <DailyContinuityCard sequence={ownSequence} />
+      {locationFor(user) !== "Sucursal Centro" && <SequenceCard sequence={ownSequence} location={locationFor(user)} />}
+      {locationFor(user) !== "Sucursal Centro" && <DailyContinuityCard sequence={ownSequence} />}
       <article className="wide panelCard"><h2>Mis tareas asignadas</h2><div className="taskList">{myTasks.map((task)=><div className="taskRow" key={task.id}><span>{task.start}-{task.end}<small>{task.notes}</small></span><strong>{task.title} · {task.status}</strong></div>)}{myTasks.length===0&&<p className="muted">No tienes tareas especiales asignadas hoy. Continúa con tu rutina programada.</p>}</div></article>
       <article className="wide panelCard"><h2>Regla de trabajo</h2><p>Atiende primero al cliente, ejecuta una actividad a la vez y reporta avances, evidencia o impedimentos en Registro diario o Tareas.</p></article>
     </section>;
@@ -2586,7 +2651,7 @@ function Dashboard({
         </div>
       </article>
 
-      <SequenceCard sequence={ownSequence} location={locationFor(user)} />
+      {locationFor(user) !== "Sucursal Centro" && <SequenceCard sequence={ownSequence} location={locationFor(user)} />}
 
       {(canViewAll(user) || dailyTasks.some((task) => task.assignedById === user.id)) && (
         <article className="wide panelCard">
@@ -2911,7 +2976,7 @@ function AttendanceView({
   const canRegisterLateAttendance = LATE_ATTENDANCE_OVERRIDE_IDS.includes(user.id);
   const [lateEmployeeId, setLateEmployeeId] = useState("");
   const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id) && (!activity.branch || activity.branch === workLocation));
-  const userActivities = targetedActivities.length
+  const userActivities = workLocation === "Sucursal Centro" ? [] : targetedActivities.length
     ? targetedActivities
     : activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role) && (!activity.branch || activity.branch === workLocation));
   const today = todayKey();
@@ -3000,14 +3065,14 @@ function AttendanceView({
         </div>
         {(() => {
           const nowMinutes = timeToMinutes(timeNow());
-          const arrivalBlocked = !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;
+          const arrivalBlocked = workLocation !== "Sucursal Centro" && !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;
           const punctuality = arrivalPunctuality(myAttendance?.in ? timeToMinutes(myAttendance.in) : nowMinutes);
           return (
             <>
               <div className="punchGrid">
                 <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
                   Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
-                  {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{punctuality.label}</small>}
+                  {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{workLocation === "Sucursal Centro" ? `Horario asignado: ${shift?.start ?? "08:50"}` : punctuality.label}</small>}
                 </button>
                 <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
                 <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
@@ -3089,7 +3154,7 @@ function AttendanceView({
               const sla = task.slaMinutes ?? Math.max(15, timeToMinutes(task.end) - timeToMinutes(task.start));
               const status = task.completedAt
                 ? task.status
-                : slaStatus({ startedAt: task.startedAt, completedAt: undefined, slaMinutes: sla });
+                : slaStatus({ ...task, completedAt: undefined, slaMinutes: sla });
               return (
                 <div className="taskProgressCard" key={task.id}>
                   <div className="sectionHead">
@@ -3103,7 +3168,7 @@ function AttendanceView({
                       {task.status === "Pausada" || task.status === "Incidencia" ? task.status : status}
                     </span>
                   </div>
-                  {task.startedAt && !task.completedAt && <LiveStopwatch startedAt={task.startedAt} slaMinutes={sla} />}
+                  {task.startedAt && !task.completedAt && <LiveStopwatch startedAt={task.startedAt} slaMinutes={sla} pausedAt={task.pausedAt} pausedMinutes={task.pausedMinutes} />}
                   <TaskDescription task={task} />
                   <div className="taskProgressInputs">
                     <input
@@ -3127,9 +3192,9 @@ function AttendanceView({
                   {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
-                    {!task.startedAt && (
-                      <button className="ghost compact" disabled={task.paused || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
-                        Iniciar tarea
+                    {(!task.startedAt || !!task.pausedAt) && (
+                      <button className="ghost compact" disabled={(task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
+                        {task.pausedAt ? "Retomar tarea" : "Iniciar tarea"}
                       </button>
                     )}
                     <button
@@ -3143,7 +3208,7 @@ function AttendanceView({
                       Marcar completada
                     </button>
                   </div>
-                  {task.paused && <p className="muted">Tarea pausada hasta aprobacion del superior.</p>}
+                  {task.paused && <p className="muted">{task.pausedAt ? `Pausa por ${task.pauseReason}. Retoma al terminar; este tiempo no se cuenta como trabajo de la tarea.` : "Tarea pausada hasta aprobación del superior."}</p>}
                 </div>
               );
             })
@@ -3553,18 +3618,18 @@ function EvidenceField({
   );
 }
 
-function LiveStopwatch({ startedAt, slaMinutes }: { startedAt: string; slaMinutes: number }) {
+function LiveStopwatch({ startedAt, slaMinutes, pausedAt, pausedMinutes }: PriorityClock & { startedAt: string; slaMinutes: number }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => setTick((value) => value + 1), 1000);
     return () => clearInterval(interval);
   }, []);
-  const elapsedMinutes = minutesBetween(startedAt);
+  const elapsedMinutes = activeMinutes({ startedAt, pausedAt, pausedMinutes });
   const ratio = Math.min(1.2, elapsedMinutes / slaMinutes);
-  const status = slaStatus({ startedAt, completedAt: undefined, slaMinutes });
+  const status = slaStatus({ startedAt, pausedAt, pausedMinutes, completedAt: undefined, slaMinutes });
   return (
     <div className={`slaTimer ${status === "Vencida" ? "pulse" : ""}`}>
-      <span className="slaClock">{formatElapsed(startedAt)}</span>
+      <span className="slaClock">{Math.floor(elapsedMinutes).toString().padStart(2,"0")}:{Math.floor(elapsedMinutes * 60 % 60).toString().padStart(2,"0")}{pausedAt ? " · Pausada" : ""}</span>
       <div className="slaBar">
         <div className={`fill ${slaClassName(status)}`} style={{ width: `${Math.min(100, ratio * 100)}%` }} />
       </div>
@@ -3613,7 +3678,7 @@ function LiveActivityCard({
         <small>
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
-        {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} />}
+        {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
         {inProgress && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
         {inProgress && needsEvidence && evidence !== "photo" && (
           <EvidenceField
@@ -3626,13 +3691,13 @@ function LiveActivityCard({
       </span>
       <div className="liveActivityActions">
         <span className={`statusPill ${slaClassName(status)}`}>{status}</span>
-        {!run?.startedAt && (
+        {(!run?.startedAt || !!run?.pausedAt) && (
           <button className="ghost compact" onClick={onStart}>
-            Iniciar
+            {run?.pausedAt ? "Retomar" : "Iniciar"}
           </button>
         )}
         {inProgress && (
-          <button className="primary compact" disabled={!evidenceReady} onClick={() => onComplete(run!.id)}>
+          <button className="primary compact" disabled={!evidenceReady || !!run?.pausedAt} onClick={() => onComplete(run!.id)}>
             Completar
           </button>
         )}
@@ -6482,7 +6547,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
       <div className="sectionHead">
         <div>
           <h2>Estado de apertura y cierre de tiendas</h2>
-          <span>Gerente de tienda autoriza → cajero autoriza → con ambas, indicación para todo el personal de abrir/cerrar cortinas y puertas. Apertura puntual sólo entre 8:00 y 8:15.</span>
+          <span>Gerente de tienda autoriza → cajero autoriza → abrir/cerrar cortinas y puertas. Apertura puntual: Matriz 8:00–8:15; Centro 8:50–9:10.</span>
         </div>
       </div>
       <div className="openingCards">
@@ -6496,7 +6561,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
           // todos y sirve de respaldo para que a nadie le aparezca "tienda cerrada" por error.
           const cashOpen = cashSessions.some((session) => session.branch === branch && session.date === today && ["Abierta", "Cerrada", "Aprobada"].includes(session.status)) || Boolean(check.cashOpenConfirmedAt);
           const branchStaff = collaborators.filter((employee) => employee.branch === branch);
-          const branchAttendance = attendance.filter((entry) => entry.date === today && entry.in && branchStaff.some((employee) => employee.id === entry.employeeId));
+          const branchAttendance = attendance.filter((entry) => entry.date === today && entry.in && !entry.out && (!entry.lunchOut || (entry.lunchIn && entry.lunchIn > entry.lunchOut)) && branchStaff.some((employee) => employee.id === entry.employeeId));
           const staffPresent = branchAttendance.length;
 
           // ---- Apertura ----
@@ -6510,7 +6575,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
           const readyToOpenDoors = managerAuthorized && cashierAuthorized && check.minimumStaff && check.systemsReady && check.processComplete;
           const doorsOpen = Boolean(check.doorsOpenedAt);
           const opened = Boolean(check.openedAt);
-          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
+          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 50 && minutes <= 9 * 60 + 10 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
 
           // ---- Cierre ----
           const managerClosingAuthorized = Boolean(check.managerClosingAuthorizedAt);
@@ -6565,7 +6630,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
                   Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
-                  {onTime ? " · Apertura puntual (8:00-8:15): se reconoció con +1 punto a quien participó y al personal ya registrado." : " · Apertura fuera de la ventana 8:00-8:15: no aplica reconocimiento."}
+                  {onTime ? ` · Apertura puntual (${branch === "Sucursal Centro" ? "8:50–9:10" : "8:00–8:15"}): se reconoció con +1 punto a quien participó y al personal ya registrado.` : " · Apertura fuera de su ventana: no aplica reconocimiento."}
                   <br />Ubicación: {locationLabel(check.openingLocation)}{check.openingLocation?.accuracyM ? ` · precisión ±${Math.round(check.openingLocation.accuracyM)} m` : ""}
                 </p>
               )}
