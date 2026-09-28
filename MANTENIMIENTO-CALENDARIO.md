@@ -40,3 +40,8 @@ La actualización local no aplica SQL ni publica automáticamente. Sin la migrac
 El color corresponde a actividades/tareas de la agenda, no a todos los indicadores económicos ni a cada proceso independiente de la empresa. Un plan guardado conserva la rutina inicial de ese día; cambios posteriores a la configuración no reescriben ese histórico. Las tareas adicionales y transferencias de Centro sí se leen con su estado actual. Para corregir formalmente un plan congelado se requiere una futura revisión versionada, no editarlo silenciosamente.
 
 El registro de aseo en Centro conserva su propia revisión y evidencias; el marcador tradicional de puntos mantiene como fuente los registros tradicionales de aseo. No se suman automáticamente puntos de Centro a ese marcador.
+
+## Activación en Supabase — 28 de septiembre de 2026
+
+Las dos migraciones se aplicaron en una sola transacción. Se verificaron la tabla de planes, la fecha inicial 2026-10-01 y los cuatro campos de foto obligatorios de los dos bloques de aseo. Una prueba autenticada de inserción y consulta con el perfil 003 se revirtió sin conservar registros ficticios. Se conservaron los conteos previos: 7 tareas, 250 actividades y 0 registros de Centro. Respaldo previo de definiciones en backups/supabase-before-calendar-2026-09-28.json.
+
