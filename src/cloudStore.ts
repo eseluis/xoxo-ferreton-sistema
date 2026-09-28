@@ -24,7 +24,7 @@ const mutationQueues = new Map<string, Promise<void>>();
 // potentially stale assignments from another collaborator's session.
 const observedRows = new Map<string, Map<string, string>>();
 const assignmentModule = (key: string) => key === "xoxo.dailyTasks" || key === "xoxo.internalRequests";
-const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances";
+const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances" || key === "xoxo.kpiRecords";
 const localVersions = new Map<string, number>();
 function changedRows(key: string, value: unknown): unknown[] | undefined {
   if (!incrementalModule(key) || !Array.isArray(value)) return undefined;

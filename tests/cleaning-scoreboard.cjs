@@ -42,3 +42,5 @@ assert.equal(shiftDateKey('2026-09-01', -1), '2026-08-31', 'cruza el limite de m
 assert.equal(shiftDateKey('2026-02-28', 1), '2026-03-01', 'cruza el limite de mes hacia adelante');
 
 console.log('PASS: puntos automaticos de aseo, rango por periodo, calidad acumulada y aritmetica de fechas');
+
+assert.equal(aseoAutoPoints({...late,pausedMinutes:20}),2,'customer pauses do not penalize cleaning');

@@ -8,6 +8,7 @@ export type AseoRunLike = {
   startedAt?: string;
   completedAt?: string;
   slaMinutes: number;
+  pausedMinutes?: number;
 };
 
 export type CleaningEvaluationLike = {
@@ -23,7 +24,7 @@ export type CleaningEvaluationLike = {
 export function aseoAutoPoints(run: AseoRunLike): number {
   if (run.itemType !== "Aseo" || !run.completedAt) return 0;
   const startedAt = run.startedAt ? new Date(run.startedAt).getTime() : new Date(run.completedAt).getTime();
-  const elapsedMinutes = (new Date(run.completedAt).getTime() - startedAt) / 60000;
+  const elapsedMinutes = Math.max(0, (new Date(run.completedAt).getTime() - startedAt) / 60000 - (run.pausedMinutes ?? 0));
   return elapsedMinutes > run.slaMinutes ? 1 : 2;
 }
 

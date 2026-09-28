@@ -9,7 +9,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "check": "tsc --noEmit && vite build",
     "test:centro": "node scripts/centro-templates.cjs --check && node tests/centro-operation.cjs && node tests/centro-database.cjs",
-    "backup:structure": "node scripts/backup-structure.cjs"
+    "backup:structure": "node scripts/backup-structure.cjs",
+    "test:calendar": "node tests/operation-calendar.cjs && node tests/calendar-database.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

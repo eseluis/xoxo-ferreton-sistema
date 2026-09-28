@@ -1,3 +1,4 @@
+import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
 import {
   AlertTriangle,
   BarChart3,
@@ -27,6 +28,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { selectWorkFocus, workTimeAt, type WorkItem } from "./workFocus";
 import { taskScheduleError } from "./taskSchedule";
+import { OperationCalendarView, DailyPlanCapture } from "./OperationCalendarView";
+import { buildRoutine, cleaningRowsFor, findSlotRun } from "./operationalAgenda";
 import { CentroOperationView } from "./CentroOperationView";
 import { CENTRO_PRIORITY, isCentroSupervisor } from "./centroOperation";
 import { activeMinutes, resumePriority, type PriorityClock } from "./priorityPause";
@@ -190,6 +193,7 @@ type MonthlyBudget = {
 };
 
 type KpiRecord = {
+  periodStart?: string; periodEnd?: string;
   id: string; date: string; month: string; name: string; area: string; role: Role | "TODOS";
   employeeId?: string; branch: string; target: number; actual: number; unit: string;
   direction: "Mayor es mejor" | "Menor es mejor"; frequency: "Diario" | "Semanal" | "Mensual";
@@ -533,9 +537,9 @@ type ActivitySchedule = (typeof defaultActivitySchedules)[number];
 type CleaningRole = (typeof defaultCleaningRole)[number];
 type Branch = Employee["branch"];
 
-const auxiliaryViews = new Set(["panel", "asistencia", "tareas", "solicitudes", "instructivo"]);
+const auxiliaryViews = new Set(["panel", "calendario", "asistencia", "tareas", "solicitudes", "instructivo"]);
 const areaLeaderViews = new Set([
-  "panel", "kpis", "asistencia", "organigrama", "procesos", "auditorias",
+  "panel", "calendario", "kpis", "asistencia", "organigrama", "procesos", "auditorias",
   "evaluacion", "garantias", "tareas", "solicitudes", "instructivo",
 ]);
 
@@ -568,17 +572,14 @@ function workSequenceFor(
   location: string,
   schedules: ActivitySchedule[],
   tasks: DailyTask[],
+  cleaning: CleaningRole[],
 ) {
-  const targeted = schedules.filter((item) => item.employeeIds?.includes(employee.id) && (!item.branch || item.branch === location));
-  const routine = targeted.length
-    ? targeted
-    : schedules.filter((item) => item.branch === location && item.ownerRoles.includes(employee.role));
+  const routine = buildRoutine(employee, schedules, cleaning, location, date);
   const entries = [
-    ...routine.map((item) => ({ id: item.id, title: item.name, start: item.start, end: item.end, status: "Programada", kind: "Proceso" })),
+    ...routine.map((item) => ({ id: item.key, title: item.title, start: item.start, end: item.end, status: "Programada", kind: item.kind })),
     ...tasks.filter((task) => task.employeeId === employee.id && task.date === date).map((task) => ({ id: task.id, title: task.title, start: task.start, end: task.end, status: task.status, kind: "Tarea" })),
   ].sort((a, b) => timeToMinutes(a.start) - timeToMinutes(b.start));
-  const now = new Date();
-  const minutes = now.getHours() * 60 + now.getMinutes();
+  const minutes = timeToMinutes(workTimeAt());
   const currentIndex = entries.findIndex((item) => timeToMinutes(item.start) <= minutes && timeToMinutes(item.end) > minutes);
   const nextIndex = currentIndex >= 0 ? currentIndex + 1 : entries.findIndex((item) => timeToMinutes(item.start) > minutes);
   const previousIndex = currentIndex >= 0 ? currentIndex - 1 : nextIndex > 0 ? nextIndex - 1 : entries.length - 1;
@@ -761,6 +762,7 @@ function App() {
   const [activeId, setActiveId] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [dataHydrated, setDataHydrated] = useState(false);
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [loginId, setLoginId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -859,6 +861,7 @@ function App() {
   useEffect(() => {
     if (!isCloudReady || !isAuthenticated) return;
     let cancelled = false;
+    setDataHydrated(false);
     const hydrate = async () => {
       const mutationAtStart = lastCloudMutationAt;
       const [
@@ -954,6 +957,7 @@ function App() {
       setSlaReviews(cloudSlaReviews);
       setStoreOpeningChecks(cloudStoreOpeningChecks);
       setCleaningEvaluations(cloudCleaningEvaluations);
+      setDataHydrated(true);
       if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
       if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
       if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
@@ -1652,10 +1656,12 @@ function App() {
 
   const saveKpiRecord = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const form = new FormData(event.currentTarget);
-    const month = String(form.get("month")); const name = String(form.get("name")); const employeeId = String(form.get("employeeId")) || undefined; const branch = String(form.get("branch") || user.branch);
-    const existing = kpiRecords.find((item) => item.month === month && item.name === name && item.employeeId === employeeId && item.branch === branch);
+    const frequency = String(form.get("frequency")) as KpiRecord["frequency"];
+    const period = kpiPeriod(String(form.get("periodStart")), frequency);
+    const month = period.start.slice(0, 7); const name = String(form.get("name")).trim(); const employeeId = String(form.get("employeeId")) || undefined; const branch = String(form.get("branch") || user.branch);
+    const existing = kpiRecords.find((item) => item.periodStart === period.start && item.periodEnd === period.end && item.frequency === frequency && item.role === String(form.get("role")) && item.name === name && item.employeeId === employeeId && item.branch === branch);
     const record: KpiRecord = {
-      id: existing?.id || crypto.randomUUID(), date: `${month}-01`, month, name, area: String(form.get("area")),
+      id: existing?.id || crypto.randomUUID(), date: period.start, periodStart: period.start, periodEnd: period.end, month, name, area: String(form.get("area")),
       role: String(form.get("role")) as KpiRecord["role"], employeeId, branch,
       target: Number(form.get("target")), actual: Number(form.get("actual")), unit: String(form.get("unit")),
       direction: String(form.get("direction")) as KpiRecord["direction"], frequency: String(form.get("frequency")) as KpiRecord["frequency"],
@@ -1827,7 +1833,7 @@ function App() {
   }) => {
     const id = `${user.id}-${today}-${item.itemType}-${item.itemId}`;
     const existing = activityRuns.find((run) => run.id === id);
-    if (existing?.startedAt && !existing.pausedAt) return;
+    if (existing?.completedAt || (existing?.startedAt && !existing.pausedAt)) return;
     const startedAt = new Date().toISOString();
     const next = existing
       ? activityRuns.map((run) => (run.id === id ? { ...resumePriority(run), startedAt: run.startedAt ?? startedAt, status: "En curso" as SlaState } : run))
@@ -1853,9 +1859,11 @@ function App() {
 
   const completeActivityRun = (id: string) => {
     const run = activityRuns.find((entry) => entry.id === id);
-    if (!run) return;
-    if (run.evidence === "photo" && (!run.beforeEvidenceCapture || !run.afterEvidenceCapture)) return;
-    if (run.evidence && run.evidence !== "none" && run.evidence !== "photo" && !run.evidenceCapture) return;
+    if (!run || !run.startedAt || run.completedAt || run.pausedAt) return;
+    const slot = buildRoutine(user, activitySchedules, cleaningRole, currentWorkLocation, today).find(item => [item.key, ...(item.aliases ?? [])].includes(`${run.itemType}-${run.itemId}`));
+    const requiredEvidence = slot?.evidence ?? run.evidence;
+    if (requiredEvidence === "photo" && (!run.beforeEvidenceCapture || !run.afterEvidenceCapture)) return;
+    if (requiredEvidence && requiredEvidence !== "none" && requiredEvidence !== "photo" && !run.evidenceCapture) return;
     const completedAt = new Date().toISOString();
     const next = activityRuns.map((entry) =>
       entry.id === id ? { ...entry, completedAt, status: slaStatus({ ...entry, completedAt }) } : entry,
@@ -1978,6 +1986,7 @@ function App() {
         </div>
 
         <nav>
+          <button className={view === "calendario" ? "active" : ""} onClick={() => navigate("calendario")}><CalendarCheck size={18} /> Plan y calendario</button>
           <button className={view === "panel" ? "active" : ""} onClick={() => navigate("panel")}>
             <BarChart3 size={18} /> Panel
           </button>
@@ -2071,6 +2080,8 @@ function App() {
           </div>
         </header>
 
+        <DailyPlanCapture user={user} day={today} branch={currentWorkLocation} schedules={activitySchedules} cleaning={cleaningRole} enabled={dataHydrated && Boolean(myAttendance?.in)} />
+        {view === "calendario" && <OperationCalendarView user={user} collaborators={collaborators} today={today} runs={activityRuns} tasks={dailyTasks} schedules={activitySchedules} cleaning={cleaningRole} locations={workLocations} onNavigate={navigate} />}
         {view === "operacion-centro" && canSeeCentro && <CentroOperationView user={user} collaborators={collaborators} today={today} openingChecks={storeOpeningChecks} onNavigate={navigate} onPriorityPause={pauseForPriority} onAssignmentsChanged={() => { void cloudRefresh<WorkLocation[]>("xoxo.workLocations").then(next => { if (next) setWorkLocations(next); }); }} />}
         {view === "operacion-centro" && !canSeeCentro && <p>No estás asignado a Centro hoy. Consulta tus tareas o tu asignación con dirección.</p>}
 
@@ -2115,6 +2126,7 @@ function App() {
             workLocation={workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch}
             cleaningAssignment={currentWorkLocation === "Sucursal Centro" ? "Consulta tu agenda dinámica en Operación Centro" : currentCleaningAssignment}
             cleaningRow={currentWorkLocation === "Sucursal Centro" ? undefined : currentCleaningRow}
+            cleaningRows={cleaningRole}
             dailyTasks={userTasks}
             allDailyTasks={dailyTasks}
             setDailyTasks={persistDailyTasks}
@@ -2139,6 +2151,7 @@ function App() {
         {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={branchOpenings} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
+            onNavigate={navigate}
             user={user}
             collaborators={collaborators}
             processInstances={processInstances}
@@ -2341,6 +2354,7 @@ function titleFor(view: string) {
   return (
     {
       panel: "Panel de control",
+      calendario: "Plan y calendario de cumplimiento",
       "operacion-centro": "Operación diaria · Centro",
       tableroFinanciero: "Tablero financiero gerencial",
       kpis: "Indicadores por puesto y sucursal",
@@ -2425,14 +2439,7 @@ function getEditableCleaningAssignment(employee: Employee, cleaningRole: Cleanin
 }
 
 function getEditableCleaningRow(employee: Employee, cleaningRole: CleaningRole[], branch: string = employee.branch) {
-  const dayName = weekDays[(new Date().getDay() + 6) % 7];
-  return cleaningRole.find((row) => row.branch === branch &&
-    row.assignments[dayName]
-      .toLowerCase()
-      .split("/")
-      .map((name) => name.trim())
-      .includes(employee.name.toLowerCase()),
-  );
+  return cleaningRowsFor(employee, cleaningRole, branch, oaxacaDateKey())[0];
 }
 
 function supervisorFor(employee: Employee, collaborators: Employee[]) {
@@ -2447,26 +2454,22 @@ export function TaskDescription({ task }: { task: Pick<DailyTask, "notes" | "req
   return <div className="taskDescription"><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}</div>;
 }
 
-export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, shift, onNavigate }: {
+export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, cleaningRows, shift, onNavigate }: {
   user: Employee; date: string; location: string; schedules: ActivitySchedule[];
-  tasks: DailyTask[]; runs: ActivityRun[]; cleaning?: CleaningRole;
+  tasks: DailyTask[]; runs: ActivityRun[]; cleaning?: CleaningRole; cleaningRows?: CleaningRole[];
   shift?: ShiftConfig; onNavigate: (view: string) => void;
 }) {
-  const targeted = schedules.filter(item => item.employeeIds?.includes(user.id) && (!item.branch || item.branch === location));
-  const routine = targeted.length ? targeted : schedules.filter(item => item.ownerRoles.includes(user.role) && (!item.branch || item.branch === location));
+  const routine = schedules;
   const ownRuns = runs.filter(run => run.employeeId === user.id && run.date === date);
-  const items: WorkItem[] = routine.map(item => {
-    const run = ownRuns.find(entry => entry.itemType === "Actividad" && entry.itemId === item.id);
-    return { id: `Actividad-${item.id}`, kind: "Actividad", title: item.name, start: item.start, end: item.end,
-      instructions: item.instructions, startedAt: run?.startedAt, completedAt: run?.completedAt, status: run?.status ?? "Programada" };
+  const slots = buildRoutine(user, schedules, cleaningRows ?? (cleaning ? [cleaning] : []), location, date);
+  const aliasKeys = new Set(slots.flatMap(slot => slot.aliases ?? []));
+  const items: WorkItem[] = slots.map(slot => {
+    const run = findSlotRun(slot, ownRuns);
+    return { id: slot.key, kind: slot.kind === "Aseo" ? "Aseo" : "Actividad", title: slot.title, start: slot.start, end: slot.end,
+      instructions: slot.instructions, startedAt: run?.startedAt, completedAt: run?.completedAt, status: run?.status ?? "Programada" };
   });
-  if (cleaning) {
-    const run = ownRuns.find(entry => entry.itemType === "Aseo" && entry.itemId === cleaning.activity);
-    items.push({ id: `Aseo-${cleaning.activity}`, kind: "Aseo", title: cleaning.activity, start: cleaning.start, end: cleaning.end,
-      instructions: cleaning.details, startedAt: run?.startedAt, completedAt: run?.completedAt, status: run?.status ?? "Programada" });
-  }
   // Keep a started activity visible even if its schedule has since been edited.
-  ownRuns.filter(run => run.startedAt && !run.completedAt && !items.some(item => item.id === `${run.itemType}-${run.itemId}`))
+  ownRuns.filter(run => run.startedAt && !run.completedAt && !items.some(item => item.id === `${run.itemType}-${run.itemId}`) && !aliasKeys.has(`${run.itemType}-${run.itemId}`))
     .forEach(run => items.push({ id: `${run.itemType}-${run.itemId}`, kind: run.itemType, title: run.title,
       start: run.scheduledStart, end: run.scheduledEnd, startedAt: run.startedAt, status: run.status }));
   tasks.filter(task => task.employeeId === user.id && task.date === date).forEach(task => items.push({
@@ -2568,8 +2571,8 @@ function Dashboard({
   const breachedRuns = activityRuns.filter((run) => run.date === today && run.startedAt && !run.completedAt && slaStatus(run) === "Vencida" && !reviewedSourceIds.has(`Actividad-${run.id}`));
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
-  const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks);
-  const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} shift={shiftMap[user.shift]} onNavigate={onNavigate} />;
+  const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks, cleaningRole);
+  const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} cleaningRows={cleaningRole} shift={shiftMap[user.shift]} onNavigate={onNavigate} />;
   const openingBoard = <StoreOpeningBoard user={{...user, branch:locationFor(user)}} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators.map(employee => ({...employee, branch:locationFor(employee)}))} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
@@ -2678,7 +2681,7 @@ function Dashboard({
                     task.date === today &&
                     ["En proceso", "Incidencia", "Pausada"].includes(task.status),
                 ) ?? dailyTasks.find((task) => task.employeeId === employee.id && task.date === today);
-              const sequence = workSequenceFor(employee, today, locationFor(employee), activitySchedules, dailyTasks);
+              const sequence = workSequenceFor(employee, today, locationFor(employee), activitySchedules, dailyTasks, cleaningRole);
               return (
                 <div className="operationRow" key={employee.id}>
                   <strong>{employee.name}</strong>
@@ -2925,6 +2928,7 @@ function AttendanceView({
   activitySchedules,
   cleaningAssignment,
   cleaningRow,
+  cleaningRows,
   dailyTasks,
   allDailyTasks,
   setDailyTasks,
@@ -2948,6 +2952,7 @@ function AttendanceView({
   activitySchedules: ActivitySchedule[];
   cleaningAssignment: string;
   cleaningRow?: CleaningRole;
+  cleaningRows: CleaningRole[];
   dailyTasks: DailyTask[];
   allDailyTasks: DailyTask[];
   setDailyTasks: (value: DailyTask[]) => void;
@@ -2975,13 +2980,9 @@ function AttendanceView({
   }, []);
   const canRegisterLateAttendance = LATE_ATTENDANCE_OVERRIDE_IDS.includes(user.id);
   const [lateEmployeeId, setLateEmployeeId] = useState("");
-  const targetedActivities = activitySchedules.filter((activity) => activity.employeeIds?.includes(user.id) && (!activity.branch || activity.branch === workLocation));
-  const userActivities = workLocation === "Sucursal Centro" ? [] : targetedActivities.length
-    ? targetedActivities
-    : activitySchedules.filter((activity) => activity.ownerRoles.includes(user.role) && (!activity.branch || activity.branch === workLocation));
   const today = todayKey();
-  const runFor = (itemType: ActivityRun["itemType"], itemId: string) =>
-    activityRuns.find((run) => run.id === `${user.id}-${today}-${itemType}-${itemId}`);
+  const slots = buildRoutine(user, activitySchedules, cleaningRows, workLocation, today);
+  const ownRuns = activityRuns.filter(run => run.employeeId === user.id && run.date === today);
   const attendanceLog = attendance
     .flatMap((entry) => ([
       entry.in ? { employeeId: entry.employeeId, date: entry.date, time: entry.in, event: "Entrada" } : undefined,
@@ -3024,45 +3025,7 @@ function AttendanceView({
             <strong>{cleaningAssignment}</strong>
           </div>
         </div>
-        {cleaningRow &&
-          (() => {
-            const slaMinutes = Math.max(5, timeToMinutes(cleaningRow.end) - timeToMinutes(cleaningRow.start));
-            return (
-              <LiveActivityCard
-                title={cleaningRow.activity}
-                scheduledStart={cleaningRow.start}
-                scheduledEnd={cleaningRow.end}
-                slaMinutes={slaMinutes}
-                evidence="photo"
-                run={runFor("Aseo", cleaningRow.activity)}
-                onStart={() =>
-                  startActivityRun({
-                    itemType: "Aseo",
-                    itemId: cleaningRow.activity,
-                    title: cleaningRow.activity,
-                    scheduledStart: cleaningRow.start,
-                    scheduledEnd: cleaningRow.end,
-                    slaMinutes,
-                    evidence: "photo",
-                  })
-                }
-                onComplete={completeActivityRun}
-                onCapturePhoto={(phase, evidence) => setActivityPhoto(runFor("Aseo", cleaningRow.activity)!.id, phase, evidence)}
-                onClearPhoto={(phase) => setActivityPhoto(runFor("Aseo", cleaningRow.activity)!.id, phase, undefined)}
-              />
-            );
-          })()}
-        <div className="cleaningChecklist">
-          <strong>Lista obligatoria para un buen aseo</strong>
-          <ul className="guideList">
-            <li>Retirar toda la mercancía del mostrador.</li>
-            <li>Limpiar y desinfectar la superficie, esquinas y equipo.</li>
-            <li>Acomodar únicamente el material autorizado en su lugar.</li>
-            <li>Limpiar piso, exhibición y zona de atención.</li>
-            <li>Confirmar que no quede mercancía sobre los mostradores.</li>
-            <li>Subir foto de antes y foto de cómo quedó.</li>
-          </ul>
-        </div>
+        <p className="muted">El aseo se realiza una sola vez en la agenda de abajo, con cronómetro y fotos de antes y después. La atención al cliente tiene prioridad.</p>
         {(() => {
           const nowMinutes = timeToMinutes(timeNow());
           const arrivalBlocked = workLocation !== "Sucursal Centro" && !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;
@@ -3114,35 +3077,19 @@ function AttendanceView({
           <span>Cronometro en vivo · SLA por actividad</span>
         </div>
         <div className="taskList liveList">
-          {userActivities.map((activity) => (
-            <div className="scheduledMission" key={activity.id}>
-            <LiveActivityCard
-              title={activity.name}
-              scheduledStart={activity.start}
-              scheduledEnd={activity.end}
-              slaMinutes={activity.durationMinutes}
-              evidence={activity.evidence}
-              run={runFor("Actividad", activity.id)}
-              onStart={() =>
-                startActivityRun({
-                  itemType: "Actividad",
-                  itemId: activity.id,
-                  title: activity.name,
-                  scheduledStart: activity.start,
-                  scheduledEnd: activity.end,
-                  slaMinutes: activity.durationMinutes,
-                  evidence: activity.evidence,
-                })
-              }
-              onComplete={completeActivityRun}
-              onCaptureEvidence={(evidence) => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, evidence)}
-              onClearEvidence={() => setActivityEvidence(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`, undefined)}
-              onCapturePhoto={(phase,evidence) => setActivityPhoto(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`,phase,evidence)}
-              onClearPhoto={(phase) => setActivityPhoto(runFor("Actividad", activity.id)?.id ?? `${user.id}-${today}-Actividad-${activity.id}`,phase,undefined)}
-            />
-            {activity.instructions && <p className="muted"><strong>Instrucciones:</strong> {activity.instructions}</p>}
-            </div>
-          ))}
+          {slots.map(slot => {
+            const run = findSlotRun(slot, ownRuns);
+            return <div className="scheduledMission" key={slot.key}>
+              <LiveActivityCard title={slot.title} scheduledStart={slot.start} scheduledEnd={slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
+                onStart={() => startActivityRun({ itemType: run?.itemType ?? (slot.kind === "Aseo" ? "Aseo" : "Actividad"), itemId: run?.itemId ?? slot.itemId, title: slot.title, scheduledStart: slot.start, scheduledEnd: slot.end, slaMinutes: slot.slaMinutes, evidence: slot.evidence })}
+                onComplete={completeActivityRun}
+                onCaptureEvidence={value => { if (run) setActivityEvidence(run.id, value); }} onClearEvidence={() => { if (run) setActivityEvidence(run.id, undefined); }}
+                onCapturePhoto={(phase, value) => { if (run) setActivityPhoto(run.id, phase, value); }} onClearPhoto={phase => { if (run) setActivityPhoto(run.id, phase, undefined); }} />
+              <p className="muted">{slot.instructions}</p>
+            </div>;
+          })}
+          {!slots.length && <p>{workLocation === "Sucursal Centro" ? "Consulta tu agenda y evidencias en Operación Centro." : "Sin rutina asignada. Consulta a tu responsable."}</p>}
+
         </div>
       </article>
 
@@ -3671,6 +3618,7 @@ function LiveActivityCard({
   const needsEvidence = Boolean(evidence && evidence !== "none");
   const evidenceReady = !needsEvidence || (evidence === "photo" ? Boolean(run?.beforeEvidenceCapture && run?.afterEvidenceCapture) : Boolean(run?.evidenceCapture));
   const inProgress = Boolean(run?.startedAt) && !run?.completedAt;
+  const needsRepair = Boolean(run?.completedAt) && !evidenceReady;
   return (
     <div className="taskRow liveActivityRow">
       <span>
@@ -3679,8 +3627,8 @@ function LiveActivityCard({
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
-        {inProgress && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
-        {inProgress && needsEvidence && evidence !== "photo" && (
+        {(inProgress || needsRepair) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
+        {(inProgress || needsRepair) && needsEvidence && evidence !== "photo" && (
           <EvidenceField
             evidence={evidence}
             value={run?.evidenceCapture}
@@ -4082,12 +4030,14 @@ function OrgView({ collaborators }: { collaborators: Employee[] }) {
 }
 
 function ProcessesView({
+  onNavigate,
   user,
   collaborators,
   processInstances,
   setProcessInstances,
   notify,
 }: {
+  onNavigate: (view: string) => void;
   user: Employee;
   collaborators: Employee[];
   processInstances: ProcessInstance[];
@@ -4095,6 +4045,7 @@ function ProcessesView({
   notify: (title: string, message: string, recipientId: string | undefined, priority?: InternalRequest["priority"]) => void;
 }) {
   const startProcess = (processId: string, ownerId: string, notes: string) => {
+    if (processId === "apertura-centro") { onNavigate("operacion-centro"); return; }
     const process = processes.find((item) => item.id === processId);
     if (!process) return;
     const next: ProcessInstance = {
@@ -4134,7 +4085,7 @@ function ProcessesView({
       <article className="panelCard">
         <div className="sectionHead">
           <div>
-            <h2>Procesos activos</h2>
+            <h2>Procesos activos</h2><p>La rutina diaria de Centro se captura una sola vez en Operación Centro. Los registros anteriores se conservan.</p><button className="ghost" onClick={() => onNavigate("operacion-centro")}>Abrir Operación Centro</button>
             <span>Se abren al momento de ejecutar la actividad</span>
           </div>
           <strong>{activeInstances.length}</strong>
@@ -4260,7 +4211,7 @@ function ProcessesView({
       </article>
 
       <section className="processGrid">
-        {processes.map((process) => (
+        {processes.filter(process => process.id !== "apertura-centro").map((process) => (
           <ProcessCard key={process.id} process={process} user={user} owners={availableOwners} startProcess={startProcess} />
         ))}
       </section>
@@ -5323,16 +5274,16 @@ function KpiDashboard({ user, collaborators, records, saveRecord }: {
   const currentMonth = todayKey().slice(0,7);
   const [month, setMonth] = useState(currentMonth); const [branch, setBranch] = useState("Todas"); const [role, setRole] = useState("TODOS");
   const visible = records.filter((item)=>item.month===month&&(branch==="Todas"||item.branch===branch)&&(role==="TODOS"||item.role===role));
-  const compliance = (item: KpiRecord) => item.target <= 0 ? 0 : Math.max(0, Math.min(200, item.direction==="Mayor es mejor" ? item.actual/item.target*100 : item.actual<=0 ? 200 : item.target/item.actual*100));
+  const compliance = (item: KpiRecord) => kpiCompliance(item) ?? 0;
   const average = visible.length ? visible.reduce((sum,item)=>sum+compliance(item),0)/visible.length : 0;
   const green = visible.filter((item)=>compliance(item)>=100).length; const yellow = visible.filter((item)=>compliance(item)>=85&&compliance(item)<100).length; const red = visible.filter((item)=>compliance(item)<85).length;
   const canManage = canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);
   const suggestions = ["Ventas","Margen bruto","Ticket promedio","Exactitud de inventario","Diferencias de inventario","Productos agotados","Rotación de inventario","Gastos sobre ventas","Cotizaciones convertidas","Clientes nuevos","Asistencia","Tareas cumplidas","SLA cumplido","Garantías resueltas","Cuentas vencidas","Conciliación bancaria"];
   return <section className="stack">
     <article className="panelCard"><div className="sectionHead"><div><h2>Tablero de cumplimiento</h2><span>Meta contra resultado real por responsable.</span></div></div><div className="reportFilters"><label>Mes<input type="month" value={month} onChange={(event)=>setMonth(event.target.value)}/></label><label>Sucursal<select value={branch} onChange={(event)=>setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Puesto<select value={role} onChange={(event)=>setRole(event.target.value)}><option value="TODOS">Todos</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label></div></article>
-    <div className="grid"><Metric label="Cumplimiento promedio" value={`${average.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
-    {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><div className="kpiFormGrid"><label>Mes<input name="month" type="month" defaultValue={currentMonth} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" defaultValue="0" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
-    <article className="panelCard"><div className="sectionHead"><div><h2>Matriz de KPIs</h2><span>{month} · {branch} · {role==="TODOS"?"Todos los puestos":roleLabel(role as Role)}</span></div><strong>{visible.length} indicadores</strong></div><div className="operationTable kpiTable"><div className="operationRow head"><span>Indicador</span><span>Responsable</span><span>Meta</span><span>Real</span><span>Cumplimiento</span><span>Semáforo</span></div>{visible.map((item)=>{const percent=compliance(item);return <div className="operationRow" key={item.id}><span><strong>{item.name}</strong><small>{item.area} · {item.frequency}</small></span><span>{item.employeeId?collaborators.find((employee)=>employee.id===item.employeeId)?.name||item.employeeId:item.role==="TODOS"?item.branch:roleLabel(item.role)}</span><span>{item.unit==="$"?"$":""}{item.target.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><span>{item.unit==="$"?"$":""}{item.actual.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><strong>{percent.toFixed(0)}%</strong><span className={`statusPill ${percent>=100?"success":percent>=85?"warning":"danger"}`}>{percent>=100?"Correcto":percent>=85?"Atención":"Intervención"}</span></div>})}{visible.length===0&&<p className="muted">No hay indicadores capturados para estos filtros.</p>}</div></article>
+    <div className="grid"><Metric label="Promedio de metas registradas" value={`${average.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
+    {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><p>Diario: la fecha elegida. Semanal: siete días desde esa fecha. Mensual: el mes completo. Una captura del mismo indicador, periodo y responsable actualiza ese resultado.</p><div className="kpiFormGrid"><label>Inicio de medición<input name="periodStart" type="date" defaultValue={todayKey()} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" placeholder="Resultado medido" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
+    <article className="panelCard"><div className="sectionHead"><div><h2>Matriz de KPIs</h2><span>{month} · {branch} · {role==="TODOS"?"Todos los puestos":roleLabel(role as Role)}</span></div><strong>{visible.length} indicadores</strong></div><div className="operationTable kpiTable"><div className="operationRow head"><span>Indicador</span><span>Responsable</span><span>Meta</span><span>Real</span><span>Cumplimiento</span><span>Semáforo</span></div>{visible.map((item)=>{const percent=compliance(item);return <div className="operationRow" key={item.id}><span><strong>{item.name}</strong><small>{item.area} · {item.frequency} · {item.periodStart ? `${item.periodStart} a ${item.periodEnd}` : `Registro anterior de ${item.month}: periodo no confirmado`}</small></span><span>{item.employeeId?collaborators.find((employee)=>employee.id===item.employeeId)?.name||item.employeeId:item.role==="TODOS"?item.branch:roleLabel(item.role)}</span><span>{item.unit==="$"?"$":""}{item.target.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><span>{item.unit==="$"?"$":""}{item.actual.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><strong>{percent.toFixed(0)}%</strong><span className={`statusPill ${percent>=100?"success":percent>=85?"warning":"danger"}`}>{percent>=100?"Correcto":percent>=85?"Atención":"Intervención"}</span></div>})}{visible.length===0&&<p className="muted">No hay indicadores capturados para estos filtros.</p>}</div></article>
   </section>;
 }
 
@@ -5360,9 +5311,9 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
   const deductible = movements.filter((item) => item.deductible).reduce((sum, item) => sum + item.amount, 0);
   const noInvoice = movements.filter((item) => !item.hasInvoice && item.type !== "Deposito").reduce((sum, item) => sum + item.amount, 0);
   const selectedBudgets = monthlyBudgets.filter((item) => item.month === month && inBranch(item.branch));
-  const budgetRows = Array.from(new Set([...selectedBudgets.map((item)=>item.category), ...movements.filter((item)=>item.type!=="Deposito").map((item)=>item.category||"Sin clasificar")])).map((category) => {
+  const budgetRows = Array.from(new Set([...selectedBudgets.map((item)=>item.category), ...movements.filter((item)=>item.type!=="Deposito" && item.type!=="Transferencia").map((item)=>item.category||"Sin clasificar")])).map((category) => {
     const budget = selectedBudgets.filter((item)=>item.category===category).reduce((sum,item)=>sum+item.amount,0);
-    const actual = movements.filter((item)=>item.type!=="Deposito" && (item.category||"Sin clasificar")===category).reduce((sum,item)=>sum+item.amount,0);
+    const actual = movements.filter((item)=>item.type!=="Deposito" && item.type!=="Transferencia" && (item.category||"Sin clasificar")===category).reduce((sum,item)=>sum+item.amount,0);
     return { category, budget, actual, variance: budget-actual, percentage: budget ? (actual/budget)*100 : actual ? 100 : 0 };
   });
   const totalBudget = selectedBudgets.reduce((sum,item)=>sum+item.amount,0);

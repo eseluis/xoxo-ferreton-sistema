@@ -12,7 +12,7 @@ export type CentroRecord = {
   history: { at: string; actor: string; action: string; note: string }[];
   updated_at: string;
 };
-export type CentroField = { key: string; label: string; type?: "number" | "check" | "text"; required?: boolean };
+export type CentroField = { key: string; label: string; type?: "number" | "check" | "text" | "photo"; required?: boolean };
 export type CentroTask = { id: string; title: string; start: string; end: string; category: string; instructions: string; fields: CentroField[]; control?: boolean; outdoor?: boolean; inventory?: boolean; evidence?: boolean };
 const n = (key: string, label: string): CentroField => ({ key, label, type: "number" });
 const t = (key: string, label: string, required = false): CentroField => ({ key, label, required });
@@ -20,7 +20,7 @@ const check = (key: string, label: string): CentroField => ({ key, label, type: 
 export const CENTRO_PROJECTS = ["Instalar cerradura inteligente en puerta de madera", "Asignar mínimo 20 códigos a la cerradura", "Colocar puerta en entrada de escaleras", "Colocar flyer/vinil en puerta", "Instalar iluminación inteligente en escalera", "Instalar iluminación inteligente en pasillo", "Colocar repisas en nuevas zonas", "Colocar ganchos en nuevas zonas", "Acomodar mercancía nueva", "Ordenar mercancía por marca"];
 export const CENTRO_TASKS: CentroTask[] = [
   { id: "apertura", title: "Apertura oficial", start: "08:50", end: "09:10", category: "Apertura", control: true, instructions: "La apertura se confirma en el control existente: venta lista para cobrar, sesión Xoxo, checklist completo y puerta abierta. Ventana correcta: 8:50–9:10. Sin descuentos económicos automáticos.", fields: [t("incidencias", "Incidencias de apertura")] },
-  ...[1, 2].map(i => ({ id: `aseo-${i}`, title: `Aseo · parte ${i}`, start: "09:00", end: "09:30", category: "Aseo", instructions: "Alternar piso y baños cada día. Intercambiar barrer/trapear o baño 1/baño 2. Fotografías solo para incidencias, corrección especial o auditoría.", fields: [check("realizado", "Aseo realizado"), t("incidencias", "Incidencias encontradas")] })),
+  ...[1, 2].map(i => ({ id: `aseo-${i}`, title: `Aseo · parte ${i}`, start: "09:00", end: "09:30", category: "Aseo", instructions: "Alternar piso y baños cada día. Intercambiar barrer/trapear o baño 1/baño 2. Registrar fotos de antes y después en esta misma actividad; no repetir el aseo en otro módulo.", fields: [{ key: "fotoAntes", label: "Foto antes del aseo", type: "photo" as const, required: true }, { key: "fotoDespues", label: "Foto después del aseo", type: "photo" as const, required: true }, check("realizado", "Aseo realizado"), t("incidencias", "Incidencias encontradas")] })),
   { id: "presentacion", title: "Mostradores y entrada", start: "09:30", end: "10:00", category: "Exhibición", instructions: "Limpiar mostradores y exhibición, retirar objetos ajenos, regresar productos a su ubicación y cuidar la primera impresión.", fields: [check("mostradores", "Mostradores listos"), check("entrada", "Entrada lista"), t("precios", "Precios faltantes"), t("fuera", "Productos fuera de lugar"), t("vacios", "Espacios vacíos detectados")] },
   ...[1, 2].map(i => ({ id: `inventario-${i}`, title: `Inventario · 25 códigos (${i}/2)`, start: "10:00", end: "11:00", category: "Inventario", inventory: true, instructions: "Meta sucursal: 50 códigos distintos. Revisar código, descripción, existencia física/sistema, precio, ubicación, etiqueta y alta. Error → corrección → evidencia → responsable → validación. Atender clientes y retomar sin perder avances.", fields: [t("pendientes", "Correcciones pendientes")] })),
   ...[1, 2].map(i => ({ id: `trafico-${i}`, title: `Generación de tráfico · turno ${i}`, start: i === 1 ? "11:00" : "12:00", end: i === 1 ? "12:00" : "13:00", category: "Tráfico", outdoor: true, instructions: "Preparar propuesta antes de salir. Solo una persona afuera y otra disponible en tienda. En modo reducido: seguimientos digitales e invitaciones desde tienda.", fields: [t("propuesta", "¿Qué harás, dónde, a quién y qué ofrecerás?", true), n("metaContactos", "Meta de contactos"), t("herramientas", "Herramientas necesarias", true), n("contactados", "Personas contactadas"), n("negocios", "Negocios visitados"), n("contactos", "Contactos obtenidos"), n("interesados", "Interesados"), n("cotizaciones", "Cotizaciones generadas"), n("visitas", "Posibles visitas"), t("aprendizaje", "¿Qué aprendiste?", true)] })),
@@ -96,8 +96,9 @@ export function centroSummary(records: CentroRecord[]) {
   const data = (id: string) => records.find(r => r.task_id === id)?.data ?? {};
   const attention = data("atencion");
   const inventory = records.filter(r => r.task_id.startsWith("inventario-")).flatMap(r => Array.isArray(r.data.items) ? r.data.items : []);
-  const visitors = Number(attention.visitantes ?? 0), buyers = Number(attention.compradores ?? 0), tickets = Number(attention.tickets ?? 0), sales = Number(attention.ventas ?? 0);
-  return { visitors, buyers, tickets, sales, conversion: visitors ? buyers / visitors * 100 : 0, averageTicket: tickets ? sales / tickets : 0,
+  const measured = (key: string) => attention[key] === undefined || attention[key] === "" || !Number.isFinite(Number(attention[key])) ? null : Number(attention[key]);
+  const visitors = measured("visitantes"), buyers = measured("compradores"), tickets = measured("tickets"), sales = measured("ventas");
+  return { visitors, buyers, tickets, sales, conversion: visitors && buyers !== null ? buyers / visitors * 100 : null, averageTicket: tickets && sales !== null ? sales / tickets : null,
     inventory: new Set(inventory.map(i => i.code.trim().toLowerCase()).filter(Boolean)).size,
     validated: records.filter(r => r.status === "Validada").length,
     tomorrow: ["producto1", "producto2", "producto3"].filter(key => String(data("manana")[key] ?? "").trim()).length,
