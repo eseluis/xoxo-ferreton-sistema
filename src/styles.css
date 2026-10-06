@@ -2345,3 +2345,13 @@ textarea {
   .projectPhases { grid-template-columns: 1fr; }
   .calendarControls label { min-width: 0; flex: 1 1 160px; }
 }
+/* Daily assignment overview */
+.todayActivitiesFilters { display: flex; flex-wrap: wrap; gap: 16px; }
+.todayActivitiesFilters label { display: grid; gap: 6px; flex: 1 1 180px; }
+.todayActivitiesTable { overflow-x: auto; }
+.todayActivitiesTable table { width: 100%; border-collapse: collapse; min-width: 720px; }
+.todayActivitiesTable th, .todayActivitiesTable td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
+.todayActivitiesTable small { display: block; margin-top: 4px; }
+.taskSummaryCards { display: grid; grid-template-columns: repeat(auto-fit, minmax(115px, 1fr)); gap: 10px; margin-top: 16px; }
+.taskSummaryCards button { display: grid; gap: 6px; padding: 14px; text-align: left; }
+.taskSummaryCards strong { font-size: 24px; }

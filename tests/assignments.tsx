@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { EvidenceCaptured, RequestsView, TasksView, MyWorkFocus } from "../src/App";
 import { defaultEmployees, defaultActivitySchedules, defaultShiftConfigs, type DailyTask } from "../src/data";
+import { TodayAssignedActivities } from "../src/TodayAssignedActivities";
 import "../src/styles.css";
 
 const manager = defaultEmployees.find((employee) => employee.id === "003")!;
@@ -21,6 +22,7 @@ function Fixture() {
     status: "Abierta" as const, confidentiality: "Normal" as const, response: "",
   }]);
   return <main style={{ padding: 24 }}><h1>Pruebas locales · no se guardan datos</h1>
+    <TodayAssignedActivities user={manager} collaborators={defaultEmployees} tasks={tasks} onNavigate={() => {}} />
     <MyWorkFocus user={colleague} date="2026-08-30" location={colleague.branch} schedules={defaultActivitySchedules} tasks={tasks} runs={[]} shift={defaultShiftConfigs.find(shift => shift.key === colleague.shift)} onNavigate={() => {}} />
     <EvidenceCaptured value={picture} label="Evidencia de prueba" readOnly onClear={() => {}} retakeLabel="" />
     <TasksView user={manager} collaborators={defaultEmployees} dailyTasks={tasks} setDailyTasks={setTasks} onRemoveTask={task => setTasks(current => current.filter(item => item.id !== task.id))} workLocations={[]} assignWorkLocation={() => {}} />

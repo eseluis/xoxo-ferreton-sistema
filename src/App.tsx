@@ -1,3 +1,6 @@
+import { TodayAssignedActivities } from "./TodayAssignedActivities";
+import { TaskSummary } from "./TaskSummary";
+import { taskMatchesFilter, taskOverdueReason } from "./taskOverview";
 import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
 import {
   AlertTriangle,
@@ -2590,6 +2593,7 @@ function Dashboard({
     return <section className="grid">
       {myWorkFocus}
       {openingBoard}
+      <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Consulta tu horario asignado y la agenda dinámica de Centro. Apertura completa: 8:50–9:10.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
@@ -2611,6 +2615,7 @@ function Dashboard({
     <section className="grid">
       {myWorkFocus}
       {openingBoard}
+      <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
       <Metric label="Evaluacion promedio" value={average ? average.toFixed(1) : "0.0"} icon={<BarChart3 />} />
@@ -5050,19 +5055,22 @@ export function TasksView({
   };
 
   const [reviewEmployee, setReviewEmployee] = useState("Todos");
+  const [taskOverviewNow, setTaskOverviewNow] = useState(() => new Date());
+  useEffect(() => { const timer = window.setInterval(() => setTaskOverviewNow(new Date()), 15000); return () => window.clearInterval(timer); }, []);
   const visibleTasks = canViewAll(user)
     ? dailyTasks
     : dailyTasks.filter((task) => task.employeeId === user.id || task.assignedById === user.id);
-  const reviewedTasks = visibleTasks
-    .filter((task) => reviewStatus === "Todas" || task.status === reviewStatus)
+  const summaryTasks = visibleTasks
     .filter((task) => reviewEmployee === "Todos" || task.employeeId === reviewEmployee)
     .filter((task) => (!dateFrom || task.date >= dateFrom) && (!dateTo || task.date <= dateTo))
-    .sort((a, b) => b.date.localeCompare(a.date) || (b.assignedAt || "").localeCompare(a.assignedAt || ""));
+  const reviewedTasks = summaryTasks.filter(task => taskMatchesFilter(task, reviewStatus, taskOverviewNow))
+    .sort((a, b) => Number(Boolean(taskOverdueReason(b, taskOverviewNow))) - Number(Boolean(taskOverdueReason(a, taskOverviewNow))) || b.date.localeCompare(a.date) || (b.assignedAt || "").localeCompare(a.assignedAt || ""));
   const canDirectAllTasks = ["001", "002", "003"].includes(user.id);
   const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.id === "006");
 
   return (
     <section className="grid two">
+      <article className="wide panelCard"><h2>Resumen completo de tareas</h2><TaskSummary tasks={summaryTasks} now={taskOverviewNow} onFilter={setReviewStatus} /></article>
       {!isAuxiliary && <form className="panelCard form" onSubmit={addTask}>
         <h2>Asignar tarea</h2>
         <p className="muted">Puedes complementar una actividad de rutina en el mismo horario. No se permite otra tarea asignada que se cruce, incluso parcialmente.</p>
@@ -5109,7 +5117,7 @@ export function TasksView({
         <div className="sectionHead">
           <div><h2>Historial y seguimiento de tareas</h2><span>{reviewedTasks.length} tareas · Asignadas, en proceso, incidencias y terminadas.</span></div>
           <span className="inlineTimes">
-            <select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select>
+            <select value={reviewStatus} onChange={(event)=>setReviewStatus(event.target.value)}><option>Todas</option><option>Vencidas</option><option>Sin terminar</option><option>Pendiente</option><option>En proceso</option><option>Completada</option><option>Incidencia</option><option>Pausada</option></select>
           </span>
         </div>
         <HistoryFilters from={dateFrom} to={dateTo} employee={reviewEmployee} employees={collaborators.filter((person) => visibleTasks.some((task) => task.employeeId === person.id))} onFrom={setDateFrom} onTo={setDateTo} onEmployee={setReviewEmployee} />
@@ -5134,7 +5142,7 @@ export function TasksView({
                   <small>Fecha: {task.date} · Asignó {collaborators.find((employee) => employee.id === task.assignedById)?.name ?? task.assignedById}{task.assignedAt ? ` · ${new Date(task.assignedAt).toLocaleString("es-MX", { timeZone: "America/Mexico_City" })}` : ""}</small>
                   {canDirectAllTasks ? <span className="inlineTimes"><input type="time" value={task.start} onChange={(event)=>updateTaskPatch(task.id,{start:event.target.value})}/><input type="time" value={task.end} onChange={(event)=>updateTaskPatch(task.id,{end:event.target.value})}/></span> : <small>{task.start}-{task.end}</small>}
                 </span>
-                <strong className={task.paused ? "danger" : ""}>{task.status}</strong>
+                <div><strong className={task.paused ? "danger" : ""}>{task.status}</strong>{taskOverdueReason(task, taskOverviewNow) && <p className="statusPill danger">Vencida · {taskOverdueReason(task, taskOverviewNow)}</p>}</div>
               </div>
               <TaskDescription task={task} />
               {canDirectAllTasks && <label>Editar descripción e instrucciones<textarea value={task.notes} onChange={(event)=>updateTaskPatch(task.id,{notes:event.target.value})} placeholder="Qué hacer, pasos a seguir y resultado esperado"/></label>}
