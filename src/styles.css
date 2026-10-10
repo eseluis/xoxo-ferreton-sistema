@@ -672,6 +672,20 @@ h2 {
   display: block;
 }
 
+.cleaningQuickEvidence {
+  margin-bottom: 12px;
+}
+
+.cleaningQuickEvidence > button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+.cleaningQuickEvidence > div {
+  margin-top: 12px;
+}
+
 .punchGrid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

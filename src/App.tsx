@@ -606,13 +606,13 @@ const load = <T,>(key: string, fallback: T): T => {
 };
 
 let lastCloudMutationAt = 0;
-const save = (key: string, value: unknown) => {
+const save = (key: string, value: unknown, changes?: unknown[]) => {
   lastCloudMutationAt = Date.now();
   try { localStorage.setItem(key, JSON.stringify(value)); } catch (error) {
     console.error("No se pudo actualizar el respaldo local", error);
   }
   let revision: string | undefined;
-  try { revision = markCloudPending(key, value); } catch (error) {
+  try { revision = markCloudPending(key, value, changes); } catch (error) {
     console.error("No se pudo preparar el respaldo pendiente", error);
   }
   void cloudSave(key, value)
@@ -1055,10 +1055,12 @@ function App() {
       if (Date.now() - lastCloudMutationAt > 30000) void refreshOperationalState();
     };
     const flushOnOnline = () => void flushPendingCloudSaves();
+    const retryInterval = window.setInterval(flushOnOnline, 30000);
     window.addEventListener("focus", refreshOnFocus);
     window.addEventListener("online", flushOnOnline);
     return () => {
       window.clearInterval(interval);
+      window.clearInterval(retryInterval);
       window.removeEventListener("focus", refreshOnFocus);
       window.removeEventListener("online", flushOnOnline);
     };
@@ -1364,7 +1366,9 @@ function App() {
     const updated = { ...existing, ...patch, managerId: user.id };
     const next = [...latest.filter((item)=>item.id!==id), updated];
     setStoreOpeningChecks(next);
-    save("xoxo.storeOpeningChecks", next);
+    // Conservar también los borrados explícitos (undefined se pierde en JSON).
+    const fields = Object.fromEntries(Object.entries(patch).map(([field, value]) => [field, value ?? null]));
+    save("xoxo.storeOpeningChecks", next, [{ ...fields, id, branch, date: today, managerId: user.id }]);
 
     // El gerente autoriza la apertura final (openedAt) sólo cuando ya se hizo el checklist
     // completo (puertas, personal, cajera + ERP Visorus, sistemas). Si eso ocurre entre 8:00
@@ -2920,7 +2924,7 @@ function TeamActivityRow({
   );
 }
 
-function AttendanceView({
+export function AttendanceView({
   user,
   attendance,
   dailyClosures,
@@ -2988,6 +2992,18 @@ function AttendanceView({
   const today = todayKey();
   const slots = buildRoutine(user, activitySchedules, cleaningRows, workLocation, today);
   const ownRuns = activityRuns.filter(run => run.employeeId === user.id && run.date === today);
+  const [cleaningEvidenceSlot, setCleaningEvidenceSlot] = useState<string>();
+  const startSlot = (slot: (typeof slots)[number]) => {
+    const run = findSlotRun(slot, ownRuns);
+    startActivityRun({ itemType: run?.itemType ?? (slot.kind === "Aseo" ? "Aseo" : "Actividad"), itemId: run?.itemId ?? slot.itemId, title: slot.title, scheduledStart: slot.start, scheduledEnd: slot.end, slaMinutes: slot.slaMinutes, evidence: slot.evidence });
+  };
+  const renderSlot = (slot: (typeof slots)[number]) => {
+    const run = findSlotRun(slot, ownRuns);
+    return <LiveActivityCard title={slot.title} scheduledStart={slot.start} scheduledEnd={slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
+      onStart={() => startSlot(slot)} onComplete={completeActivityRun}
+      onCaptureEvidence={value => { if (run) setActivityEvidence(run.id, value); }} onClearEvidence={() => { if (run) setActivityEvidence(run.id, undefined); }}
+      onCapturePhoto={(phase, value) => { if (run) setActivityPhoto(run.id, phase, value); }} onClearPhoto={phase => { if (run) setActivityPhoto(run.id, phase, undefined); }} />;
+  };
   const attendanceLog = attendance
     .flatMap((entry) => ([
       entry.in ? { employeeId: entry.employeeId, date: entry.date, time: entry.in, event: "Entrada" } : undefined,
@@ -3030,7 +3046,21 @@ function AttendanceView({
             <strong>{cleaningAssignment}</strong>
           </div>
         </div>
-        <p className="muted">El aseo se realiza una sola vez en la agenda de abajo, con cronómetro y fotos de antes y después. La atención al cliente tiene prioridad.</p>
+        {slots.filter(slot => slot.kind === "Aseo").map(slot => {
+          const run = findSlotRun(slot, ownRuns);
+          const expanded = cleaningEvidenceSlot === slot.key;
+          return <div className="cleaningQuickEvidence" key={slot.key}>
+            <button type="button" className="primary compact" aria-expanded={expanded} aria-controls={`cleaning-evidence-${slot.key}`} onClick={() => {
+              if (!expanded && !run?.startedAt) startSlot(slot);
+              setCleaningEvidenceSlot(expanded ? undefined : slot.key);
+            }}><Camera size={16} /> {expanded ? "Ocultar evidencia" : run?.beforeEvidenceCapture && run?.afterEvidenceCapture ? "Ver evidencia" : "Tomar o subir evidencia"}{slots.filter(item => item.kind === "Aseo").length > 1 ? ` · ${slot.title}` : ""}</button>
+            {expanded && <div id={`cleaning-evidence-${slot.key}`}>
+              {renderSlot(slot)}
+              <p className="muted">{slot.instructions}</p>
+            </div>}
+          </div>;
+        })}
+        <p className="muted">Toma o sube las fotos de antes y después aquí mismo. El botón inicia el aseo si está pendiente; cada foto se guarda en el mismo registro de la agenda. La atención al cliente tiene prioridad.</p>
         {(() => {
           const nowMinutes = timeToMinutes(timeNow());
           const arrivalBlocked = workLocation !== "Sucursal Centro" && !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;
@@ -3083,13 +3113,8 @@ function AttendanceView({
         </div>
         <div className="taskList liveList">
           {slots.map(slot => {
-            const run = findSlotRun(slot, ownRuns);
             return <div className="scheduledMission" key={slot.key}>
-              <LiveActivityCard title={slot.title} scheduledStart={slot.start} scheduledEnd={slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
-                onStart={() => startActivityRun({ itemType: run?.itemType ?? (slot.kind === "Aseo" ? "Aseo" : "Actividad"), itemId: run?.itemId ?? slot.itemId, title: slot.title, scheduledStart: slot.start, scheduledEnd: slot.end, slaMinutes: slot.slaMinutes, evidence: slot.evidence })}
-                onComplete={completeActivityRun}
-                onCaptureEvidence={value => { if (run) setActivityEvidence(run.id, value); }} onClearEvidence={() => { if (run) setActivityEvidence(run.id, undefined); }}
-                onCapturePhoto={(phase, value) => { if (run) setActivityPhoto(run.id, phase, value); }} onClearPhoto={phase => { if (run) setActivityPhoto(run.id, phase, undefined); }} />
+              {renderSlot(slot)}
               <p className="muted">{slot.instructions}</p>
             </div>;
           })}
@@ -3632,7 +3657,7 @@ function LiveActivityCard({
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
-        {(inProgress || needsRepair) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
+        {(inProgress || needsRepair || run?.completedAt) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} readOnly={Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} readOnly={Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
         {(inProgress || needsRepair) && needsEvidence && evidence !== "photo" && (
           <EvidenceField
             evidence={evidence}

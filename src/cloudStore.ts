@@ -24,7 +24,7 @@ const mutationQueues = new Map<string, Promise<void>>();
 // potentially stale assignments from another collaborator's session.
 const observedRows = new Map<string, Map<string, string>>();
 const assignmentModule = (key: string) => key === "xoxo.dailyTasks" || key === "xoxo.internalRequests";
-const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances" || key === "xoxo.kpiRecords";
+const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances" || key === "xoxo.kpiRecords" || key === "xoxo.cashSessions" || key === "xoxo.cashCuts";
 const localVersions = new Map<string, number>();
 function changedRows(key: string, value: unknown): unknown[] | undefined {
   if (!incrementalModule(key) || !Array.isArray(value)) return undefined;
@@ -73,13 +73,17 @@ function pendingRecord<T>(key: string): PendingRecord<T> | undefined {
   }
 }
 
-export function markCloudPending(key: string, value: unknown): string {
+export function markCloudPending(key: string, value: unknown, explicitChanges?: unknown[]): string {
   const revision = crypto.randomUUID();
-  const delta = changedRows(key, value);
+  const delta = explicitChanges ?? changedRows(key, value);
   const previous = pendingRecord(key);
-  const changes = delta === undefined ? undefined : Array.from(new Map(
-    [...(previous?.changes ?? []), ...delta].map((row) => [String((row as { id: string }).id), row]),
-  ).values());
+  const combined = new Map<string, unknown>();
+  for (const row of [...(previous?.changes ?? []), ...(delta ?? [])]) {
+    const id = String((row as { id: string }).id);
+    combined.set(id, key === "xoxo.storeOpeningChecks"
+      ? { ...(combined.get(id) as object ?? {}), ...(row as object) } : row);
+  }
+  const changes = delta === undefined ? undefined : Array.from(combined.values());
   if (typeof window !== "undefined") {
     window.localStorage.setItem(pendingStorageKey(key), JSON.stringify({ revision, value, changes }));
   }
@@ -215,7 +219,9 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
     rememberRows(key, rows);
     return rows as T;
   }
+  const version = localVersions.get(key);
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
+  if (version !== localVersions.get(key)) return pendingRecord<T>(key)?.value ?? fallback;
   if (error || !data) return fallback;
   return data.value as T;
 }
@@ -239,7 +245,9 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
     rememberRows(key, rows);
     return rows as T;
   }
+  const version = localVersions.get(key);
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
+  if (version !== localVersions.get(key)) return undefined;
   if (error || !data) return undefined;
   return data.value as T;
 }
@@ -263,6 +271,13 @@ async function performCloudSave(key: string, value: unknown, changes?: unknown[]
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
+  if (key === "xoxo.storeOpeningChecks") {
+    // Nunca reemplazar la lista compartida: cada acción modifica sólo sus campos.
+    const { error } = await supabase.rpc("patch_store_opening_checks", { records: changes ?? value });
+    if (error?.code === "PGRST202") throw new Error("Falta aplicar supabase-fix-opening-sync.sql. La apertura sigue pendiente de confirmar.");
+    if (error) throw error;
+    return;
+  }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const rows = changes ?? value;
@@ -319,6 +334,7 @@ export async function flushPendingCloudSaves(): Promise<void> {
     try {
       await cloudSave(key, pending.value, pending.changes);
       clearCloudPending(key, pending.revision);
+      if (!pendingRecord(key)) window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } }));
     } catch {
       // Se conserva para el siguiente intento automático.
     }
