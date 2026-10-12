@@ -1,3 +1,5 @@
+import { RequestsPanel } from "./RequestsPanel";
+import { requestPending, requestsInSection, type InternalRequest } from "./requestOverview";
 import { TodayAssignedActivities } from "./TodayAssignedActivities";
 import { WeeklyManagementAgenda } from "./WeeklyManagementAgenda";
 import { TaskSummary } from "./TaskSummary";
@@ -354,21 +356,7 @@ type ProcessInstance = {
   stockingAssigneeId?: string;
 };
 
-type InternalRequest = {
-  id: string;
-  type: "Solicitud" | "Queja" | "Peticion" | "Reporte";
-  title: string;
-  message: string;
-  requestedById: string;
-  recipientId: string;
-  date: string;
-  priority: "Baja" | "Media" | "Alta" | "Critica";
-  status: "Abierta" | "En revision" | "Atendida" | "Cerrada";
-  confidentiality: "Normal" | "Confidencial";
-  response: string;
-  respondedAt?: string;
-  respondedById?: string;
-};
+
 
 type SlaState = "Pendiente" | "En curso" | "Por vencer" | "Vencida" | "Completada" | "Completada con retraso" | "Pausada";
 
@@ -541,10 +529,10 @@ type ActivitySchedule = (typeof defaultActivitySchedules)[number];
 type CleaningRole = (typeof defaultCleaningRole)[number];
 type Branch = Employee["branch"];
 
-const auxiliaryViews = new Set(["panel", "calendario", "asistencia", "tareas", "solicitudes", "instructivo"]);
+const auxiliaryViews = new Set(["panel", "calendario", "asistencia", "tareas", "solicitudes", "reportes-internos", "instructivo"]);
 const areaLeaderViews = new Set([
   "panel", "calendario", "kpis", "asistencia", "organigrama", "procesos", "auditorias",
-  "evaluacion", "garantias", "tareas", "solicitudes", "instructivo",
+  "evaluacion", "garantias", "tareas", "solicitudes", "reportes-internos", "instructivo",
 ]);
 
 function canAccessView(employee: Employee, targetView: string) {
@@ -2053,8 +2041,9 @@ function App() {
             <ClipboardList size={18} /> Tareas
           </button>
           <button className={view === "solicitudes" ? "active" : ""} onClick={() => navigate("solicitudes")}>
-            <MessageSquare size={18} /> Solicitudes
+            <MessageSquare size={18} /> Solicitudes ({requestsInSection(internalRequests, user, false).filter(request => request.recipientId === user.id && requestPending(request)).length})
           </button>
+          <button className={view === "reportes-internos" ? "active" : ""} onClick={() => navigate("reportes-internos")}><FileText size={18} /> Reportes internos</button>
           {canAccessView(user, "reportes") && <button className={view === "reportes" ? "active" : ""} onClick={() => navigate("reportes")}>
             <FileText size={18} /> Reportes
           </button>}
@@ -2104,6 +2093,7 @@ function App() {
             cleaningRole={cleaningRole}
             collaborators={collaborators}
             dailyTasks={dailyTasks}
+            internalRequests={internalRequests}
             activityRuns={activityRuns}
             shiftMap={shiftMap}
             activitySchedules={activitySchedules}
@@ -2260,8 +2250,8 @@ function App() {
             assignWorkLocation={assignWorkLocation}
           />
         )}
-        {view === "solicitudes" && (
-          <RequestsView
+        {(view === "solicitudes" || view === "reportes-internos") && (
+          <RequestsView key={view} reports={view === "reportes-internos"}
             user={user}
             collaborators={collaborators}
             internalRequests={internalRequests}
@@ -2380,7 +2370,8 @@ function titleFor(view: string) {
       garantias: "Garantias a proveedores",
       evidencias: "Evidencia fotográfica del día",
       tareas: "Tareas asignadas",
-      solicitudes: "Solicitudes y reportes internos",
+      solicitudes: "Solicitudes",
+      "reportes-internos": "Reportes internos",
       reportes: "Reportes imprimibles",
       instructivo: "Instructivo de uso",
       configuracion: "Configuracion directiva",
@@ -2515,6 +2506,7 @@ function Dashboard({
   cleaningRole,
   collaborators,
   dailyTasks,
+  internalRequests,
   activityRuns,
   shiftMap,
   activitySchedules,
@@ -2538,6 +2530,7 @@ function Dashboard({
   cleaningRole: CleaningRole[];
   collaborators: Employee[];
   dailyTasks: DailyTask[];
+  internalRequests: InternalRequest[];
   activityRuns: ActivityRun[];
   shiftMap: Record<string, ShiftConfig>;
   activitySchedules: ActivitySchedule[];
@@ -2596,6 +2589,7 @@ function Dashboard({
     const coworkersToday = collaborators.filter((employee) => employee.id !== user.id && locationFor(employee) === branchToday);
     const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
+      <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       {myWorkFocus}
       {openingBoard}
       <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
@@ -2618,8 +2612,10 @@ function Dashboard({
   }
   return (
     <section className="grid">
+      <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       {myWorkFocus}
       {openingBoard}
+      <WeeklyManagementAgenda user={user} schedules={activitySchedules} today={today} onNavigate={onNavigate} />
       <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
       <Metric label="Entradas registradas hoy" value={todaysAttendance.length.toString()} icon={<Clock />} />
@@ -5802,12 +5798,14 @@ function CashView({
 }
 
 export function RequestsView({
+  reports = false,
   user,
   collaborators,
   internalRequests,
   addInternalRequest,
   setInternalRequests,
 }: {
+  reports?: boolean;
   user: Employee;
   collaborators: Employee[];
   internalRequests: InternalRequest[];
@@ -5819,14 +5817,10 @@ export function RequestsView({
   const [dateTo, setDateTo] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("Todos");
   const [statusFilter, setStatusFilter] = useState("Todas");
-  const visibleRequests = internalRequests.filter((request) => {
-    if (request.requestedById === user.id || request.recipientId === user.id) return true;
-    if (request.confidentiality === "Confidencial") return false;
-    return canGovern(user);
-  });
+  const visibleRequests = requestsInSection(internalRequests, user, reports);
   const updateRequest = (id: string, patch: Partial<InternalRequest>) => {
     const target = visibleRequests.find((request) => request.id === id);
-    if (!target || !(target.recipientId === user.id || canGovern(user))) return;
+    if (!target || !(target.recipientId === user.id || (canGovern(user) && target.confidentiality !== "Confidencial"))) return;
     setInternalRequests(internalRequests.map((request) => (request.id === id ? { ...request, ...patch } : request)));
   };
   const filteredRequests = visibleRequests
@@ -5840,20 +5834,15 @@ export function RequestsView({
       <form className="panelCard form" onSubmit={addInternalRequest}>
         <div className="sectionHead">
           <div>
-            <h2>Nueva comunicacion directa</h2>
-            <span>Para necesidades, quejas, peticiones, reportes o apoyo para trabajar mejor.</span>
+            <h2>{reports ? "Nuevo reporte interno" : "Nueva solicitud"}</h2>
+            <span>{reports ? "Registrar incidencias, resultados y reportes operativos." : "Solicitudes, quejas y peticiones de apoyo."}</span>
           </div>
           <MessageSquare className="greenIcon" />
         </div>
         <div className="moneyInputs">
           <label>
             Tipo
-            <select name="type">
-              <option>Solicitud</option>
-              <option>Queja</option>
-              <option>Peticion</option>
-              <option>Reporte</option>
-            </select>
+            {reports ? <><input type="hidden" name="type" value="Reporte" /><span>Reporte interno</span></> : <select name="type"><option>Solicitud</option><option>Queja</option><option>Peticion</option></select>}
           </label>
           <label>
             Prioridad
@@ -5879,7 +5868,7 @@ export function RequestsView({
           <option>Normal</option>
           <option>Confidencial</option>
         </select>
-        <button className="primary">Enviar comunicacion</button>
+        <button className="primary">{reports ? "Enviar reporte interno" : "Enviar solicitud"}</button>
         <p className="muted">
           Queda registrado quien envia, a quien va dirigido y el seguimiento. Esto evita que cualquier puesto se vuelva intocable.
         </p>
@@ -5888,13 +5877,13 @@ export function RequestsView({
       <article className="panelCard">
         <div className="sectionHead">
           <div>
-            <h2>Historial y seguimiento de solicitudes</h2>
+            <h2>{reports ? "Historial de reportes internos" : "Historial y seguimiento de solicitudes"}</h2>
             <span>{filteredRequests.length} registros · El colaborador filtra por remitente o destinatario.</span>
           </div>
         </div>
         <HistoryFilters from={dateFrom} to={dateTo} employee={employeeFilter} employees={collaborators.filter((person) => visibleRequests.some((request) => request.requestedById === person.id || request.recipientId === person.id))} onFrom={setDateFrom} onTo={setDateTo} onEmployee={setEmployeeFilter} />
         <label>Estado<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Todas</option><option>Abierta</option><option>En revision</option><option>Atendida</option><option>Cerrada</option></select></label>
-        {!filteredRequests.length && <p className="muted">No hay solicitudes con estos filtros.</p>}
+        {!filteredRequests.length && <p className="muted">{reports ? "No hay reportes internos con estos filtros." : "No hay solicitudes con estos filtros."}</p>}
         <div className="requestList">
           {filteredRequests.map((request) => {
             const author = collaborators.find((employee) => employee.id === request.requestedById);
