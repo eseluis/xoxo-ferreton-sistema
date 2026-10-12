@@ -85,6 +85,9 @@ export type ActivitySchedule = {
   employeeIds?: string[];
   branch?: "Corporativo" | "Matriz" | "Sucursal Centro";
   instructions?: string;
+  objective?: string;
+  weekdays?: number[]; // Domingo = 0, lunes = 1, ... sábado = 6; omitido = diario.
+  sharedRoutine?: boolean;
 };
 
 export type CleaningRole = {
@@ -653,6 +656,46 @@ export const defaultCleaningRole: CleaningRole[] = [
 ];
 
 export const defaultActivitySchedules: ActivitySchedule[] = [
+  {
+    id: "semanal-entrega-reporte", name: "Entrega y envío de reporte semanal", area: "Reporte semanal",
+    start: "12:00", end: "13:00", durationMinutes: 60, weekdays: [1], sharedRoutine: true,
+    ownerRoles: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL", "GERENTE_TIENDA"],
+    evidence: "signature", assignedBy: "Dirección", editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"],
+    objective: "Entregar a Dirección información verificable de la semana anterior para evaluar resultados y decidir acciones de mejora.",
+    instructions: "Consolidar ventas, número de tickets, ticket promedio (ventas / tickets), avances frente a metas, incidencias y pendientes. Señalar datos faltantes. Incluir objetivo, resultado, desviación, acción correctiva, responsable y fecha compromiso. Enviar el reporte y registrar destinatario, enlace y confirmación de entrega antes de las 13:00.",
+  },
+  {
+    id: "directivos-seguimiento-estrategia", name: "Seguimiento de estrategia y objetivo", area: "Dirección",
+    start: "15:00", end: "16:00", durationMinutes: 60, weekdays: [1], sharedRoutine: true,
+    ownerRoles: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"],
+    evidence: "signature", assignedBy: "Dirección", editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"],
+    objective: "Evaluar el avance de la estrategia y definir acciones medibles que mejoren ventas y ticket promedio.",
+    instructions: "Detallar siempre el objetivo: indicador, línea base, meta y plazo. Revisar el reporte semanal, comparar resultados con la meta y documentar causas. Acordar acciones, responsables, fechas y evidencia; registrar la decisión de continuar, ajustar o detener cada estrategia.",
+  },
+  {
+    id: "directivos-preparacion-capacitacion", name: "Preparar capacitación rápida: mínimo 3 artículos", area: "Capacitación comercial",
+    start: "17:00", end: "18:00", durationMinutes: 60, weekdays: [1], sharedRoutine: true,
+    ownerRoles: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"],
+    evidence: "signature", assignedBy: "Dirección", editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"],
+    objective: "Preparar al menos tres productos para que los gerentes puedan explicar su valor y proponer ventas complementarias.",
+    instructions: "Seleccionar mínimo 3 artículos de temporada o promoción para la sesión del martes. Elaborar por artículo una ficha con nombre y código, uso, características, problema que resuelve, cliente objetivo, existencia, precio y vigencia/condiciones de promoción. Preparar demostración breve, argumentos de venta, producto complementario y preguntas de comprobación. Registrar las tres fichas y el objetivo de aprendizaje.",
+  },
+  {
+    id: "martes-capacitacion-gerentes", name: "Capacitación de directivos a gerentes: 3 artículos preparados", area: "Capacitación comercial",
+    start: "15:00", end: "16:00", durationMinutes: 60, weekdays: [2], sharedRoutine: true,
+    ownerRoles: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL", "GERENTE_TIENDA"],
+    evidence: "signature", assignedBy: "Dirección", editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"],
+    objective: "Lograr que cada gerente explique y venda los tres artículos preparados, y transmita ese conocimiento a su equipo para aumentar el ticket promedio.",
+    instructions: "Los directivos imparten y los gerentes participan. Utilizar las fichas de los mínimo 3 artículos preparados el lunes; explicar uso, beneficios, precio, existencias y promoción. Practicar una recomendación y una venta complementaria por producto. Registrar artículos, asistentes, dudas y comprobación de aprendizaje; acordar cómo y cuándo cada gerente capacitará a su equipo.",
+  },
+  {
+    id: "diario-comunicacion-productos", name: "Comunicar productos de temporada y promociones a gerentes", area: "Comunicación comercial",
+    start: "09:00", end: "09:15", durationMinutes: 15, sharedRoutine: true,
+    ownerRoles: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"],
+    evidence: "signature", assignedBy: "Dirección", editableBy: ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL"],
+    objective: "Mantener a todos los equipos informados sobre los productos vigentes para recomendar soluciones y complementos que aumenten el ticket promedio.",
+    instructions: "Horario propuesto, editable por Dirección. Todos los días comunicar a los gerentes los artículos de temporada o promoción: nombre, código, uso, beneficio, precio, existencia, vigencia, restricciones y complementos. Confirmar recepción y que cada gerente comparta la información con todo su equipo, incluidos los cambios de turno. Registrar el listado vigente, cambios, destinatarios y confirmaciones; si no hay cambios, confirmar la vigencia de la información anterior.",
+  },
   {
     id: "apertura-puertas",
     name: "Abrir puertas y revisar seguridad",

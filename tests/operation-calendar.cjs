@@ -11,6 +11,17 @@ function load(file) {
   return exports;
 }
 const {buildRoutine, findSlotRun} = load('src/operationalAgenda.ts');
+const {defaultActivitySchedules} = load('src/data.ts');
+const director = {id:'002',name:'Director',role:'DIRECTOR',branch:'Corporativo'};
+const managementIds = (person, branch, day) => Array.from(buildRoutine(person, defaultActivitySchedules, [], branch, day), s => s.itemId);
+assert.deepEqual(managementIds(director,'Corporativo','2026-10-12'), ['diario-comunicacion-productos','semanal-entrega-reporte','directivos-seguimiento-estrategia','directivos-preparacion-capacitacion']);
+assert.deepEqual(managementIds(director,'Corporativo','2026-10-13'), ['diario-comunicacion-productos','martes-capacitacion-gerentes']);
+assert.deepEqual(managementIds(director,'Corporativo','2026-10-14'), ['diario-comunicacion-productos']);
+assert.deepEqual(managementIds({id:'003',name:'Luis Angel Perez',role:'GERENTE_GENERAL',branch:'Matriz'},'Matriz','2026-10-12'), ['diario-comunicacion-productos','semanal-entrega-reporte','directivos-seguimiento-estrategia','directivos-preparacion-capacitacion']);
+assert.deepEqual(managementIds({...director,id:'005',role:'GERENTE_TIENDA'},'Sucursal Centro','2026-10-12'), ['semanal-entrega-reporte']);
+assert.deepEqual(managementIds({...director,id:'005',role:'GERENTE_TIENDA'},'Sucursal Centro','2026-10-13'), ['martes-capacitacion-gerentes']);
+assert.ok(!managementIds({id:'010',name:'Celina',role:'JEFE_AREA'},'Matriz','2026-10-12').some(id => id.startsWith('directivos-') || id === 'semanal-entrega-reporte'));
+assert.ok(buildRoutine(director,defaultActivitySchedules,[],'Corporativo','2026-10-12').every(s => s.instructions.startsWith('Objetivo:')));
 const {dayItems,summarizeDay,projectDay} = load('src/dayCalendar.ts');
 const {kpiCompliance,kpiPeriod} = load('src/kpiMetrics.ts');
 const employee={id:'010',name:'Celina',role:'JEFE_AREA',branch:'Matriz'};

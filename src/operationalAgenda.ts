@@ -11,10 +11,15 @@ export function cleaningRowsFor(employee: Employee, rows: CleaningRole[], branch
   const weekday = weekdays[new Date(`${day}T12:00:00Z`).getUTCDay()];
   return rows.filter(row => row.branch === branch && (row.assignments[weekday] ?? "").split("/").some(name => name.trim().toLowerCase() === employee.name.toLowerCase()));
 }
-export function routineFor(employee: Employee, schedules: ActivitySchedule[], branch: string) {
-  if (branch === "Sucursal Centro") return [];
-  const targeted = schedules.filter(item => item.employeeIds?.includes(employee.id) && (!item.branch || item.branch === branch));
-  return targeted.length ? targeted : schedules.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role) && (!item.branch || item.branch === branch));
+export function routineFor(employee: Employee, schedules: ActivitySchedule[], branch: string, day?: string) {
+  const weekday = day ? new Date(`${day}T12:00:00Z`).getUTCDay() : undefined;
+  const eligible = schedules.filter(item => (!item.branch || item.branch === branch) &&
+    (!item.weekdays || (weekday !== undefined && item.weekdays.includes(weekday))));
+  const shared = eligible.filter(item => item.sharedRoutine && (item.employeeIds?.length ? item.employeeIds.includes(employee.id) : item.ownerRoles.includes(employee.role)));
+  if (branch === "Sucursal Centro") return shared;
+  const base = eligible.filter(item => !item.sharedRoutine);
+  const targeted = base.filter(item => item.employeeIds?.includes(employee.id));
+  return [...(targeted.length ? targeted : base.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role))), ...shared];
 }
 // Only explicit references to the daily cleaning role, or matching generic blocks,
 // are aliases. Mixed display/merchandising activities remain separate obligations.
@@ -25,9 +30,8 @@ export function cleaningAliases(row: CleaningRole, routine: ActivitySchedule[], 
   ));
 }
 export function buildRoutine(employee: Employee, schedules: ActivitySchedule[], rows: CleaningRole[], branch: string, day: string): AgendaSlot[] {
-  if (branch === "Sucursal Centro") return [];
-  const routine = routineFor(employee, schedules, branch);
-  const cleaning = cleaningRowsFor(employee, rows, branch, day);
+  const routine = routineFor(employee, schedules, branch, day);
+  const cleaning = branch === "Sucursal Centro" ? [] : cleaningRowsFor(employee, rows, branch, day);
   const consumed = new Set<string>();
   const slots: AgendaSlot[] = cleaning.map(row => {
     const aliases = cleaningAliases(row, routine, employee.id).filter(item => !consumed.has(item.id));
@@ -39,7 +43,7 @@ export function buildRoutine(employee: Employee, schedules: ActivitySchedule[], 
   });
   return [...slots, ...routine.filter(item => !consumed.has(item.id)).map(item => ({
     key: `Actividad-${item.id}`, kind: "Actividad" as const, itemId: item.id, title: item.name,
-    start: item.start, end: item.end, instructions: item.instructions ?? "", evidence: isCleaningSchedule(item) ? "photo" : item.evidence,
+    start: item.start, end: item.end, instructions: [item.objective ? `Objetivo: ${item.objective}` : "", item.instructions ?? ""].filter(Boolean).join("\n\n"), evidence: isCleaningSchedule(item) ? "photo" : item.evidence,
     slaMinutes: item.durationMinutes,
   }))].sort((a, b) => a.start.localeCompare(b.start) || a.key.localeCompare(b.key));
 }

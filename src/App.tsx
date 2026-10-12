@@ -1,4 +1,5 @@
 import { TodayAssignedActivities } from "./TodayAssignedActivities";
+import { WeeklyManagementAgenda } from "./WeeklyManagementAgenda";
 import { TaskSummary } from "./TaskSummary";
 import { taskMatchesFilter, taskOverdueReason } from "./taskOverview";
 import { kpiCompliance, kpiPeriod } from "./kpiMetrics";

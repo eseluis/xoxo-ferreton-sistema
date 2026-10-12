@@ -54,7 +54,7 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
     const plan = data.plans.find(p => p.day === day && p.employee_number === employeeId);
     const employee = collaborators.find(e => e.id === employeeId) ?? user;
     const branch = locations.find(l => l.employeeId === employeeId && l.date === day)?.location ?? employee.branch;
-    const preview: DayPlan | undefined = !plan && day >= today ? { employee_number: employeeId, day, branch, slots: branch === "Sucursal Centro" ? CENTRO_TASKS.map(t => ({ key: `Centro-${t.id}`, kind: "Centro", itemId: t.id, title: t.title, start: t.start, end: t.end, instructions: `${t.instructions} Responsable por confirmar según presencia y horario.`, evidence: t.evidence ? "link" : "none", slaMinutes: 0 })) : buildRoutine(employee, schedules, cleaning, branch, day) } : undefined;
+    const preview: DayPlan | undefined = !plan && day >= today ? { employee_number: employeeId, day, branch, slots: branch === "Sucursal Centro" ? [...buildRoutine(employee, schedules, cleaning, branch, day), ...CENTRO_TASKS.map(t => ({ key: `Centro-${t.id}`, kind: "Centro" as const, itemId: t.id, title: t.title, start: t.start, end: t.end, instructions: `${t.instructions} Responsable por confirmar según presencia y horario.`, evidence: t.evidence ? "link" : "none", slaMinutes: 0 }))] : buildRoutine(employee, schedules, cleaning, branch, day) } : undefined;
     const items = dayItems(day, employeeId, plan ?? preview, runs, tasks, data.centro);
     return { plan, preview, items, result: summarizeDay(day, today, time, items, Boolean(plan)) };
   };
