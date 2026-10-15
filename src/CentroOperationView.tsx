@@ -1,7 +1,7 @@
 import { CleaningPhotoInput } from "./CleaningPhotoInput";
 import { saveDayPlan } from "./calendarStore";
 import { useEffect, useRef, useState } from "react";
-import type { Employee } from "./data";
+import { canGovern, type Employee } from "./data";
 import { workTimeAt } from "./workFocus";
 import { buildCentroAgenda, CENTRO_PRIORITY, CENTRO_PROJECTS, CENTRO_TASKS, centroCompletionError, centroSummary, isCentroSupervisor, type CentroAgendaItem, type CentroRecord, type InventoryItem } from "./centroOperation";
 import { assignCentroDay, fetchCentroContext, saveCentroRecord, type CentroAction, type CentroContext } from "./centroStore";
@@ -63,9 +63,9 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
   const opening = openingChecks.find(o => o.date === day && o.branch === "Sucursal Centro");
   const opened = Boolean(opening?.erpReady && opening.processComplete && opening.systemsReady && opening.cashOpenConfirmedAt && opening.doorsOpenedAt && opening.openedAt);
   const openingTime = opening?.openedAt ? (opening.openedAt.includes("T") ? workTimeAt(new Date(opening.openedAt)) : opening.openedAt.slice(0, 5)) : "";
-  const openingCorrect = opened && openingTime >= "08:50" && openingTime <= "09:10";
+  const openingCorrect = opened && openingTime >= "08:45" && openingTime <= "09:00";
   const weekStart = new Date(`${day}T12:00:00Z`); weekStart.setUTCDate(weekStart.getUTCDate() - (weekStart.getUTCDay() + 6) % 7);
-  const openingFailures = openingChecks.filter(o => o.branch === "Sucursal Centro" && o.date >= weekStart.toISOString().slice(0, 10) && o.date <= day && (o.date < today || now > "09:10") && (!o.openedAt || (o.openedAt.includes("T") ? workTimeAt(new Date(o.openedAt)) : o.openedAt.slice(0, 5)) > "09:10" || !o.erpReady || !o.systemsReady || !o.processComplete || !o.cashOpenConfirmedAt || !o.doorsOpenedAt)).length;
+  const openingFailures = openingChecks.filter(o => o.branch === "Sucursal Centro" && o.date >= weekStart.toISOString().slice(0, 10) && o.date <= day && (o.date < today || now > "09:00") && (!o.openedAt || (o.openedAt.includes("T") ? workTimeAt(new Date(o.openedAt)) : o.openedAt.slice(0, 5)) > "09:00" || !o.erpReady || !o.systemsReady || !o.processComplete || !o.cashOpenConfirmedAt || !o.doorsOpenedAt)).length;
   async function mutate(item: CentroAgendaItem, action: CentroAction, data: CentroRecord["data"], note = "") {
     if (busy) return false;
     if (item.outdoor && ["start", "resume"].includes(action) && (!String(data.propuesta ?? "").trim() || !String(data.herramientas ?? "").trim() || !(Number(data.metaContactos) > 0))) {
@@ -122,7 +122,7 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
       {openingFailures >= 3 && <p className="centroAlert" role="alert">ALERTA DE APERTURA RECURRENTE: {openingFailures} incumplimientos registrados esta semana. Revisión del gerente; sin descuento económico automático.</p>}
       {agenda.some(i => i.blocked) && <details className="panelCard"><summary>Alertas de cobertura y actividades pendientes</summary>{agenda.filter(i => i.blocked).map(i => <p key={i.id}>{i.title}: {i.blocked}</p>)}</details>}
       <details className="panelCard"><summary>Personal asignado ({context.roster.length})</summary>{context.roster.map(p => <p key={p.id}><strong>{p.name}</strong> · {p.roleLabel} · {p.start}–{p.end} · {p.present ? "Disponible" : p.arrived ? "En descanso / fuera de turno / salió" : "Sin llegada"}</p>)}</details>
-      {supervisor && <AssignmentForm collaborators={collaborators} today={today} assign={api.assignCentroDay} onSaved={() => { onAssignmentsChanged(); setRevision(v => v + 1); }} />}
+      {supervisor && <AssignmentForm globalAccess={canGovern(user)} collaborators={canGovern(user) ? collaborators : collaborators.filter(person => person.branch === user.branch)} today={today} assign={api.assignCentroDay} onSaved={() => { onAssignmentsChanged(); setRevision(v => v + 1); }} />}
       <div className="centroToolbar"><h3>Agenda {day === today ? "de hoy" : day}</h3><label>Mostrar <select value={filter} onChange={e => setFilter(e.target.value)}><option value="mine">Mis actividades</option><option value="all">Operación de sucursal</option>{supervisor && <option value="review">Validaciones y correcciones</option>}</select></label></div>
       {!visible.length && <p>No hay actividades en este filtro. Consulta la operación de sucursal.</p>}
       <div className="centroAgenda">{visible.map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={collaborators.find(p => p.id === item.ownerId)?.name ?? item.ownerId ?? "Sin responsable disponible"} supervisor={supervisor} editable={ready && day === today && !!me?.present && item.ownerId === user.id && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={CENTRO_PROJECTS.filter(project => ![...context.previous, ...context.records].some(r => r.task_id === "exhibicion" && r.status === "Validada" && r.data.proyecto === project && Number(r.data.avance) === 100))} />)}</div>
@@ -131,13 +131,13 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
   </section>;
 }
 
-function AssignmentForm({ collaborators, today, onSaved, assign }: { collaborators: Employee[]; today: string; onSaved: () => void; assign: typeof assignCentroDay }) {
+function AssignmentForm({ globalAccess, collaborators, today, onSaved, assign }: { globalAccess: boolean; collaborators: Employee[]; today: string; onSaved: () => void; assign: typeof assignCentroDay }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   return <details className="panelCard"><summary>Asignar sucursal y horario por día</summary><form className="centroFields" onSubmit={async e => {
     e.preventDefault(); const form = new FormData(e.currentTarget); setBusy(true); setError("");
     try { await assign(String(form.get("employee")), String(form.get("date")), String(form.get("location")), String(form.get("start")), String(form.get("end"))); onSaved(); setError("Asignación guardada."); }
     catch (e) { setError(e instanceof Error ? e.message : "No se pudo guardar."); } finally { setBusy(false); }
-  }}><label>Colaborador<select name="employee">{collaborators.filter(p => p.name !== "Vacante").map(p => <option key={p.id} value={p.id}>{p.name} · {p.roleLabel}</option>)}</select></label><label>Día<input name="date" type="date" min={today} defaultValue={today} required /></label><label>Sucursal<select name="location"><option>Sucursal Centro</option><option>Matriz</option></select></label><label>Entrada<input name="start" type="time" defaultValue="08:50" required /></label><label>Salida<input name="end" type="time" defaultValue="18:00" required /></label><button className="primary" disabled={busy}>Guardar asignación</button><p role="status">{error}</p></form></details>;
+  }}><label>Colaborador<select name="employee">{collaborators.filter(p => p.name !== "Vacante").map(p => <option key={p.id} value={p.id}>{p.name} · {p.roleLabel}</option>)}</select></label><label>Día<input name="date" type="date" min={today} defaultValue={today} required /></label><label>Sucursal<select name="location"><option>Sucursal Centro</option>{globalAccess && <option>Matriz</option>}</select></label><label>Entrada<input name="start" type="time" defaultValue="08:45" required /></label><label>Salida<input name="end" type="time" defaultValue="18:00" required /></label><button className="primary" disabled={busy}>Guardar asignación</button><p role="status">{error}</p></form></details>;
 }
 
 function TaskCard({ item, user, ownerName, supervisor, editable, busy, onAction, onOpening, projects }: { item: CentroAgendaItem; user: Employee; ownerName: string; supervisor: boolean; editable: boolean; busy: boolean; onAction: (item: CentroAgendaItem, action: CentroAction, data: CentroRecord["data"], note?: string) => Promise<boolean>; onOpening: () => void; projects: string[] }) {

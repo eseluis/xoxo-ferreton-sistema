@@ -1,6 +1,7 @@
-import { canGovern, type Employee } from "./data";
+import { canGovern, canManageStore, type Employee } from "./data";
 
 export type InternalRequest = {
+  branch?: string;
   id: string; type: "Solicitud" | "Queja" | "Peticion" | "Reporte";
   title: string; message: string; requestedById: string; recipientId: string; date: string;
   priority: "Baja" | "Media" | "Alta" | "Critica";
@@ -10,7 +11,7 @@ export type InternalRequest = {
 };
 export function requestVisible(request: InternalRequest, user: Employee) {
   if (request.requestedById === user.id || request.recipientId === user.id) return true;
-  return request.confidentiality !== "Confidencial" && canGovern(user);
+  return request.confidentiality !== "Confidencial" && (canGovern(user) || (canManageStore(user) && request.branch === user.branch));
 }
 export const requestPending = (request: InternalRequest) => request.status === "Abierta" || request.status === "En revision";
 export function requestsInSection(requests: InternalRequest[], user: Employee, reports: boolean) {

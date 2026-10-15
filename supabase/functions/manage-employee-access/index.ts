@@ -17,14 +17,19 @@ Deno.serve(async (request) => {
     const { data: callerData, error: callerError } = await callerClient.auth.getUser();
     if (callerError || !callerData.user) throw new Error("Sesión inválida.");
     const admin = createClient(url, serviceKey);
-    const { data: callerProfile } = await admin.from("profiles").select("employee_number,active").eq("user_id", callerData.user.id).single();
-    if (!callerProfile?.active || !["001", "002", "003", "005"].includes(callerProfile.employee_number)) throw new Error("No tienes autorización para administrar accesos.");
+    const { data: callerProfile } = await admin.from("profiles").select("employee_number,active,role,branch").eq("user_id", callerData.user.id).single();
+    if (!callerProfile?.active || !["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL", "GERENTE_TIENDA", "ADMIN_TIENDA"].includes(callerProfile.role)) throw new Error("No tienes autorización para administrar accesos.");
 
     const body = await request.json();
     const employeeNumber = String(body.employeeNumber || "").replace(/[^0-9]/g, "");
     const password = String(body.password || "");
     if (!employeeNumber || !body.name || !body.role || !body.branch) throw new Error("Datos incompletos del colaborador.");
     if (password.length < 10 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) throw new Error("La contraseña temporal requiere 10 caracteres, mayúscula, minúscula y número.");
+    const globalAccess = ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(callerProfile.role);
+    if (!globalAccess) {
+      const { data: existingProfile } = await admin.from("profiles").select("branch,role").eq("employee_number", employeeNumber).maybeSingle();
+      if (body.branch !== callerProfile.branch || (existingProfile && existingProfile.branch !== callerProfile.branch) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(body.role) || (existingProfile && ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(existingProfile.role))) throw new Error("Solo puedes administrar accesos de tu sucursal sin conceder permisos directivos.");
+    }
     const email = `${employeeNumber}@usuarios.xoxo-ferreton.local`;
     const { data: users, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
     if (listError) throw listError;

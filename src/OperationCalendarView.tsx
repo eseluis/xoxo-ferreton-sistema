@@ -34,7 +34,7 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
   const [error, setError] = useState(""); const [ready, setReady] = useState(false);
   const [revision, setRevision] = useState(0); const [busy, setBusy] = useState(false);
   const [time, setTime] = useState(workTimeAt());
-  const managers = canGovern(user) || user.id === "005";
+  const managers = canGovern(user);
   const team = managers ? collaborators : ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role) ? collaborators.filter(e => e.branch === user.branch || e.id === user.id) : [user];
   const days = useMemo(() => {
     const count = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();

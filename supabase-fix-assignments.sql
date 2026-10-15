@@ -8,6 +8,7 @@ returns boolean language sql stable security definer set search_path=public as $
     select 1 from public.profiles target
     where target.employee_number=target_number and target.active
       and target.employee_number<>(public.current_profile()).employee_number
+      and (public.can_manage_all() or target.branch=(public.current_profile()).branch)
       and (public.can_manage_all() or
         (case (public.current_profile()).role
           when 'APODERADA_LEGAL' then 1 when 'DIRECTOR' then 2

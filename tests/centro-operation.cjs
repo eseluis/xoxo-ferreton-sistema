@@ -32,7 +32,12 @@ agenda = buildCentroAgenda(day, [worker('a', 'AUXILIAR', { present: false })], [
 assert.ok(agenda.every(t => !t.ownerId));
 agenda = buildCentroAgenda(day, [worker('a'), worker('b')], [record('trafico-1', 'a', 'En curso', {mode:'Exterior'})], '12:00');
 assert.ok(agenda.find(t => t.id === 'trafico-2').blocked);
-assert.equal(isCentroSupervisor({id:'003',role:'AUXILIAR'}),true);
+assert.equal(isCentroSupervisor({id:'003',role:'AUXILIAR'}),false);
+assert.equal(isCentroSupervisor({id:'003',role:'GERENTE_GENERAL'}),true);
+assert.equal(isCentroSupervisor({id:'005',role:'GERENTE_TIENDA',branch:'Sucursal Centro'}),true);
+assert.equal(isCentroSupervisor({id:'005',role:'GERENTE_TIENDA',branch:'Matriz'}),false);
+assert.equal(CENTRO_TASKS.find(t=>t.id==='apertura').start,'08:45');
+assert.equal(CENTRO_TASKS.find(t=>t.id==='apertura').end,'09:00');
 assert.equal(isCentroSupervisor({id:'006',role:'JEFE_AREA'}),false);
 assert.notEqual(cleaningFor(day,1),cleaningFor('2026-09-23',1));
 const inventory = CENTRO_TASKS.find(t => t.id === 'inventario-1');

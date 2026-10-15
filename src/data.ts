@@ -856,7 +856,7 @@ export const defaultActivitySchedules: ActivitySchedule[] = [
   { id:"centro-salida-traslado",name:"Salida de Matriz y traslado seguro a Sucursal Centro",area:"Apertura Centro",start:"08:15",end:"08:45",durationMinutes:30,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Salir de Matriz a las 8:15 y llegar a Sucursal Centro a más tardar 8:45. Reportar cualquier retraso." },
   { id:"centro-preapertura",name:"Encender equipos y luces; revisar accesos, seguridad y condiciones",area:"Apertura Centro",start:"08:45",end:"08:55",durationMinutes:10,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Daniel enciende equipos y verifica operación; Jan revisa iluminación, accesos, orden y seguridad. Mantener vigilancia de entrada y salida." },
   { id:"centro-apertura-publico",name:"Abrir puertas al público y confirmar apertura en sistema",area:"Apertura Centro",start:"08:55",end:"09:00",durationMinutes:5,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Abrir al público a las 8:55, confirmar hora real y reportar cualquier incidencia." },
-  { id:"centro-apertura-caja",name:"Verificar fondo, abrir caja y dejar POS listo",area:"Caja Centro",start:"08:55",end:"09:05",durationMinutes:10,ownerRoles:["GERENTE_TIENDA"],employeeIds:["005"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Daniel cuenta el fondo, inicia POS e impresora, registra la apertura y reporta diferencias. No mezclar este registro con ventas o retiros." },
+  { id:"centro-apertura-caja",name:"Verificar fondo, abrir caja y dejar POS listo",area:"Caja Centro",start:"08:45",end:"09:00",durationMinutes:15,ownerRoles:["GERENTE_TIENDA"],employeeIds:["005"],branch:"Sucursal Centro",evidence:"signature",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Daniel cuenta el fondo, inicia POS e impresora, registra la apertura y reporta diferencias. No mezclar este registro con ventas o retiros." },
   { id:"centro-limpieza",name:"Limpieza completa de tienda y baños por responsabilidad asignada",area:"Aseo Centro",start:"09:00",end:"10:00",durationMinutes:60,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Daniel barre, limpia mostradores y trapos; Jan trapea, ordena basura; cada uno atiende un baño. Ambos vigilan la entrada." },
   { id:"centro-inventario-zonas",name:"Limpieza, reorganización e inventario por zonas",area:"Inventario Centro",start:"10:00",end:"12:00",durationMinutes:120,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"10-11 Daniel bombas/mostrador 1; Jan herramientas eléctricas y seguridad. 11-12 herramienta de taller. Registrar diferencias." },
   { id:"centro-productos-redes",name:"Investigar 3 productos y redactar estrategia para redes o ecommerce",area:"Capacitación Centro",start:"12:00",end:"13:00",durationMinutes:60,ownerRoles:["GERENTE_TIENDA","JEFE_AREA"],employeeIds:["005","006"],branch:"Sucursal Centro",evidence:"photo",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL"],instructions:"Entregar reporte escrito con aplicación, solución, argumentos de venta y propuesta de contenido." },
@@ -903,7 +903,7 @@ export const processes: Process[] = [
       { title: "Salida de Matriz hacia Centro", owner: "Daniel + Jan", time: "8:15", evidence: "signature" },
       { title: "Llegada, equipos, luces y seguridad", owner: "Daniel + Jan", time: "8:45 - 8:55", evidence: "photo" },
       { title: "Apertura al público", owner: "Daniel + Jan", time: "8:55", evidence: "signature" },
-      { title: "Verificación y apertura de caja", owner: "Daniel", time: "8:55 - 9:05", evidence: "signature" },
+      { title: "Verificación y apertura de caja", owner: "Daniel", time: "8:45 - 9:00", evidence: "signature" },
       { title: "Limpieza de tienda, baños y mostradores", owner: "Daniel + Jan", time: "9:00 - 10:00", evidence: "photo" },
       { title: "Inventario, orden y limpieza por zonas", owner: "Daniel + Jan", time: "10:00 - 12:00", evidence: "photo" },
       { title: "Reporte de productos para redes/ecommerce", owner: "Daniel + Jan", time: "12:00 - 13:00", evidence: "photo" },
@@ -1156,20 +1156,32 @@ export function currentSupervisor(employee: Employee, list: Employee[] = employe
 }
 
 export function canAssign(from: Employee, to: Employee) {
-  if (["001", "002", "003", "005"].includes(from.id)) return from.id !== to.id;
+  if (canGovern(from)) return from.id !== to.id;
+  if (from.branch !== to.branch) return false;
   return roleRank[from.role] < roleRank[to.role];
 }
 
 export function canViewAll(employee: Employee) {
-  return ["001", "002", "003", "005"].includes(employee.id) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
+  return ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
 }
 
 export function canGovern(employee: Employee) {
-  return ["001", "002", "003", "005"].includes(employee.id) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
+  return ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(employee.role);
 }
 
 export function commissionRate(score: number, salesGoal: number, personalSales: number) {
   if (score >= 9 && personalSales >= salesGoal * 1.05) return 0.03;
   if (score >= 8.5 && personalSales >= salesGoal) return 0.02;
   return score >= 8 ? 0.01 : 0;
+}
+
+export function canManageStore(employee: Employee) {
+  return canGovern(employee) || ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(employee.role);
+}
+export function recordInBranch(record: object, branch: string, people: Employee[], locations: {employeeId: string; date: string; location: string}[] = []) {
+  const row = record as Record<string, unknown>;
+  if (typeof row.branch === "string") return row.branch === branch;
+  const owner = String(row.employeeId ?? row.ownerId ?? row.cashierId ?? row.startedById ?? row.requestedById ?? "");
+  const location = locations.find(item => item.employeeId === owner && item.date === row.date)?.location;
+  return (location ?? people.find(person => person.id === owner)?.branch) === branch;
 }

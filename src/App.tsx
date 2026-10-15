@@ -1,10 +1,11 @@
 import { RequestsPanel } from "./RequestsPanel";
 import { requestPending, requestsInSection, type InternalRequest } from "./requestOverview";
+import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
 import { TodayAssignedActivities } from "./TodayAssignedActivities";
 import { WeeklyManagementAgenda } from "./WeeklyManagementAgenda";
 import { TaskSummary } from "./TaskSummary";
 import { taskMatchesFilter, taskOverdueReason } from "./taskOverview";
-import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
+import type { DayPlan } from "./dayCalendar";
 import {
   AlertTriangle,
   BarChart3,
@@ -44,6 +45,8 @@ import { aseoRunCountsInRange, autoPointsInRange, qualityPointsInRange, shiftDat
 import {
   canAssign,
   canGovern,
+  canManageStore,
+  recordInBranch,
   canViewAll,
   commissionRate,
   currentSupervisor,
@@ -536,11 +539,10 @@ const areaLeaderViews = new Set([
 ]);
 
 function canAccessView(employee: Employee, targetView: string) {
+  if (!employee) return false;
   if (targetView === "operacion-centro") return true; // Daily assignment is checked at render and in the server.
-  if (targetView === "piloto-dexter") return employee.id === "003";
-  // Caso especial: el marcador de aseo tiene su propia lista de 4 autorizados,
-  // sin importar el rol (incluye a Julio, que es JEFE_AREA, y excluye a otros
-  // puestos directivos que sí ven el resto de las pantallas).
+  if (targetView === "piloto-dexter") return canGovern(employee) || (canManageStore(employee) && employee.branch === "Sucursal Centro");
+  // El marcador respeta los permisos de gerencia por sucursal.
   if (targetView === "marcador-aseo") return canViewCleaningBoard(employee);
   if (employee.role === "AUXILIAR") return auxiliaryViews.has(targetView);
   if (employee.role === "JEFE_AREA") return areaLeaderViews.has(targetView);
@@ -726,10 +728,10 @@ const CLEANING_BOARD_VIEWER_IDS = ["001", "002", "003", "009"];
 const CLEANING_BOARD_GRADER_IDS = ["001", "002", "003", "009"];
 const CLEANING_BOARD_DIRECTOR_IDS = ["001", "002", "003"];
 function canViewCleaningBoard(employee: Employee) {
-  return CLEANING_BOARD_VIEWER_IDS.includes(employee.id);
+  return canManageStore(employee) || CLEANING_BOARD_VIEWER_IDS.includes(employee.id);
 }
 function canGradeCleaning(employee: Employee) {
-  return CLEANING_BOARD_GRADER_IDS.includes(employee.id);
+  return canManageStore(employee) || CLEANING_BOARD_GRADER_IDS.includes(employee.id);
 }
 
 function arrivalPunctuality(minutes: number): { label: string; className: string } {
@@ -785,13 +787,13 @@ function App() {
   const [dexterPilot, setDexterPilot] = useState<DexterPilotRecord[]>([]);
   const [dexterPilotError, setDexterPilotError] = useState("");
   useEffect(() => {
-    if (!isAuthenticated || activeId !== "003") { setDexterPilot([]); return; }
+    if (!isAuthenticated || !canAccessView(collaborators.find(person => person.id === activeId) ?? defaultEmployees.find(person => person.id === activeId)!, "piloto-dexter")) { setDexterPilot([]); return; }
     let cancelled = false;
     void cloudLoad<DexterPilotRecord[]>("xoxo.dexterPilot", []).then((rows) => { if (!cancelled) setDexterPilot(rows); });
     return () => { cancelled = true; };
   }, [isAuthenticated, activeId]);
   const persistDexterPilot = async (record: DexterPilotRecord) => {
-    if (activeId !== "003") return;
+    if (!canAccessView(user, "piloto-dexter")) return;
     const next = [...dexterPilot.filter((item) => item.id !== record.id), record];
     try { await cloudSave("xoxo.dexterPilot", next); setDexterPilot(next); setDexterPilotError(""); }
     catch (error) { setDexterPilotError(error instanceof Error ? error.message : "No se pudo guardar el piloto."); }
@@ -950,9 +952,9 @@ function App() {
       setStoreOpeningChecks(cloudStoreOpeningChecks);
       setCleaningEvaluations(cloudCleaningEvaluations);
       setDataHydrated(true);
-      if (JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
-      if (JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
-      if (JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
+      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
+      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
+      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
     };
     void hydrate();
     return () => { cancelled = true; };
@@ -1074,6 +1076,15 @@ function App() {
   const shiftMap = Object.fromEntries(shiftConfigs.map((shift) => [shift.key, shift])) as Record<string, ShiftConfig>;
   const currentWorkLocation = workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch;
   const canSeeCentro = currentWorkLocation === "Sucursal Centro" || isCentroSupervisor(user);
+  const scopeRows = <T extends object,>(rows: T[]): T[] => canViewAll(user) ? rows : rows.filter(row => recordInBranch(row, currentWorkLocation, collaborators, workLocations));
+  useEffect(() => {
+    if (!isAuthenticated || canViewAll(user)) return;
+    const ownTeam = collaborators.filter(employee => employee.branch === user.branch);
+    if (!ownTeam.some(employee => employee.id === cleaningTargetId)) setCleaningTargetId(ownTeam[0]?.id ?? "");
+    if (!ownTeam.some(employee => employee.id === targetEvalId && canAssign(user, employee))) setTargetEvalId(ownTeam.find(employee => canAssign(user, employee))?.id ?? "");
+  }, [isAuthenticated, user.id, user.branch, collaborators, cleaningTargetId, targetEvalId]);
+
+
   const centroArrival = useRef("");
   useEffect(() => {
     if (!isAuthenticated || currentWorkLocation !== "Sucursal Centro" || !myAttendance?.in || myAttendance.out) return;
@@ -1227,6 +1238,8 @@ function App() {
   };
 
   const submitEvaluation = () => {
+    const target = collaborators.find(employee => employee.id === targetEvalId);
+    if (!target || !canAssign(user, target)) return;
     const next = evaluations.filter(
       (entry) => !(entry.employeeId === targetEvalId && entry.evaluatorId === user.id && entry.date === today),
     );
@@ -1248,7 +1261,7 @@ function App() {
   // Calificacion de calidad de aseo por periodo (cada ~3 dias). Reemplaza la calificacion
   // previa del mismo superior para el mismo colaborador y periodo en vez de duplicarla.
   const submitCleaningEvaluation = () => {
-    if (!canGradeCleaning(user) || !cleaningTargetId || cleaningPeriodStart > cleaningPeriodEnd) return;
+    if (!canGradeCleaning(user) || !cleaningTargetId || cleaningPeriodStart > cleaningPeriodEnd || (!canViewAll(user) && collaborators.find(employee => employee.id === cleaningTargetId)?.branch !== user.branch)) return;
     const next = cleaningEvaluations.filter(
       (entry) =>
         !(
@@ -1370,7 +1383,7 @@ function App() {
       if (patch.openedAt) {
         const onTime = (() => {
           const minutes = minutesOfDayMx(patch.openedAt!);
-          return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 50 && minutes <= 9 * 60 + 10 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END;
+          return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 45 && minutes <= 9 * 60 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END;
         })();
         if (onTime) {
           const attendedIds = attendance
@@ -1386,7 +1399,7 @@ function App() {
             date: today,
             decision: "Reconocimiento",
             scoreImpact: 1,
-            note: `Apertura puntual de ${branch}: checklist completo entre ${branch === "Sucursal Centro" ? "8:50 y 9:10" : "8:00 y 8:15"}.`,
+            note: `Apertura puntual de ${branch}: checklist completo entre ${branch === "Sucursal Centro" ? "8:45 y 9:00" : "8:00 y 8:15"}.`,
             reviewedById: user.id,
             reviewedAt: grantedAt,
           }));
@@ -1787,7 +1800,7 @@ function App() {
   };
 
   useEffect(() => {
-    if (!isAuthenticated || !canGovern(user)) return;
+    if (!isAuthenticated || !dataHydrated || !canGovern(user)) return;
     const closePreviousDay = async () => {
       const prior = new Date();
       prior.setDate(prior.getDate() - 1);
@@ -1816,7 +1829,7 @@ function App() {
       if (uniqueAlerts.length) { const nextRequests = [...uniqueAlerts, ...existingRequests]; setInternalRequests(nextRequests); save("xoxo.internalRequests", nextRequests); }
     };
     void closePreviousDay();
-  }, [isAuthenticated, user.id]);
+  }, [isAuthenticated, dataHydrated, user.id]);
 
   const startActivityRun = (item: {
     itemType: ActivityRun["itemType"];
@@ -1896,6 +1909,7 @@ function App() {
   };
 
   useEffect(() => {
+    if (!isAuthenticated || !dataHydrated) return;
     const tick = () => {
       const runsToEscalate = activityRuns.filter(
         (run) => !run.completedAt && !run.escalated && slaStatus(run) === "Vencida",
@@ -1940,7 +1954,7 @@ function App() {
     tick();
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityRuns, dailyTasks, collaborators]);
+  }, [isAuthenticated, dataHydrated, activityRuns, dailyTasks, collaborators]);
 
   if (authLoading) {
     return <main className="loginPage"><div className="loginCard">Verificando sesion segura...</div></main>;
@@ -1957,6 +1971,13 @@ function App() {
         submitLogin={submitLogin}
       />
     );
+  }
+
+  if (!dataHydrated) {
+    return <main className="loginPage"><div className="loginCard">Cargando permisos y datos de tu sucursal…</div></main>;
+  }
+  if (!collaborators.some(employee => employee.id === activeId)) {
+    return <main className="loginPage"><div className="loginCard"><p>No se pudo validar tu acceso a la sucursal. Revisa la conexión y la actualización de permisos con dirección.</p><button className="primary" onClick={() => window.location.reload()}>Reintentar</button><button className="ghost" onClick={logout}>Cerrar sesión</button></div></main>;
   }
 
   if (mustChangePassword) {
@@ -2050,7 +2071,7 @@ function App() {
           <button className={view === "instructivo" ? "active" : ""} onClick={() => navigate("instructivo")}>
             <BookOpen size={18} /> Instructivo
           </button>
-          {canGovern(user) && (
+          {canManageStore(user) && (
             <button className={view === "configuracion" ? "active" : ""} onClick={() => setView("configuracion")}>
               <Settings2 size={18} /> Configuracion
             </button>
@@ -2077,32 +2098,33 @@ function App() {
           </div>
         </header>
 
+        <StoreOverview day={today} />
         <DailyPlanCapture user={user} day={today} branch={currentWorkLocation} schedules={activitySchedules} cleaning={cleaningRole} enabled={dataHydrated && Boolean(myAttendance?.in)} />
-        {view === "calendario" && <OperationCalendarView user={user} collaborators={collaborators} today={today} runs={activityRuns} tasks={dailyTasks} schedules={activitySchedules} cleaning={cleaningRole} locations={workLocations} onNavigate={navigate} />}
+        {view === "calendario" && <OperationCalendarView user={user} collaborators={collaborators} today={today} runs={scopeRows(activityRuns)} tasks={scopeRows(dailyTasks)} schedules={activitySchedules} cleaning={cleaningRole} locations={workLocations} onNavigate={navigate} />}
         {view === "operacion-centro" && canSeeCentro && <CentroOperationView user={user} collaborators={collaborators} today={today} openingChecks={storeOpeningChecks} onNavigate={navigate} onPriorityPause={pauseForPriority} onAssignmentsChanged={() => { void cloudRefresh<WorkLocation[]>("xoxo.workLocations").then(next => { if (next) setWorkLocations(next); }); }} />}
         {view === "operacion-centro" && !canSeeCentro && <p>No estás asignado a Centro hoy. Consulta tus tareas o tu asignación con dirección.</p>}
 
         {view === "panel" && (
           <Dashboard
             user={user}
-            attendance={attendance}
-            evaluations={evaluations}
-            cashIncidents={cashIncidents}
-            warranties={warranties}
+            attendance={scopeRows(attendance)}
+            evaluations={scopeRows(evaluations)}
+            cashIncidents={scopeRows(cashIncidents)}
+            warranties={scopeRows(warranties)}
             shiftConfigs={shiftConfigs}
             cleaningRole={cleaningRole}
             collaborators={collaborators}
-            dailyTasks={dailyTasks}
-            internalRequests={internalRequests}
-            activityRuns={activityRuns}
+            dailyTasks={scopeRows(dailyTasks)}
+            internalRequests={[...requestsInSection(internalRequests, user, true), ...requestsInSection(internalRequests, user, false)]}
+            activityRuns={scopeRows(activityRuns)}
             shiftMap={shiftMap}
             activitySchedules={activitySchedules}
             workLocations={workLocations}
             onNavigate={navigate}
             slaReviews={slaReviews}
             reviewSla={reviewSla}
-            cashSessions={cashSessions}
-            cashCuts={cashCuts}
+            cashSessions={scopeRows(cashSessions)}
+            cashCuts={scopeRows(cashCuts)}
             storeOpeningChecks={storeOpeningChecks}
             updateStoreOpening={updateStoreOpening}
             addQuickTask={addQuickTask}
@@ -2112,7 +2134,7 @@ function App() {
         {view === "asistencia" && (
           <AttendanceView
             user={user}
-            attendance={attendance}
+            attendance={scopeRows(attendance)}
             dailyClosures={dailyClosures}
             collaborators={collaborators}
             myAttendance={myAttendance}
@@ -2126,10 +2148,10 @@ function App() {
             cleaningRow={currentWorkLocation === "Sucursal Centro" ? undefined : currentCleaningRow}
             cleaningRows={cleaningRole}
             dailyTasks={userTasks}
-            allDailyTasks={dailyTasks}
+            allDailyTasks={scopeRows(dailyTasks)}
             setDailyTasks={persistDailyTasks}
             startDailyTask={startDailyTask}
-            activityRuns={activityRuns}
+            activityRuns={scopeRows(activityRuns)}
             startActivityRun={startActivityRun}
             completeActivityRun={completeActivityRun}
             setActivityEvidence={setActivityEvidence}
@@ -2145,14 +2167,14 @@ function App() {
           />
         )}
         {view === "organigrama" && <OrgView collaborators={collaborators} />}
-        {view === "auditorias" && <AuditDashboard user={user} collaborators={collaborators} audits={processAudits} startAudit={startProcessAudit} updateAudit={updateProcessAudit} />}
-        {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={branchOpenings} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
+        {view === "auditorias" && <AuditDashboard user={user} collaborators={collaborators} audits={scopeRows(processAudits)} startAudit={startProcessAudit} updateAudit={updateProcessAudit} />}
+        {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={scopeRows(branchOpenings)} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
             onNavigate={navigate}
             user={user}
             collaborators={collaborators}
-            processInstances={processInstances}
+            processInstances={scopeRows(processInstances)}
             setProcessInstances={persistProcessInstances}
             notify={escalate}
           />
@@ -2171,23 +2193,23 @@ function App() {
             salesGoal={salesGoal}
             setSalesGoal={setSalesGoal}
             submitEvaluation={submitEvaluation}
-            evaluations={evaluations}
+            evaluations={scopeRows(evaluations)}
             collaborators={collaborators}
-            activityRuns={activityRuns}
-            dailyTasks={dailyTasks}
+            activityRuns={scopeRows(activityRuns)}
+            dailyTasks={scopeRows(dailyTasks)}
             shiftMap={shiftMap}
-            cashIncidents={cashIncidents}
+            cashIncidents={scopeRows(cashIncidents)}
             slaReviews={slaReviews}
           />
         )}
-        {view === "piloto-dexter" && user.id === "003" && <DexterPilotView collaborators={collaborators} records={dexterPilot} error={dexterPilotError} onSave={persistDexterPilot} />}
+        {view === "piloto-dexter" && canAccessView(user, "piloto-dexter") && <DexterPilotView collaborators={collaborators} records={dexterPilot} error={dexterPilotError} onSave={persistDexterPilot} />}
         {view === "marcador-aseo" && canViewCleaningBoard(user) && (
           <CleaningScoreboardView
             user={user}
             collaborators={collaborators}
             activitySchedules={activitySchedules}
-            activityRuns={activityRuns}
-            cleaningEvaluations={cleaningEvaluations}
+            activityRuns={scopeRows(activityRuns)}
+            cleaningEvaluations={scopeRows(cleaningEvaluations)}
             cleaningTargetId={cleaningTargetId}
             setCleaningTargetId={setCleaningTargetId}
             cleaningPeriodStart={cleaningPeriodStart}
@@ -2205,11 +2227,11 @@ function App() {
           <CashView
             user={user}
             addCashIncident={addCashIncident}
-            cashIncidents={cashIncidents}
-            cashSessions={cashSessions}
+            cashIncidents={scopeRows(cashIncidents)}
+            cashSessions={scopeRows(cashSessions)}
             addCashOpening={addCashOpening}
             addCashCut={addCashCut}
-            cashCuts={cashCuts}
+            cashCuts={scopeRows(cashCuts)}
             reviewCashCut={reviewCashCut}
             reviewCashIncident={reviewCashIncident}
             collaborators={collaborators}
@@ -2218,32 +2240,32 @@ function App() {
         {view === "tableroFinanciero" && (
           <FinancialDashboard
             user={user}
-            suppliers={suppliers}
-            payables={payables}
-            bankAccounts={bankAccounts}
-            bankTransactions={bankTransactions}
-            monthlyBudgets={monthlyBudgets}
+            suppliers={scopeRows(suppliers)}
+            payables={scopeRows(payables)}
+            bankAccounts={scopeRows(bankAccounts)}
+            bankTransactions={scopeRows(bankTransactions)}
+            monthlyBudgets={scopeRows(monthlyBudgets)}
             addMonthlyBudget={addMonthlyBudget}
           />
         )}
-        {view === "kpis" && <KpiDashboard user={user} collaborators={collaborators} records={kpiRecords} saveRecord={saveKpiRecord} />}
+        {view === "kpis" && <KpiDashboard user={user} collaborators={collaborators} records={scopeRows(kpiRecords)} saveRecord={saveKpiRecord} />}
         {(view === "finanzas" || view === "bancos") && (
           <FinanceView
-            user={user} suppliers={suppliers} payables={payables}
+            user={user} suppliers={scopeRows(suppliers)} payables={scopeRows(payables)}
             addSupplier={addSupplier} addPayable={addPayable} requestPayablePayment={requestPayablePayment}
-            bankAccounts={bankAccounts} bankTransactions={bankTransactions}
+            bankAccounts={scopeRows(bankAccounts)} bankTransactions={scopeRows(bankTransactions)}
             addBankAccount={addBankAccount} addBankTransaction={addBankTransaction}
             importBankTransactions={importBankTransactions}
             toggleBankReconciliation={toggleBankReconciliation}
           />
         )}
-        {view === "garantias" && <WarrantyView user={user} collaborators={collaborators} addWarranty={addWarranty} updateWarranty={updateWarranty} warranties={warranties} />}
-        {view === "evidencias" && <EvidenceGalleryView user={user} today={today} collaborators={collaborators} dailyTasks={dailyTasks} activityRuns={activityRuns} />}
+        {view === "garantias" && <WarrantyView user={user} collaborators={collaborators} addWarranty={addWarranty} updateWarranty={updateWarranty} warranties={scopeRows(warranties)} />}
+        {view === "evidencias" && <EvidenceGalleryView user={user} today={today} collaborators={collaborators} dailyTasks={scopeRows(dailyTasks)} activityRuns={scopeRows(activityRuns)} processInstances={scopeRows(processInstances)} />}
         {view === "tareas" && (
           <TasksView
             user={user}
             collaborators={collaborators}
-            dailyTasks={dailyTasks}
+            dailyTasks={scopeRows(dailyTasks)}
             setDailyTasks={persistDailyTasks}
             onRemoveTask={(task) => removeTaskWithDecision(task, "Sin efecto", "Retirada desde Tareas")}
             workLocations={workLocations}
@@ -2254,12 +2276,12 @@ function App() {
           <RequestsView key={view} reports={view === "reportes-internos"}
             user={user}
             collaborators={collaborators}
-            internalRequests={internalRequests}
+            internalRequests={[...requestsInSection(internalRequests, user, true), ...requestsInSection(internalRequests, user, false)]}
             addInternalRequest={addInternalRequest}
             setInternalRequests={updateInternalRequests}
           />
         )}
-        {view === "configuracion" && canGovern(user) && (
+        {view === "configuracion" && canManageStore(user) && (
           <GovernanceView
             user={user}
             shiftConfigs={shiftConfigs}
@@ -2274,20 +2296,20 @@ function App() {
           <ReportsView
             user={user}
             collaborators={collaborators}
-            attendance={attendance}
-            evaluations={evaluations}
-            cashIncidents={cashIncidents}
-            cashCuts={cashCuts}
-            warranties={warranties}
-            dailyTasks={dailyTasks}
-            processInstances={processInstances}
-            internalRequests={internalRequests}
-            activityRuns={activityRuns}
-            suppliers={suppliers}
-            payables={payables}
-            bankAccounts={bankAccounts}
-            bankTransactions={bankTransactions}
-            monthlyBudgets={monthlyBudgets}
+            attendance={scopeRows(attendance)}
+            evaluations={scopeRows(evaluations)}
+            cashIncidents={scopeRows(cashIncidents)}
+            cashCuts={scopeRows(cashCuts)}
+            warranties={scopeRows(warranties)}
+            dailyTasks={scopeRows(dailyTasks)}
+            processInstances={scopeRows(processInstances)}
+            internalRequests={[...requestsInSection(internalRequests, user, true), ...requestsInSection(internalRequests, user, false)]}
+            activityRuns={scopeRows(activityRuns)}
+            suppliers={scopeRows(suppliers)}
+            payables={scopeRows(payables)}
+            bankAccounts={scopeRows(bankAccounts)}
+            bankTransactions={scopeRows(bankTransactions)}
+            monthlyBudgets={scopeRows(monthlyBudgets)}
           />
         )}
         {view === "instructivo" && <GuideView />}
@@ -2593,7 +2615,7 @@ function Dashboard({
       {myWorkFocus}
       {openingBoard}
       <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
-      <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Consulta tu horario asignado y la agenda dinámica de Centro. Apertura completa: 8:50–9:10.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
+      <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Consulta tu horario asignado y la agenda dinámica de Centro. Apertura completa: 8:45–9:00.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
       <Metric label="Tareas completadas" value={String(myTasks.filter((task) => task.status === "Completada").length)} icon={<CheckCircle2 />} />
       <Metric label="Entrada de hoy" value={myAttendance?.in ?? "Pendiente"} icon={<Clock />} />
@@ -3067,7 +3089,7 @@ export function AttendanceView({
               <div className="punchGrid">
                 <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
                   Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
-                  {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{workLocation === "Sucursal Centro" ? `Horario asignado: ${shift?.start ?? "08:50"}` : punctuality.label}</small>}
+                  {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{workLocation === "Sucursal Centro" ? `Horario asignado: ${shift?.start ?? "08:45"}` : punctuality.label}</small>}
                 </button>
                 <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
                 <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
@@ -3703,14 +3725,14 @@ function GovernanceView({
   cleaningRole: CleaningRole[];
   setCleaningRole: (value: CleaningRole[]) => void;
 }) {
-  const [cleaningBranch, setCleaningBranch] = useState<"Matriz" | "Sucursal Centro">("Matriz");
+  const [cleaningBranch, setCleaningBranch] = useState<"Matriz" | "Sucursal Centro">(user.branch === "Sucursal Centro" ? "Sucursal Centro" : "Matriz");
   const updateShift = (index: number, field: keyof ShiftConfig, value: string) => {
     const next = shiftConfigs.map((shift, current) => (current === index ? { ...shift, [field]: value } : shift));
     setShiftConfigs(next);
     save("xoxo.shiftConfigs", next);
   };
 
-  const updateActivity = (index: number, field: keyof ActivitySchedule, value: string | number) => {
+  const updateActivity = (index: number, field: keyof ActivitySchedule, value: string | number | number[]) => {
     const next = activitySchedules.map((activity, current) =>
       current === index ? { ...activity, [field]: value } : activity,
     );
@@ -3747,7 +3769,7 @@ function GovernanceView({
             <h2>Gobierno de informacion</h2>
             <span>Activo para {user.name}</span>
           </div>
-          <button className="ghost" onClick={resetDefaults}>
+          <button disabled={!canGovern(user)} className="ghost" onClick={resetDefaults}>
             Restaurar propuesta
           </button>
         </div>
@@ -3783,12 +3805,12 @@ function GovernanceView({
           </div>
           {shiftConfigs.map((shift, index) => (
             <div className="editableRow" key={shift.key}>
-              <input value={shift.name} onChange={(event) => updateShift(index, "name", event.target.value)} />
-              <input value={shift.start} onChange={(event) => updateShift(index, "start", event.target.value)} />
-              <input value={shift.end} onChange={(event) => updateShift(index, "end", event.target.value)} />
-              <input value={shift.lunchStart} onChange={(event) => updateShift(index, "lunchStart", event.target.value)} />
-              <input value={shift.lunchEnd} onChange={(event) => updateShift(index, "lunchEnd", event.target.value)} />
-              <input value={shift.rotation} onChange={(event) => updateShift(index, "rotation", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.name} onChange={(event) => updateShift(index, "name", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.start} onChange={(event) => updateShift(index, "start", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.end} onChange={(event) => updateShift(index, "end", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.lunchStart} onChange={(event) => updateShift(index, "lunchStart", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.lunchEnd} onChange={(event) => updateShift(index, "lunchEnd", event.target.value)} />
+              <input disabled={!canGovern(user)} value={shift.rotation} onChange={(event) => updateShift(index, "rotation", event.target.value)} />
             </div>
           ))}
         </div>
@@ -3796,7 +3818,7 @@ function GovernanceView({
 
       <article className="panelCard">
         <div className="sectionHead">
-          <h2>Actividades diarias con horario</h2>
+          <h2>Actividades y agenda semanal con horario</h2>
           <span>Propuesta base editable por directivos</span>
         </div>
         <div className="editableTable activityTable">
@@ -3808,9 +3830,17 @@ function GovernanceView({
             <span>Min</span>
             <span>Asigna</span>
           </div>
-          {activitySchedules.map((activity, index) => (
+          {activitySchedules.map((activity, index) => ({activity, index})).filter(({activity}) => canGovern(user) || activity.branch === user.branch).map(({activity, index}) => (
             <div className="editableRow" key={activity.id}>
-              <input value={activity.name} onChange={(event) => updateActivity(index, "name", event.target.value)} />
+              <div>
+                <input aria-label="Actividad" value={activity.name} onChange={(event) => updateActivity(index, "name", event.target.value)} />
+                <span>{activity.weekdays?.map(day => ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"][day]).join(", ") || "Todos los días"}</span>
+                {activity.sharedRoutine && <>
+                  <label>Frecuencia<select value={activity.weekdays?.join(",") ?? ""} onChange={event => updateActivity(index, "weekdays", event.target.value ? event.target.value.split(",").map(Number) : [0,1,2,3,4,5,6])}><option value="">Todos los días</option><option value="0,1,2,3,4,5,6">Todos los días</option>{["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"].map((day, number) => <option key={day} value={number}>{day}</option>)}</select></label>
+                  <label>Objetivo<textarea value={activity.objective ?? ""} onChange={event => updateActivity(index, "objective", event.target.value)} /></label>
+                  <label>Instrucciones y entregable<textarea value={activity.instructions ?? ""} onChange={event => updateActivity(index, "instructions", event.target.value)} /></label>
+                </>}
+              </div>
               <input value={activity.area} onChange={(event) => updateActivity(index, "area", event.target.value)} />
               <input value={activity.start} onChange={(event) => updateActivity(index, "start", event.target.value)} />
               <input value={activity.end} onChange={(event) => updateActivity(index, "end", event.target.value)} />
@@ -3828,7 +3858,7 @@ function GovernanceView({
       <article className="panelCard">
         <div className="sectionHead">
           <div><h2>Rol de limpieza semanal</h2><span>Configuración independiente para cada sucursal</span></div>
-          <div className="taskActions"><select value={cleaningBranch} onChange={(event)=>setCleaningBranch(event.target.value as typeof cleaningBranch)}><option>Matriz</option><option>Sucursal Centro</option></select><button className="primary compact" onClick={addCleaningRow}>Agregar actividad</button></div>
+          <div className="taskActions"><select disabled={!canGovern(user)} value={cleaningBranch} onChange={(event)=>setCleaningBranch(event.target.value as typeof cleaningBranch)}><StoreBranchOptions user={user} /></select><button className="primary compact" onClick={addCleaningRow}>Agregar actividad</button></div>
         </div>
         <div className="editableTable cleaningTable">
           <div className="editableRow head">
@@ -3887,7 +3917,7 @@ function TeamView({
       name: "Nuevo colaborador",
       role: "AUXILIAR",
       roleLabel: "Auxiliar",
-      branch: "Matriz",
+      branch: canGovern(user) ? "Matriz" : user.branch,
       area: "Apoyo operativo",
       supervisorId: supervisor?.id,
       shift: "A",
@@ -3910,7 +3940,7 @@ function TeamView({
           <h2>Directorio editable</h2>
           <span>La lista de colaboradores alimenta usuarios, organigrama, evaluaciones, horarios y tareas.</span>
         </div>
-        {canGovern(user) && (
+        {canManageStore(user) && (
           <button className="primary compact" onClick={addEmployee}>
             Agregar colaborador
           </button>
@@ -3931,16 +3961,16 @@ function TeamView({
         {visibleEmployees.map((employee, index) => (
           <div className="tr peopleRow" key={employee.id}>
             <input disabled value={employee.id} title="Identificador maestro: no se modifica para conservar todas las relaciones" />
-            <input disabled={!canGovern(user)} value={employee.name} onChange={(event) => updateEmployee(index, "name", event.target.value)} />
+            <input disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} value={employee.name} onChange={(event) => updateEmployee(index, "name", event.target.value)} />
             <select
-              disabled={!canGovern(user)}
+              disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))}
               value={employee.role}
               onChange={(event) => {
                 const role = event.target.value as Role;
                 updateEmployeePatch(index, { role, roleLabel: roleLabel(role) });
               }}
             >
-              {roleOptions.map((role) => (
+              {roleOptions.filter(role => canGovern(user) || !["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(role)).map((role) => (
                 <option key={role} value={role}>
                   {roleLabel(role)}
                 </option>
@@ -3951,14 +3981,14 @@ function TeamView({
                 <option key={branch}>{branch}</option>
               ))}
             </select>
-            <input disabled={!canGovern(user)} value={employee.area} onChange={(event) => updateEmployee(index, "area", event.target.value)} />
-            <select disabled={!canGovern(user)} value={employee.shift} onChange={(event) => updateEmployee(index, "shift", event.target.value as Employee["shift"])}>
+            <input disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} value={employee.area} onChange={(event) => updateEmployee(index, "area", event.target.value)} />
+            <select disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} value={employee.shift} onChange={(event) => updateEmployee(index, "shift", event.target.value as Employee["shift"])}>
               {["A", "B", "Completo", "Directivo"].map((shift) => (
                 <option key={shift}>{shift}</option>
               ))}
             </select>
             <select
-              disabled={!canGovern(user)}
+              disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))}
               value={employee.supervisorId ?? ""}
               onChange={(event) => updateEmployee(index, "supervisorId", event.target.value || undefined)}
             >
@@ -3974,13 +4004,13 @@ function TeamView({
             <span>
               ${(employee.salaryMin ?? 0).toLocaleString("es-MX")} - ${(employee.salaryMax ?? 0).toLocaleString("es-MX")}
             </span>
-            <button className="ghost danger" disabled={!canGovern(user)} onClick={() => removeEmployee(employee.id)}>
+            <button className="ghost danger" disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} onClick={() => removeEmployee(employee.id)}>
               Borrar
             </button>
           </div>
         ))}
       </div>
-      {["001","002","003","005"].includes(user.id)&&<div className="accessAdmin"><div className="sectionHead"><div><h2>Accesos y contraseñas temporales</h2><span>La contraseña se usa una vez; el colaborador deberá reemplazarla al entrar.</span></div></div>{collaborators.filter((employee)=>employee.name!=="Vacante").map((employee)=><EmployeeAccessControl key={employee.id} employee={employee}/>)}</div>}
+      {["001","002","003","005"].includes(user.id)&&<div className="accessAdmin"><div className="sectionHead"><div><h2>Accesos y contraseñas temporales</h2><span>La contraseña se usa una vez; el colaborador deberá reemplazarla al entrar.</span></div></div>{visibleEmployees.filter((employee)=>employee.name!=="Vacante").map((employee)=><EmployeeAccessControl key={employee.id} employee={employee}/>)}</div>}
       </article>
 
       <article className="panelCard">
@@ -4700,7 +4730,8 @@ function CleaningScoreboardView(props: {
   const today = todayKey();
   const participants = cleaningParticipantIds(props.activitySchedules)
     .map((id) => props.collaborators.find((employee) => employee.id === id))
-    .filter((employee): employee is Employee => Boolean(employee));
+    .filter((employee): employee is Employee => Boolean(employee))
+    .filter(employee => canViewAll(props.user) || employee.branch === props.user.branch);
 
   const rows = participants
     .map((employee) => {
@@ -5127,7 +5158,7 @@ export function TasksView({
         <button className="primary" disabled={!assignable.length}>Asignar</button>
       </form>}
 
-      {canGovern(user) && <article className="panelCard"><div className="sectionHead"><div><h2>Lugar de trabajo de hoy</h2><span>Auxiliares y Jan reciben los procesos del lugar asignado.</span></div></div><div className="taskList">{locationTargets.map((employee)=>{const assigned=workLocations.find((item)=>item.employeeId===employee.id&&item.date===today)?.location??employee.branch;return <div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel}</small></span><select value={assigned} onChange={(event)=>assignWorkLocation(employee.id,event.target.value as WorkLocation["location"])}><option>Matriz</option><option>Sucursal Centro</option></select></div>;})}</div></article>}
+      {canGovern(user) && <article className="panelCard"><div className="sectionHead"><div><h2>Lugar de trabajo de hoy</h2><span>Auxiliares y Jan reciben los procesos del lugar asignado.</span></div></div><div className="taskList">{locationTargets.map((employee)=>{const assigned=workLocations.find((item)=>item.employeeId===employee.id&&item.date===today)?.location??employee.branch;return <div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel}</small></span><select value={assigned} onChange={(event)=>assignWorkLocation(employee.id,event.target.value as WorkLocation["location"])}><StoreBranchOptions user={user} /></select></div>;})}</div></article>}
 
       {isAuxiliary && <article className="panelCard">
         <h2>Mis instrucciones</h2>
@@ -5285,7 +5316,7 @@ function AuditDashboard({ user, collaborators, audits, startAudit, updateAudit }
   const completedChecks=visible.flatMap((audit)=>audit.checks).filter((check)=>check.result!=="Pendiente"&&check.result!=="No aplica");
   const compliance=completedChecks.length?completedChecks.filter((check)=>check.result==="Cumple").length/completedChecks.length*100:0;
   return <section className="stack"><div className="grid"><Metric label="Auditorías abiertas" value={String(visible.filter((item)=>item.status!=="Cerrada").length)} icon={<ShieldCheck/>}/><Metric label="Hallazgos abiertos" value={String(openFindings)} icon={<AlertTriangle/>}/><Metric label="Cumplimiento" value={`${compliance.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="Auditorías cerradas" value={String(visible.filter((item)=>item.status==="Cerrada").length)} icon={<CheckCircle2/>}/></div>
-    {(canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role))&&<form className="panelCard form" onSubmit={startAudit}><h2>Iniciar auditoría</h2><div className="auditFormGrid"><label>Fecha<input name="date" type="date" defaultValue={todayKey()} required/></label><label>Proceso<select name="processId" required><option value="">Selecciona proceso</option>{processes.map((process)=><option key={process.id} value={process.id}>{process.name}</option>)}</select></label><label>Responsable auditado<select name="responsibleId" required><option value="">Selecciona responsable</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label></div><textarea name="notes" placeholder="Objetivo, alcance u observaciones iniciales"/><button className="primary">Crear checklist de auditoría</button></form>}
+    {(canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role))&&<form className="panelCard form" onSubmit={startAudit}><h2>Iniciar auditoría</h2><div className="auditFormGrid"><label>Fecha<input name="date" type="date" defaultValue={todayKey()} required/></label><label>Proceso<select name="processId" required><option value="">Selecciona proceso</option>{processes.map((process)=><option key={process.id} value={process.id}>{process.name}</option>)}</select></label><label>Responsable auditado<select name="responsibleId" required><option value="">Selecciona responsable</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select></label></div><textarea name="notes" placeholder="Objetivo, alcance u observaciones iniciales"/><button className="primary">Crear checklist de auditoría</button></form>}
     <div className="stack">{visible.map((audit)=><AuditEditor key={audit.id} audit={audit} collaborators={collaborators} canEdit={canGovern(user)||audit.auditorId===user.id} onSave={updateAudit}/>)}{visible.length===0&&<article className="panelCard"><p className="muted">No hay auditorías registradas.</p></article>}</div>
   </section>;
 }
@@ -5310,9 +5341,9 @@ function KpiDashboard({ user, collaborators, records, saveRecord }: {
   const canManage = canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);
   const suggestions = ["Ventas","Margen bruto","Ticket promedio","Exactitud de inventario","Diferencias de inventario","Productos agotados","Rotación de inventario","Gastos sobre ventas","Cotizaciones convertidas","Clientes nuevos","Asistencia","Tareas cumplidas","SLA cumplido","Garantías resueltas","Cuentas vencidas","Conciliación bancaria"];
   return <section className="stack">
-    <article className="panelCard"><div className="sectionHead"><div><h2>Tablero de cumplimiento</h2><span>Meta contra resultado real por responsable.</span></div></div><div className="reportFilters"><label>Mes<input type="month" value={month} onChange={(event)=>setMonth(event.target.value)}/></label><label>Sucursal<select value={branch} onChange={(event)=>setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Puesto<select value={role} onChange={(event)=>setRole(event.target.value)}><option value="TODOS">Todos</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label></div></article>
+    <article className="panelCard"><div className="sectionHead"><div><h2>Tablero de cumplimiento</h2><span>Meta contra resultado real por responsable.</span></div></div><div className="reportFilters"><label>Mes<input type="month" value={month} onChange={(event)=>setMonth(event.target.value)}/></label><label>Sucursal<select value={branch} onChange={(event)=>setBranch(event.target.value)}><option>Todas</option><StoreBranchOptions user={user} corporate /></select></label><label>Puesto<select value={role} onChange={(event)=>setRole(event.target.value)}><option value="TODOS">Todos</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label></div></article>
     <div className="grid"><Metric label="Promedio de metas registradas" value={`${average.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
-    {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><p>Diario: la fecha elegida. Semanal: siete días desde esa fecha. Mensual: el mes completo. Una captura del mismo indicador, periodo y responsable actualiza ese resultado.</p><div className="kpiFormGrid"><label>Inicio de medición<input name="periodStart" type="date" defaultValue={todayKey()} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" placeholder="Resultado medido" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
+    {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><p>Diario: la fecha elegida. Semanal: siete días desde esa fecha. Mensual: el mes completo. Una captura del mismo indicador, periodo y responsable actualiza ese resultado.</p><div className="kpiFormGrid"><label>Inicio de medición<input name="periodStart" type="date" defaultValue={todayKey()} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" placeholder="Resultado medido" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
     <article className="panelCard"><div className="sectionHead"><div><h2>Matriz de KPIs</h2><span>{month} · {branch} · {role==="TODOS"?"Todos los puestos":roleLabel(role as Role)}</span></div><strong>{visible.length} indicadores</strong></div><div className="operationTable kpiTable"><div className="operationRow head"><span>Indicador</span><span>Responsable</span><span>Meta</span><span>Real</span><span>Cumplimiento</span><span>Semáforo</span></div>{visible.map((item)=>{const percent=compliance(item);return <div className="operationRow" key={item.id}><span><strong>{item.name}</strong><small>{item.area} · {item.frequency} · {item.periodStart ? `${item.periodStart} a ${item.periodEnd}` : `Registro anterior de ${item.month}: periodo no confirmado`}</small></span><span>{item.employeeId?collaborators.find((employee)=>employee.id===item.employeeId)?.name||item.employeeId:item.role==="TODOS"?item.branch:roleLabel(item.role)}</span><span>{item.unit==="$"?"$":""}{item.target.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><span>{item.unit==="$"?"$":""}{item.actual.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><strong>{percent.toFixed(0)}%</strong><span className={`statusPill ${percent>=100?"success":percent>=85?"warning":"danger"}`}>{percent>=100?"Correcto":percent>=85?"Atención":"Intervención"}</span></div>})}{visible.length===0&&<p className="muted">No hay indicadores capturados para estos filtros.</p>}</div></article>
   </section>;
 }
@@ -5380,12 +5411,12 @@ function FinancialDashboard({ user, suppliers, payables, bankAccounts, bankTrans
       <div className="sectionHead"><div><h2>Vista de dirección</h2><span>Información registrada en bancos, gastos y cuentas por pagar.</span></div><strong>{user.name}</strong></div>
       <div className="reportFilters">
         <label>Mes<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></label>
-        <label>Sucursal<select value={branch} onChange={(event) => setBranch(event.target.value)}><option>Todas</option><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select></label>
+        <label>Sucursal<select value={branch} onChange={(event) => setBranch(event.target.value)}><option>Todas</option><StoreBranchOptions user={user} corporate /></select></label>
       </div>
     </article>
     {(canGovern(user) || ["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)) && <form className="panelCard form" onSubmit={addMonthlyBudget}>
       <div className="sectionHead"><div><h2>Definir presupuesto mensual</h2><span>Si la categoría ya existe para el mes y sucursal, se actualizará.</span></div></div>
-      <div className="budgetFormGrid"><input name="month" type="month" defaultValue={month} required/><select name="category" required><option value="">Categoría</option><option>Compra de mercancía</option><option>Pago a proveedores</option><option>Nómina</option><option>Renta</option><option>Servicios</option><option>Impuestos</option><option>Mantenimiento</option><option>Publicidad</option><option>Flete</option><option>Viáticos</option><option>Comisiones bancarias</option><option>Otros gastos</option></select><input name="amount" type="number" min="0" step="0.01" placeholder="Presupuesto" required/><select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select><button className="primary">Guardar presupuesto</button></div>
+      <div className="budgetFormGrid"><input name="month" type="month" defaultValue={month} required/><select name="category" required><option value="">Categoría</option><option>Compra de mercancía</option><option>Pago a proveedores</option><option>Nómina</option><option>Renta</option><option>Servicios</option><option>Impuestos</option><option>Mantenimiento</option><option>Publicidad</option><option>Flete</option><option>Viáticos</option><option>Comisiones bancarias</option><option>Otros gastos</option></select><input name="amount" type="number" min="0" step="0.01" placeholder="Presupuesto" required/><select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select><button className="primary">Guardar presupuesto</button></div>
     </form>}
     <div className="grid">
       <Metric label="Saldo en bancos" value={`$${bankBalance.toLocaleString("es-MX")}`} icon={<WalletCards />} />
@@ -5482,7 +5513,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <input name="name" placeholder="Razon social o nombre" required />
         <div className="moneyInputs"><input name="taxId" placeholder="RFC" /><input name="contact" placeholder="Contacto" /></div>
         <div className="moneyInputs"><input name="phone" placeholder="Telefono" /><input name="paymentTermsDays" type="number" min="0" defaultValue="0" placeholder="Dias de credito" /></div>
-        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select>
         <button className="primary">Guardar proveedor</button>
       </form>
       <form className="panelCard form" onSubmit={addPayable}>
@@ -5493,7 +5524,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <div className="moneyInputs"><label>Emision<input name="issueDate" type="date" defaultValue={today} required /></label><label>Dias de credito<input name="creditDays" type="number" min="0" defaultValue="30" required /></label></div>
         <label>Vencimiento manual (opcional)<input name="dueDate" type="date" /></label>
         <div className="checkRow"><label><input name="hasInvoice" type="checkbox" defaultChecked /> Tiene factura</label><label><input name="deductible" type="checkbox" /> Es deducible</label></div>
-        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select>
         <textarea name="notes" placeholder="Orden de compra, recepcion o aclaraciones" />
         <button className="primary">Registrar obligación</button>
       </form>
@@ -5519,7 +5550,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <h2>Cuenta bancaria</h2>
         <div className="moneyInputs"><input name="bank" placeholder="Banco" required /><input name="accountName" placeholder="Nombre de la cuenta" required /></div>
         <div className="moneyInputs"><input name="lastFour" maxLength={4} placeholder="Ultimos 4 digitos" required /><input name="openingBalance" type="number" step="0.01" defaultValue="0" placeholder="Saldo inicial" required /></div>
-        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select>
         <button className="primary">Guardar cuenta</button>
       </form>
       <form className="panelCard form" onSubmit={addBankTransaction}>
@@ -5534,7 +5565,7 @@ function FinanceView({ user, suppliers, payables, addSupplier, addPayable, reque
         <input name="invoice" placeholder="Factura, si existe" />
         <select name="supplierId"><option value="">Sin proveedor relacionado</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <div className="checkRow"><label><input name="hasInvoice" type="checkbox" /> Tiene factura</label><label><input name="deductible" type="checkbox" /> Es deducible</label></div>
-        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select>
         <button className="primary">Registrar movimiento</button>
       </form>
     </section>}
@@ -5597,7 +5628,7 @@ function CashView({
           </div>
           <div className="moneyInputs">
             <label>Fecha<input name="date" type="date" defaultValue={todayKey()} required /></label>
-            <label>Sucursal<select name="branch" defaultValue={user.branch}><option>Matriz</option><option>Sucursal Centro</option><option>Corporativo</option></select></label>
+            <label>Sucursal<select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select></label>
           </div>
           <label>Fondo inicial contado<input name="openingFund" type="number" min="0" step="0.01" required /></label>
           <textarea name="notes" placeholder="Billetes, monedas, folio de entrega y observaciones" required />
@@ -5820,7 +5851,7 @@ export function RequestsView({
   const visibleRequests = requestsInSection(internalRequests, user, reports);
   const updateRequest = (id: string, patch: Partial<InternalRequest>) => {
     const target = visibleRequests.find((request) => request.id === id);
-    if (!target || !(target.recipientId === user.id || (canGovern(user) && target.confidentiality !== "Confidencial"))) return;
+    if (!target || !(target.recipientId === user.id || (canManageStore(user) && (canGovern(user) || target.branch === user.branch) && target.confidentiality !== "Confidencial"))) return;
     setInternalRequests(internalRequests.map((request) => (request.id === id ? { ...request, ...patch } : request)));
   };
   const filteredRequests = visibleRequests
@@ -5889,7 +5920,7 @@ export function RequestsView({
             const author = collaborators.find((employee) => employee.id === request.requestedById);
             const authorName = request.requestedById === "sistema" ? "Sistema (SLA automatico)" : author?.name ?? "Sin autor";
             const recipient = collaborators.find((employee) => employee.id === request.recipientId);
-            const canAnswer = request.recipientId === user.id || (canGovern(user) && request.confidentiality !== "Confidencial");
+            const canAnswer = request.recipientId === user.id || (canManageStore(user) && (canGovern(user) || request.branch === user.branch) && request.confidentiality !== "Confidencial");
             const isMine = request.requestedById === user.id;
             const hasResponse = request.response.trim().length > 0;
             const responder = collaborators.find((employee) => employee.id === request.respondedById);
@@ -5987,21 +6018,24 @@ function ReportsView({
   bankTransactions: BankTransaction[];
   monthlyBudgets: MonthlyBudget[];
 }) {
+  const [reportBranch, setReportBranch] = useState("Todas");
+  const selectedBranch = canViewAll(user) ? reportBranch : user.branch;
+  const inBranch = (row: object) => selectedBranch === "Todas" || recordInBranch(row, selectedBranch, collaborators);
   const [period, setPeriod] = useState<"day" | "week" | "month">("day");
   const [baseDate, setBaseDate] = useState(todayKey());
   const { start, end, label } = periodRange(period, baseDate);
   const inRange = (date: string) => date >= start && date <= end;
-  const filteredAttendance = attendance.filter((entry) => inRange(entry.date));
-  const filteredEvaluations = evaluations.filter((entry) => inRange(entry.date));
-  const filteredCuts = cashCuts.filter((entry) => inRange(entry.date));
-  const filteredCash = cashIncidents.filter((entry) => inRange(entry.date));
-  const filteredWarranties = warranties.filter((entry) => inRange(entry.date));
-  const filteredTasks = dailyTasks.filter((entry) => inRange(entry.date));
-  const filteredProcesses = processInstances.filter((entry) => inRange(entry.date));
-  const filteredRequests = internalRequests.filter((entry) => inRange(entry.date));
-  const filteredActivityRuns = activityRuns.filter((entry) => inRange(entry.date));
-  const filteredBankTransactions = bankTransactions.filter((entry) => inRange(entry.date));
-  const filteredBudgets = monthlyBudgets.filter((entry) => entry.month >= start.slice(0,7) && entry.month <= end.slice(0,7));
+  const filteredAttendance = attendance.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredEvaluations = evaluations.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredCuts = cashCuts.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredCash = cashIncidents.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredWarranties = warranties.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredTasks = dailyTasks.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredProcesses = processInstances.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredRequests = [...requestsInSection(internalRequests, user, true), ...requestsInSection(internalRequests, user, false)].filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredActivityRuns = activityRuns.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredBankTransactions = bankTransactions.filter((entry) => inRange(entry.date) && inBranch(entry));
+  const filteredBudgets = monthlyBudgets.filter((entry) => inBranch(entry) && entry.month >= start.slice(0,7) && entry.month <= end.slice(0,7));
   const slaOnTime = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada").length;
   const slaLate = filteredActivityRuns.filter((entry) => slaStatus(entry) === "Completada con retraso").length;
   const slaBreached = filteredActivityRuns.filter((entry) => !entry.completedAt && slaStatus(entry) === "Vencida").length;
@@ -6009,7 +6043,7 @@ function ReportsView({
   const difference = filteredCuts.reduce((sum, cut) => sum + cut.difference, 0);
   const deposits = filteredBankTransactions.filter((item)=>item.type==="Deposito").reduce((sum,item)=>sum+item.amount,0);
   const financialOutflow = filteredBankTransactions.filter((item)=>item.type!=="Deposito" && item.type!=="Transferencia").reduce((sum,item)=>sum+item.amount,0);
-  const payableBalance = payables.reduce((sum,item)=>sum+Math.max(0,item.amount-item.paidAmount),0);
+  const payableBalance = payables.filter(inBranch).reduce((sum,item)=>sum+Math.max(0,item.amount-item.paidAmount),0);
   const budgetTotal = filteredBudgets.reduce((sum,item)=>sum+item.amount,0);
   const avgEval =
     filteredEvaluations.length === 0
@@ -6030,6 +6064,7 @@ function ReportsView({
           </button>
         </div>
         <div className="reportFilters">
+          {canViewAll(user) ? <label>Sucursal<select value={reportBranch} onChange={event => setReportBranch(event.target.value)}><option>Todas</option><StoreBranchOptions user={user} /></select></label> : <strong>Sucursal: {user.branch}</strong>}
           <label>
             Periodo
             <select value={period} onChange={(event) => setPeriod(event.target.value as "day" | "week" | "month")}>
@@ -6049,7 +6084,7 @@ function ReportsView({
         <div className="reportHeader">
           <div>
             <h2>XOXO Ferreton - Resumen operativo</h2>
-            <span>{label}</span>
+            <span>{label} · {selectedBranch === "Todas" ? "Ambas tiendas" : selectedBranch}</span>
           </div>
           <strong>Generado por {user.name}</strong>
         </div>
@@ -6082,10 +6117,10 @@ function ReportsView({
         </div>
 
         <ReportSection title="Finanzas, bancos y comprobación fiscal">
-          {bankAccounts.map((account)=><ReportLine key={account.id} left={`${account.bank} · ${account.accountName} · termina ${account.lastFour}`} right={`${account.branch} · saldo inicial $${account.openingBalance.toLocaleString("es-MX")}`} />)}
+          {bankAccounts.filter(inBranch).map((account)=><ReportLine key={account.id} left={`${account.bank} · ${account.accountName} · termina ${account.lastFour}`} right={`${account.branch} · saldo inicial $${account.openingBalance.toLocaleString("es-MX")}`} />)}
           {filteredBankTransactions.map((item)=><ReportLine key={item.id} left={`${item.date} · ${item.type} · ${item.counterparty}`} right={`$${item.amount.toLocaleString("es-MX")} · ${item.category||"Sin clasificar"} · ${item.invoice||"Sin factura"} · ${item.deductible?"Deducible":"No deducible"} · ${item.reconciled?"Conciliado":"Pendiente de conciliar"}`} />)}
-          {payables.filter((item)=>item.status!=="Pagada").map((item)=><ReportLine key={item.id} left={`${suppliers.find((supplier)=>supplier.id===item.supplierId)?.name||"Proveedor"} · ${item.invoice}`} right={`Vence ${item.dueDate} · saldo $${Math.max(0,item.amount-item.paidAmount).toLocaleString("es-MX")} · ${item.hasInvoice?"Con factura":"Sin factura"}`} />)}
-          {filteredBankTransactions.length===0&&payables.filter((item)=>item.status!=="Pagada").length===0&&<p>Sin información financiera en el periodo.</p>}
+          {payables.filter(inBranch).filter((item)=>item.status!=="Pagada").map((item)=><ReportLine key={item.id} left={`${suppliers.find((supplier)=>supplier.id===item.supplierId)?.name||"Proveedor"} · ${item.invoice}`} right={`Vence ${item.dueDate} · saldo $${Math.max(0,item.amount-item.paidAmount).toLocaleString("es-MX")} · ${item.hasInvoice?"Con factura":"Sin factura"}`} />)}
+          {filteredBankTransactions.length===0&&payables.filter(inBranch).filter((item)=>item.status!=="Pagada").length===0&&<p>Sin información financiera en el periodo.</p>}
         </ReportSection>
 
         <ReportSection title="Presupuesto contra gasto real">
@@ -6189,7 +6224,11 @@ function ReportsView({
 type EvidenceGalleryItem = {
   id: string;
   employeeId: string;
-  kind: "Tarea" | "Actividad" | "Aseo";
+  kind: "Tarea" | "Actividad" | "Aseo" | "Proceso" | "Centro";
+  date?: string;
+  requiresPair?: boolean;
+  link?: string;
+  links?: { label: string; url: string }[];
   title: string;
   scheduled: string;
   status: string;
@@ -6210,16 +6249,44 @@ function EvidenceGalleryView({
   collaborators,
   dailyTasks,
   activityRuns,
+  processInstances,
 }: {
   user: Employee;
   today: string;
   collaborators: Employee[];
   dailyTasks: DailyTask[];
   activityRuns: ActivityRun[];
+  processInstances: ProcessInstance[];
 }) {
   const [employeeFilter, setEmployeeFilter] = useState("Todos");
-  const [evidenceDate, setEvidenceDate] = useState(today);
+  const [evidenceDate, setEvidenceDate] = useState(() => shiftDateKey(today, -5));
+  const [evidenceEnd, setEvidenceEnd] = useState(today);
   const [onlyMissing, setOnlyMissing] = useState(false);
+  const [plans, setPlans] = useState<DayPlan[]>([]);
+  const [centroEvidence, setCentroEvidence] = useState<EvidenceGalleryItem[]>([]);
+  const [historyError, setHistoryError] = useState("");
+  const [historyLoading, setHistoryLoading] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    setPlans([]); setCentroEvidence([]); setHistoryError("");
+    if (!evidenceDate || !evidenceEnd || evidenceDate > evidenceEnd) { setHistoryError("Selecciona un periodo válido."); return; }
+    setHistoryLoading(true);
+    const read = async () => {
+      try {
+        if (!supabase) throw new Error("Sin conexión para consultar el historial.");
+        const [snapshots, centro] = await Promise.all([
+          supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
+          supabase.rpc("attendance_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+        ]);
+        if (!alive) return;
+        if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
+        if (!centro.error) setCentroEvidence((centro.data as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
+        if (snapshots.error || centro.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message));
+      } catch (failure) { if (alive) setHistoryError(failure instanceof Error ? failure.message : "No se pudo leer el historial."); }
+      finally { if (alive) setHistoryLoading(false); }
+    };
+    void read(); return () => { alive = false; };
+  }, [evidenceDate, evidenceEnd]);
 
   const visibleEmployees = canViewAll(user)
     ? collaborators
@@ -6227,24 +6294,32 @@ function EvidenceGalleryView({
   const visibleIds = new Set(visibleEmployees.map((employee) => employee.id));
 
   const items: EvidenceGalleryItem[] = [
+    ...centroEvidence,
+    ...plans.filter(plan => visibleIds.has(plan.employee_number)).flatMap(plan => plan.slots.filter(slot => slot.kind !== "Centro" && slot.evidence && slot.evidence !== "none" && !findSlotRun(slot, activityRuns.filter(run => run.employeeId === plan.employee_number && run.date === plan.day))).map(slot => ({
+      id: `${plan.employee_number}-${plan.day}-${slot.key}`, employeeId: plan.employee_number, kind: slot.kind as "Actividad" | "Aseo", title: slot.title, date: plan.day, scheduled: `${slot.start}-${slot.end}`, status: "Sin comenzar", requiresPair: slot.evidence === "photo",
+    }))),
     ...dailyTasks
-      .filter((task) => task.date === evidenceDate && task.requiresPhoto && visibleIds.has(task.employeeId))
+      .filter((task) => task.date >= evidenceDate && task.date <= evidenceEnd && (task.requiresPhoto || task.beforeEvidenceCapture || task.afterEvidenceCapture) && visibleIds.has(task.employeeId))
       .map((task) => ({
-        id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title,
+        id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title, date: task.date, requiresPair: Boolean(task.requiresPhoto),
         scheduled: `${task.start}-${task.end}`, status: task.status,
         before: task.beforeEvidenceCapture, after: task.afterEvidenceCapture,
       })),
     ...activityRuns
-      .filter((run) => run.date === evidenceDate && run.evidence && run.evidence !== "none" && visibleIds.has(run.employeeId))
+      .filter((run) => run.date >= evidenceDate && run.date <= evidenceEnd && (run.evidence && run.evidence !== "none" || run.beforeEvidenceCapture || run.afterEvidenceCapture || run.evidenceCapture) && visibleIds.has(run.employeeId))
       .map((run) => ({
-        id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title,
+        id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title, date: run.date, requiresPair: run.evidence === "photo",
         scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, status: run.status,
         before: run.beforeEvidenceCapture, after: run.afterEvidenceCapture, single: run.evidenceCapture,
       })),
+    ...processInstances.filter(instance => instance.date >= evidenceDate && instance.date <= evidenceEnd && visibleIds.has(instance.ownerId)).flatMap(instance => instance.stepStates
+      .filter(step => step.evidence && step.evidence !== "none" || step.evidenceCapture || step.beforeEvidenceCapture || step.afterEvidenceCapture)
+      .map((step, index) => ({ id: `${instance.id}-${index}`, employeeId: instance.ownerId, kind: "Proceso" as const, title: `${instance.title} · ${step.title}`, date: instance.date,
+        requiresPair: step.evidence === "photo", scheduled: "Paso de proceso", status: step.done ? "Completada" : "Pendiente", before: step.beforeEvidenceCapture, after: step.afterEvidenceCapture, single: step.evidenceCapture }))),
   ];
 
-  const withPhotos = items.filter((item) => item.before || item.after || item.single);
-  const missingPhotos = items.filter((item) => !item.before && !item.after && !item.single);
+  const withPhotos = items.filter((item) => item.before || item.after || item.single || item.link || item.links?.length);
+  const missingPhotos = items.filter((item) => item.requiresPair ? !item.before?.dataUrl || !item.after?.dataUrl : !item.before && !item.after && !item.single && !item.link);
   const filteredByEmployee = (list: EvidenceGalleryItem[]) => list.filter((item) => employeeFilter === "Todos" || item.employeeId === employeeFilter);
   const shown = filteredByEmployee(onlyMissing ? missingPhotos : withPhotos);
 
@@ -6254,10 +6329,12 @@ function EvidenceGalleryView({
         <div className="sectionHead">
           <div>
             <h2>Historial de evidencias</h2>
-            <span>Fotos de tareas y actividades de la fecha seleccionada. Pulsa Ampliar para ver los detalles.</span>
+            <span>Evidencias de tareas, actividades y procesos del periodo. Pulsa Ampliar para ver los detalles.</span>
           </div>
           <span className="inlineTimes">
-            <label>Fecha<input type="date" value={evidenceDate} onChange={(event) => setEvidenceDate(event.target.value)} /></label>
+            <label>Desde<input type="date" value={evidenceDate} max={evidenceEnd} onChange={(event) => setEvidenceDate(event.target.value)} /></label>
+            <label>Hasta<input type="date" value={evidenceEnd} min={evidenceDate} max={today} onChange={(event) => setEvidenceEnd(event.target.value)} /></label>
+            <button className="ghost compact" onClick={() => { setEvidenceDate(shiftDateKey(today, -5)); setEvidenceEnd(today); }}>Hoy y 5 días anteriores</button>
             <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
               <option value="Todos">Todos los colaboradores</option>
               {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
@@ -6268,14 +6345,17 @@ function EvidenceGalleryView({
             </select>
           </span>
         </div>
+        {historyLoading && <p role="status">Consultando calendario y evidencias históricas…</p>}
+        {historyError && <p role="alert" className="loginError">{historyError}</p>}
+        <p className="muted">Las actividades sin comenzar aparecen cuando existe un plan guardado de ese día. Una foto inicial sin foto final sigue contando como evidencia pendiente.</p>
         {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente para estos filtros." : "No hay fotos para estos filtros."}</p>}
         <div className="evidenceGallery">
           {shown.map((item) => (
-            <article className="evidenceGalleryCard" key={`${item.kind}-${item.id}`}>
+            <article className="evidenceGalleryCard" key={`${item.kind}-${item.date}-${item.id}`}>
               <div className="sectionHead">
                 <div>
                   <strong>{collaborators.find((employee) => employee.id === item.employeeId)?.name ?? item.employeeId}</strong>
-                  <small>{item.kind} · {item.title} · {item.scheduled}</small>
+                  <small>{item.date} · {item.kind} · {item.title} · {item.scheduled}</small>
                 </div>
                 <span className={`statusPill ${evidenceStatusClass(item.status)}`}>{item.status}</span>
               </div>
@@ -6286,7 +6366,9 @@ function EvidenceGalleryView({
                 </div>
               )}
               {item.single && <EvidenceCaptured value={item.single} label={item.title} onClear={() => {}} retakeLabel="" readOnly />}
-              {!item.before && !item.after && !item.single && <p className="danger">Sin evidencia subida todavía.</p>}
+              {item.link && <a href={item.link} target="_blank" rel="noreferrer">Abrir evidencia de Centro</a>}
+              {item.links?.map((link, index) => <p key={index}><a href={link.url} target="_blank" rel="noreferrer">{link.label}</a></p>)}
+              {!item.before && !item.after && !item.single && !item.link && !item.links?.length && <p className="danger">Sin evidencia subida todavía.</p>}
             </article>
           ))}
         </div>
@@ -6446,7 +6528,7 @@ function WarrantyView({
         <input name="product" placeholder="Producto / codigo" required />
         <select name="defectType" required><option value="">Tipo de defecto</option><option>Defecto de fábrica</option><option>Pieza faltante</option><option>Pieza rota o fragmentada</option><option>Deformación</option><option>Fragilidad anormal</option><option>Posible mal uso</option><option>Instalación incorrecta</option><option>Desgaste natural</option><option>Otro</option></select>
         <textarea name="reason" placeholder="Descripción completa del problema y condición física" required />
-        <select name="branch" defaultValue={user.branch}><option>Corporativo</option><option>Matriz</option><option>Sucursal Centro</option></select>
+        <select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select>
         <button className="primary">Abrir garantia</button>
         <p className="muted">Jefe de área recibe e inspecciona. Gerencia autoriza la solución. Caja no autoriza garantías.</p>
       </form>
@@ -6521,7 +6603,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
       <div className="sectionHead">
         <div>
           <h2>Estado de apertura y cierre de tiendas</h2>
-          <span>Gerente de tienda autoriza → cajero autoriza → abrir/cerrar cortinas y puertas. Apertura puntual: Matriz 8:00–8:15; Centro 8:50–9:10.</span>
+          <span>Gerente de tienda autoriza → cajero autoriza → abrir/cerrar cortinas y puertas. Apertura puntual: Matriz 8:00–8:15; Centro 8:45–9:00.</span>
         </div>
       </div>
       <div className="openingCards">
@@ -6549,7 +6631,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
           const readyToOpenDoors = managerAuthorized && cashierAuthorized && check.minimumStaff && check.systemsReady && check.processComplete;
           const doorsOpen = Boolean(check.doorsOpenedAt);
           const opened = Boolean(check.openedAt);
-          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 50 && minutes <= 9 * 60 + 10 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
+          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 45 && minutes <= 9 * 60 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
 
           // ---- Cierre ----
           const managerClosingAuthorized = Boolean(check.managerClosingAuthorizedAt);
@@ -6604,7 +6686,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
                   Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
-                  {onTime ? ` · Apertura puntual (${branch === "Sucursal Centro" ? "8:50–9:10" : "8:00–8:15"}): se reconoció con +1 punto a quien participó y al personal ya registrado.` : " · Apertura fuera de su ventana: no aplica reconocimiento."}
+                  {onTime ? ` · Apertura puntual (${branch === "Sucursal Centro" ? "8:45–9:00" : "8:00–8:15"}): se reconoció con +1 punto a quien participó y al personal ya registrado.` : " · Apertura fuera de su ventana: no aplica reconocimiento."}
                   <br />Ubicación: {locationLabel(check.openingLocation)}{check.openingLocation?.accuracyM ? ` · precisión ±${Math.round(check.openingLocation.accuracyM)} m` : ""}
                 </p>
               )}
@@ -6648,3 +6730,23 @@ function SlaReviewItem({incident,employeeName,canDecide,onReview}:{incident:{sou
 }
 
 export default App;
+
+function StoreOverview({ day }: { day: string }) {
+  const [overview, setOverview] = useState<{branch: string; status: string; people: {name: string; roleLabel: string}[]}[]>([]);
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      if (!supabase) return;
+      const {data, error} = await supabase.rpc("store_general_overview");
+      if (active && !error) setOverview(data ?? []);
+    };
+    void refresh();
+    const timer = window.setInterval(refresh, 60000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [day]);
+  return <article className="panelCard noPrint"><div className="sectionHead"><h2>Operación de las tiendas</h2><span>Estado general y compañeros laborando</span></div>{overview.length ? <div className="grid two">{overview.map(store => <div key={store.branch}><strong>{store.branch} · {store.status}</strong><p>{store.people.length ? store.people.map(person => `${person.name} (${person.roleLabel})`).join(", ") : "Sin compañeros registrados laborando"}</p></div>)}</div> : <p className="muted">El estado general aún no está disponible.</p>}</article>;
+}
+
+function StoreBranchOptions({user, corporate = false}: {user: Employee; corporate?: boolean}) {
+  return canViewAll(user) ? <>{corporate && <option>Corporativo</option>}<option>Matriz</option><option>Sucursal Centro</option></> : <option>{user.branch}</option>;
+}

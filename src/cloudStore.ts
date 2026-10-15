@@ -34,8 +34,8 @@ function rememberRows(key: string, rows: unknown[]) {
   if (!incrementalModule(key)) return;
   observedRows.set(key, new Map(rows.map((row) => [String((row as { id: string }).id), JSON.stringify(row)])));
 }
-function visiblePayloads(key: string, data: { payload: any }[]) {
-  return data.map(row => row.payload).filter(row => key !== "xoxo.dailyTasks" || !row.removedAt);
+function visiblePayloads(key: string, data: { payload: any; branch?: string }[]) {
+  return data.map(row => row.branch ? { ...row.payload, branch: row.branch } : row.payload).filter(row => key !== "xoxo.dailyTasks" || !row.removedAt);
 }
 
 export async function archiveCloudTask(id: string, note: string) {
@@ -204,6 +204,11 @@ const moduleTables: Record<string, string> = {
 
 export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
+  if (key === "xoxo.collaborators" || key === "xoxo.storeOpeningChecks") {
+    const { data, error } = await supabase.rpc(key === "xoxo.collaborators" ? "store_collaborators" : "store_opening_checks");
+    if (error) return [] as T;
+    return data as T;
+  }
   const pending = pendingRecord<T>(key);
   if (pending) {
     try { await cloudSave(key, pending.value, pending.changes); clearCloudPending(key, pending.revision); } catch { return pending.value; }
@@ -212,7 +217,7 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const version = localVersions.get(key);
-    const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
+    const { data, error } = await supabase.from(moduleTable).select("payload,branch").order("record_date", { ascending: true });
     if (error) return fallback;
     if (version !== localVersions.get(key)) return pendingRecord<T>(key)?.value ?? fallback;
     const rows = visiblePayloads(key, data);
@@ -230,6 +235,11 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
 // de cloudLoad, no sustituye el estado actual cuando hay una falla de red.
 export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   if (!supabase) return undefined;
+  if (key === "xoxo.collaborators" || key === "xoxo.storeOpeningChecks") {
+    const { data, error } = await supabase.rpc(key === "xoxo.collaborators" ? "store_collaborators" : "store_opening_checks");
+    if (error) return [] as T;
+    return data as T;
+  }
   const pending = pendingRecord<T>(key);
   if (pending) {
     try { await cloudSave(key, pending.value, pending.changes); clearCloudPending(key, pending.revision); } catch { return pending.value; }
@@ -238,7 +248,7 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const version = localVersions.get(key);
-    const { data, error } = await supabase.from(moduleTable).select("payload").order("record_date", { ascending: true });
+    const { data, error } = await supabase.from(moduleTable).select("payload,branch").order("record_date", { ascending: true });
     if (error) return undefined;
     if (version !== localVersions.get(key)) return undefined;
     const rows = visiblePayloads(key, data);
@@ -271,6 +281,11 @@ async function performCloudSave(key: string, value: unknown, changes?: unknown[]
   if (!supabase) return;
   const { data } = await supabase.auth.getUser();
   if (!data.user) throw new Error("La sesion expiro. Vuelve a iniciar sesion.");
+  if (key === "xoxo.collaborators") {
+    const { error } = await supabase.rpc("save_store_collaborators", { records: value });
+    if (error) throw error;
+    return;
+  }
   if (key === "xoxo.storeOpeningChecks") {
     // Nunca reemplazar la lista compartida: cada acción modifica sólo sus campos.
     const { error } = await supabase.rpc("patch_store_opening_checks", { records: changes ?? value });
