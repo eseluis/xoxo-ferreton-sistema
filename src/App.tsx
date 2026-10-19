@@ -6580,26 +6580,49 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
 }
 
 function StoreOpeningReport({user,checks,attendance,collaborators}:{user:Employee;checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[]}) {
-  const [date,setDate]=useState(todayKey());
+  const today = todayKey();
+  const [startDate,setStartDate]=useState(`${today.slice(0,7)}-01`);
+  const [endDate,setEndDate]=useState(today);
   const branches: StoreOpeningCheck["branch"][] = canGovern(user) ? ["Matriz","Sucursal Centro"] : [user.branch === "Sucursal Centro" ? "Sucursal Centro" : "Matriz"];
+  const days:string[]=[];
+  if(startDate<=endDate) {
+    const cursor=new Date(`${startDate}T12:00:00Z`);
+    const last=new Date(`${endDate}T12:00:00Z`);
+    while(cursor<=last) { days.push(cursor.toISOString().slice(0,10)); cursor.setUTCDate(cursor.getUTCDate()+1); }
+  }
   const time=(value?:string)=>value?new Date(value).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit"}):"—";
   const person=(id?:string)=>id?collaborators.find(employee=>employee.id===id)?.name??id:"—";
+  const dateLabel=(value:string)=>new Date(`${value}T12:00:00Z`).toLocaleDateString("es-MX",{timeZone:"UTC",weekday:"short",day:"2-digit",month:"short",year:"numeric"});
   return <article id="store-opening-report" className="wide panelCard storeOpeningReport">
-    <div className="sectionHead"><div><h2>Reporte diario de apertura y cierre</h2><span>Consulta quién laboró y los horarios confirmados por sucursal.</span></div><label>Fecha<input type="date" value={date} max={todayKey()} onChange={event=>setDate(event.target.value)} /></label><button className="ghost compact noPrint" onClick={()=>window.print()}>Imprimir</button></div>
-    <div className="openingCards">{branches.map(branch=>{
-      const record=checks.find(item=>item.date===date&&item.branch===branch);
+    <div className="sectionHead"><div><h2>Reporte de apertura y cierre</h2><span>Consulta quién abrió, a qué hora, la ubicación, el checklist y el cierre de cada día.</span></div><button className="ghost compact noPrint" onClick={()=>window.print()}>Imprimir</button></div>
+    <div className="openingRangeFilters noPrint">
+      <label>Desde<input type="date" value={startDate} max={today} onChange={event=>setStartDate(event.target.value)} /></label>
+      <label>Hasta<input type="date" value={endDate} max={today} onChange={event=>setEndDate(event.target.value)} /></label>
+      <span>{days.length} día(s) · {branches.length} sucursal(es)</span>
+    </div>
+    {startDate>endDate&&<p className="centroAlert" role="alert">La fecha inicial debe ser igual o anterior a la fecha final.</p>}
+    {days.length>0&&<div className="openingCards">{branches.map(branch=>{
       const staff=collaborators.filter(employee=>employee.branch===branch&&employee.name!=="Vacante");
-      const present=staff.map(employee=>({employee,entry:attendance.find(item=>item.date===date&&item.employeeId===employee.id)})).filter(row=>row.entry?.in);
-      return <section className="openingCard" key={branch}><div className="sectionHead"><h3>{branch}</h3><strong className={`statusPill ${record?.closedAt?"muted":record?.openedAt?"ok":"warn"}`}>{record?.closedAt?"CERRADA":record?.openedAt?"ABIERTA":"SIN APERTURA REGISTRADA"}</strong></div>
-        <div className="grid two"><p><strong>Apertura:</strong> {time(record?.openedAt)} · {person(record?.doorsOpenedById??record?.openedById)}</p><p><strong>Cierre:</strong> {time(record?.closedAt)} · {person(record?.closedById)}</p>
-          <p><strong>Autorizó gerente:</strong> {time(record?.managerAuthorizedAt)} · {person(record?.managerAuthorizedById)}</p><p><strong>Autorizó cajero:</strong> {time(record?.cashierAuthorizedAt)} · {person(record?.cashierAuthorizedById)}</p>
-          <p><strong>Autorización de cierre:</strong> {time(record?.managerClosingAuthorizedAt)} · {person(record?.managerClosingAuthorizedById)}</p><p><strong>Cajero en cierre:</strong> {time(record?.cashierClosingAuthorizedAt)} · {person(record?.cashierClosingAuthorizedById)}</p>
-          <p><strong>Personal mínimo:</strong> {record?.minimumStaff?"Sí":"No"} · <strong>Sistemas:</strong> {record?.systemsReady?"Sí":"No"}</p><p><strong>Proceso de apertura:</strong> {record?.processComplete?"Completo":"Pendiente"} · <strong>ERP:</strong> {record?.erpReady?"Listo":"Pendiente"}</p>
-          <p><strong>Ubicación de apertura:</strong> {record?.openingLocation?locationLabel(record.openingLocation):"Sin ubicación"}{record?.openingLocation?.accuracyM?` · ±${Math.round(record.openingLocation.accuracyM)} m`:""}</p>
-        </div>
-        <h4>Personal que laboró ({present.length}/{staff.length})</h4>{present.length?<div className="taskList">{present.map(({employee,entry})=><div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel} · Entrada {entry?.in}</small></span><strong>{entry?.out?`Salida ${entry.out}`:"Sin salida registrada"}</strong></div>)}</div>:<p className="muted">No hay entradas registradas para esta sucursal y fecha.</p>}
+      return <section className="openingCard" key={branch}><div className="sectionHead"><h3>{branch}</h3><strong>{days.length} día(s)</strong></div>
+        <div className="openingRangeTableWrap"><table className="openingRangeTable"><thead><tr><th scope="col">Fecha</th><th scope="col">Estado</th><th scope="col">Apertura · responsable</th><th scope="col">Ubicación</th><th scope="col">Cierre · responsable</th><th scope="col">Checklist y personal</th></tr></thead><tbody>{days.map(date=>{
+          const record=checks.find(item=>item.date===date&&item.branch===branch);
+          const present=staff.map(employee=>({employee,entry:attendance.find(item=>item.date===date&&item.employeeId===employee.id)})).filter(row=>row.entry?.in);
+          const status=record?.closedAt?"Cerrada":record?.openedAt?"Abierta":"Sin apertura";
+          return <tr key={`${branch}-${date}`}><th scope="row">{dateLabel(date)}</th><td><strong className={`statusPill ${record?.closedAt?"muted":record?.openedAt?"ok":"warn"}`}>{status}</strong></td>
+            <td>{time(record?.openedAt)}<small>{person(record?.doorsOpenedById??record?.openedById)}</small></td>
+            <td>{record?.openingLocation?locationLabel(record.openingLocation):"Sin ubicación"}{record?.openingLocation?.accuracyM?` · ±${Math.round(record.openingLocation.accuracyM)} m`:""}</td>
+            <td>{time(record?.closedAt)}<small>{person(record?.closedById)}</small></td>
+            <td><details><summary>{present.length}/{staff.length} presentes · ver detalle</summary>
+              <p><strong>Autorizó gerente:</strong> {time(record?.managerAuthorizedAt)} · {person(record?.managerAuthorizedById)}</p>
+              <p><strong>Autorizó cajero:</strong> {time(record?.cashierAuthorizedAt)} · {person(record?.cashierAuthorizedById)}</p>
+              <p><strong>Caja:</strong> {record?.cashOpenConfirmedAt?`Abierta ${time(record.cashOpenConfirmedAt)} · ${person(record.cashOpenConfirmedById)}`:"Pendiente"} · <strong>ERP:</strong> {record?.erpReady?"Listo":"Pendiente"}</p>
+              <p><strong>Personal mínimo:</strong> {record?.minimumStaff?"Sí":"No"} · <strong>Sistemas:</strong> {record?.systemsReady?"Listos":"Pendientes"} · <strong>Proceso:</strong> {record?.processComplete?"Completo":"Pendiente"}</p>
+              <p><strong>Autorizó cierre:</strong> {time(record?.managerClosingAuthorizedAt)} · {person(record?.managerClosingAuthorizedById)} · <strong>Cajero:</strong> {time(record?.cashierClosingAuthorizedAt)} · {person(record?.cashierClosingAuthorizedById)}</p>
+              {present.length?<ul>{present.map(({employee,entry})=><li key={employee.id}>{employee.name} · Entrada {entry?.in} · Salida {entry?.out??"Sin registrar"}</li>)}</ul>:<p className="muted">No hay entradas registradas para esta sucursal y fecha.</p>}
+            </details></td></tr>;
+        })}</tbody></table></div>
       </section>;
-    })}</div>
+    })}</div>}
   </article>;
 }
 function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {

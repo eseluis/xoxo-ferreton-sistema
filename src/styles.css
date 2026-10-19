@@ -491,6 +491,39 @@ h2 {
   gap: 1rem;
 }
 
+.openingRangeFilters {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.openingRangeFilters label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 175px;
+}
+
+.openingRangeFilters input {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 0.65rem;
+  background: var(--surface-alt);
+  color: var(--text);
+}
+
+.openingRangeFilters span { color: var(--text-muted); padding-bottom: 0.65rem; }
+.storeOpeningReport .openingCards { grid-template-columns: 1fr; }
+.openingRangeTableWrap { overflow-x: auto; }
+.openingRangeTable { width: 100%; min-width: 900px; border-collapse: collapse; }
+.openingRangeTable th, .openingRangeTable td { padding: 0.7rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.openingRangeTable thead th { position: sticky; top: 0; background: var(--surface); color: var(--text-muted); font-size: 0.78rem; }
+.openingRangeTable tbody tr:nth-child(even) { background: var(--surface-alt); }
+.openingRangeTable td small { display: block; margin-top: 0.2rem; color: var(--text-muted); }
+.openingRangeTable details { min-width: 240px; }
+.openingRangeTable details p { margin: 0.35rem 0; }
+.openingRangeTable details ul { padding-left: 1.2rem; }
 .openingCard {
   display: grid;
   gap: 0.8rem;
