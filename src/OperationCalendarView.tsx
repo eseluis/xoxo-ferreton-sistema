@@ -31,11 +31,15 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
   const [selected, setSelected] = useState(today);
   const [employeeId, setEmployeeId] = useState(user.id);
   const [data, setData] = useState<Awaited<ReturnType<typeof readCalendar>>>({ plans: [], centro: [], start: "2026-10-01" });
+  const [teamSnapshots, setTeamSnapshots] = useState<Record<string, Awaited<ReturnType<typeof readCalendar>>>>({});
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState("");
   const [error, setError] = useState(""); const [ready, setReady] = useState(false);
   const [revision, setRevision] = useState(0); const [busy, setBusy] = useState(false);
   const [time, setTime] = useState(workTimeAt());
   const managers = canGovern(user);
-  const team = managers ? collaborators : ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role) ? collaborators.filter(e => e.branch === user.branch || e.id === user.id) : [user];
+  const team = useMemo(() => managers ? collaborators : ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role) ? collaborators.filter(e => e.branch === user.branch || e.id === user.id) : [user], [managers, collaborators, user.branch, user.id, user.role]);
+  const teamPeople = useMemo(() => team.filter(person => person.name !== "Vacante"), [team]);
   const days = useMemo(() => {
     const count = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
     return Array.from({ length: count }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`);
@@ -50,6 +54,25 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
     window.addEventListener("calendar-refresh", refresh);
     return () => { alive = false; clearInterval(timer); window.removeEventListener("calendar-refresh", refresh); };
   }, [days, employeeId, revision, api]);
+  useEffect(() => {
+    let alive = true;
+    setTeamLoading(true); setTeamError("");
+    const loadTeam = async () => {
+      const results: ({ id: string; snapshot: Awaited<ReturnType<typeof readCalendar>> } | { id: string; error: string })[] = await Promise.all(teamPeople.map(async person => {
+        try { return { id: person.id, snapshot: await api.readCalendar(days[0], days[days.length - 1], person.id) }; }
+        catch (e) { return { id: person.id, error: e instanceof Error ? e.message : "No se pudo cargar el día." }; }
+      }));
+      if (!alive) return;
+      const loaded: [string, Awaited<ReturnType<typeof readCalendar>>][] = [];
+      const failed: string[] = [];
+      results.forEach(result => { if ("snapshot" in result) loaded.push([result.id, result.snapshot]); else failed.push(teamPeople.find(person => person.id === result.id)?.name ?? result.id); });
+      setTeamSnapshots(Object.fromEntries(loaded));
+      setTeamError(failed.length ? `No se pudo cargar la agenda de ${failed.join(", ")}.` : "");
+      setTeamLoading(false);
+    };
+    void loadTeam();
+    return () => { alive = false; };
+  }, [teamPeople, days, revision, api]);
   const forDay = (day: string) => {
     const plan = data.plans.find(p => p.day === day && p.employee_number === employeeId);
     const employee = collaborators.find(e => e.id === employeeId) ?? user;
@@ -59,6 +82,22 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
     return { plan, preview, items, result: summarizeDay(day, today, time, items, Boolean(plan)) };
   };
   const detail = forDay(selected);
+  const selectedDayTeam = teamPeople.map(person => {
+    const snapshot = teamSnapshots[person.id];
+    const plan = snapshot?.plans.find(item => item.day === selected && item.employee_number === person.id);
+    const branch = plan?.branch ?? locations.find(item => item.employeeId === person.id && item.date === selected)?.location ?? person.branch;
+    const preview: DayPlan | undefined = !plan && selected >= today ? {
+      employee_number: person.id, day: selected, branch,
+      slots: branch === "Sucursal Centro"
+        ? [...buildRoutine(person, schedules, cleaning, branch, selected), ...CENTRO_TASKS.map(task => ({ key: `Centro-${task.id}`, kind: "Centro" as const, itemId: task.id, title: task.title, start: task.start, end: task.end, instructions: `${task.instructions} Responsable por confirmar según presencia y horario.`, evidence: task.evidence ? "link" : "none", slaMinutes: 0 }))]
+        : buildRoutine(person, schedules, cleaning, branch, selected),
+    } : undefined;
+    return { person, branch, items: snapshot ? dayItems(selected, person.id, plan ?? preview, runs, tasks, snapshot.centro) : [] };
+  });
+  const selectedDayBranches = [...new Set(selectedDayTeam.map(entry => entry.branch))].sort((a, b) => {
+    const order = ["Matriz", "Sucursal Centro"];
+    return (order.indexOf(a) < 0 ? 2 : order.indexOf(a)) - (order.indexOf(b) < 0 ? 2 : order.indexOf(b)) || a.localeCompare(b, "es-MX");
+  });
   const projectNumber = projectDay(data.start, selected);
   const offset = (new Date(`${days[0]}T12:00:00Z`).getUTCDay() + 6) % 7;
   return <section className="operationCalendar stack">
@@ -76,6 +115,23 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
       <article className="panelCard"><div className="sectionHead"><div><h2>{selected} · {collaborators.find(e => e.id === employeeId)?.name ?? user.name}</h2><p>{detail.plan?.branch ?? "Sin plan diario guardado"}</p></div><strong className={`calendarBadge day-${detail.result.color}`}>{detail.result.label}</strong></div><p>{detail.result.explanation}</p><p className="muted">El día de hoy es provisional. El historial conserva la agenda guardada al iniciar la jornada; las tareas adicionales conservan su propia fecha. Los apoyos que no afectan evaluación se muestran, pero no cambian el color.</p>
         {detail.preview && <p className="calendarWarning">Programación prevista con el horario vigente; todavía no es un plan histórico confirmado. Puede cambiar por asignaciones o disponibilidad.</p>}
         <div className="calendarTimeline">{detail.items.map(item => <div className="calendarActivity" key={item.key}><div><strong>{item.start}–{item.end}</strong><small>{item.optional ? "Apoyo sin evaluación" : "Actividad del día"}</small></div><div><h3>{item.title}</h3><p>{item.instructions}</p><span>{item.reason}</span></div>{selected === today && employeeId === user.id && <button className="ghost" onClick={() => onNavigate(item.destination)}>Abrir actividad</button>}</div>)}{!detail.items.length && <p>No hay actividades registradas para este día. No se supone que se cumplieron ni que se incumplieron.</p>}</div>
+      </article>
+      <article className="panelCard selectedDayTeamPanel">
+        <div className="sectionHead"><div><h2>Agenda de todo el equipo · {selected}</h2><p>Actividades ordenadas por tienda y horario. Cada registro muestra al colaborador responsable.</p></div><strong>{teamPeople.length} colaboradores</strong></div>
+        {teamLoading&&<p role="status">Cargando agenda de cada colaborador…</p>}
+        {teamError&&<p className="calendarWarning" role="alert">{teamError} Actualiza para reintentar.</p>}
+        {!teamLoading&&selectedDayBranches.map(branch=>{
+          const entries=selectedDayTeam.filter(entry=>entry.branch===branch);
+          const activities=entries.flatMap(entry=>entry.items.map(item=>({employee:entry.person,item}))).sort((a,b)=>a.item.start.localeCompare(b.item.start)||a.employee.name.localeCompare(b.employee.name,"es-MX"));
+          return <section className="selectedDayStore" key={branch}><div className="sectionHead"><h3>{branch}</h3><span>{entries.length} colaborador(es) · {activities.length} actividad(es)</span></div>
+            {activities.length?<div className="selectedDayTimeline">{activities.map(({employee,item})=><article className="selectedDayActivity" key={`${employee.id}-${item.key}`}>
+              <strong className="selectedDayTime">{item.start}–{item.end}</strong>
+              <div><strong>{employee.name}</strong><small>{employee.roleLabel} · {item.reason}</small></div>
+              <div><strong>{item.title}</strong><details><summary>Instrucciones y detalle</summary><p>{item.instructions}</p></details></div>
+            </article>)}</div>:<p className="muted">{entries.length?"Sin actividades registradas para este día.":"Sin colaboradores asignados a esta tienda ese día."}</p>}
+            {entries.filter(entry=>!entry.items.length).map(entry=><p className="muted selectedDayNoWork" key={entry.person.id}>{entry.person.name} · {entry.person.roleLabel} · Sin actividades registradas</p>)}
+          </section>;
+        })}
       </article>
       <article className="panelCard"><small>ESTABILIZACIÓN ECONÓMICA · 5 MESES</small><h2>El plan y el trabajo diario</h2><p>Inicio: {data.start}. La agenda por hora mantiene las responsabilidades de cada puesto. Estos hitos orientan a dirección; conviértelos en tareas con responsable y horario en Tareas asignadas.</p>
         <ol className="projectPhases">{PROJECT_PHASES.map((phase, i) => <li key={phase}><strong>Mes {i + 1}</strong><span>{phase}</span></li>)}</ol>

@@ -491,6 +491,16 @@ h2 {
   gap: 1rem;
 }
 
+.storeOpeningReport .openingCards { grid-template-columns: 1fr; }
+.openingRangeTableWrap { overflow-x: auto; }
+.openingRangeTable { width: 100%; min-width: 900px; border-collapse: collapse; }
+.openingRangeTable th, .openingRangeTable td { padding: 0.7rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.openingRangeTable thead th { position: sticky; top: 0; background: var(--surface); color: var(--text-muted); font-size: 0.78rem; }
+.openingRangeTable tbody tr:nth-child(even) { background: var(--surface-alt); }
+.openingRangeTable td small { display: block; margin-top: 0.2rem; color: var(--text-muted); }
+.openingRangeTable details { min-width: 240px; }
+.openingRangeTable details p { margin: 0.35rem 0; }
+.openingRangeTable details ul { padding-left: 1.2rem; }
 .openingRangeFilters {
   display: flex;
   align-items: end;
@@ -2384,12 +2394,24 @@ textarea {
 .calendarActivity h3 { margin: 0 0 6px; }
 .calendarActivity p { white-space: pre-wrap; }
 .calendarActivity span { font-size: 13px; font-weight: 600; }
-.calendarWarning { background: #fff4cf; color: #725000; padding: 14px; border-radius: 10px; }
+.calendarWarning { background: #fff4cf; color: #725000; padding: 14px; border-radius: 10px; }.selectedDayStore { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
+.selectedDayStore .sectionHead { align-items: center; }
+.selectedDayStore h3 { margin: 0; }
+.selectedDayTimeline { display: grid; }
+.selectedDayActivity { display: grid; grid-template-columns: 115px 190px minmax(0, 1fr); gap: 14px; align-items: start; padding: 14px 8px; border-top: 1px solid var(--border); }
+.selectedDayActivity:nth-child(even) { background: var(--surface-alt); }
+.selectedDayTime { font-variant-numeric: tabular-nums; }
+.selectedDayActivity small { display: block; margin-top: 4px; color: var(--text-muted); }
+.selectedDayActivity details { margin-top: 5px; color: var(--text-muted); }
+.selectedDayActivity details summary { cursor: pointer; }
+.selectedDayActivity details p { white-space: pre-wrap; margin: 6px 0; }
+.selectedDayNoWork { margin: 8px 0; }
 .projectPhases { display: grid; grid-template-columns: repeat(5, 1fr); padding: 0; gap: 10px; list-style: none; }
 .projectPhases li { padding: 14px; border: 1px solid #dce5e7; border-radius: 10px; }
 .projectPhases span { display: block; margin-top: 8px; }
 .cleaningPhotoInput { display: grid; gap: 8px; }
 .cleaningPhotoInput img, .calendarEvidence { display: block; max-width: 100%; width: 240px; max-height: 180px; object-fit: contain; border-radius: 8px; }
+@media (max-width: 850px) { .selectedDayActivity { grid-template-columns: 100px 1fr; } .selectedDayActivity > div:last-child { grid-column: 2; } }
 @media (max-width: 650px) {
   .calendarGrid { gap: 3px; }
   .calendarDay { min-height: 95px; padding: 5px; border-radius: 7px; }
