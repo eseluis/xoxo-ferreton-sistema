@@ -2297,6 +2297,13 @@ textarea {
 .centroToolbar,.centroActions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
 .centroToolbar { justify-content:space-between; }
 .centroToolbar label,.centroActions label { display:grid; gap:6px; }
+.centroOrderSchedule { border-left:4px solid #ef9b18; }
+.centroOrderSchedule h3 { margin:5px 0 8px; }
+.centroOrderSchedule>p { margin:0 0 14px; color:var(--text-muted); }
+.centroOrderGrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px; }
+.centroOrderGrid>div { display:grid; gap:6px; align-content:start; padding:12px; border:1px solid var(--border-strong); border-radius:10px; background:var(--surface-alt); line-height:1.45; }
+.centroOrderGrid strong { color:var(--text); }
+.centroOrderGrid small { color:var(--text-muted); line-height:1.4; }
 .centroMetrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; }
 .centroMetrics>div { padding:18px; background:var(--surface); color:var(--text); border:1px solid var(--border-strong); border-radius:12px; display:grid; gap:8px; }
 .centroMetrics small { color:var(--text-muted); }

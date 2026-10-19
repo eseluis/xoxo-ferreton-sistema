@@ -111,6 +111,7 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
       <div><strong>{day !== today ? "CONSULTA HISTÓRICA" : present.length === 1 ? "MODO PERSONAL REDUCIDO" : present.length === 0 ? "SIN PERSONAL PRESENTE" : "OPERACIÓN CON EQUIPO"}</strong><p>{day === today ? `${present.length} persona(s) disponibles · ` : ""}{day}</p><small>Actualización automática cada 15 segundos</small></div>
     </div>
     <div className="centroToolbar"><label>Consultar día <input aria-label="Consultar día" type="date" value={day} max={today} onChange={e => setDay(e.target.value || today)} /></label><button className="ghost" onClick={() => setRevision(v => v + 1)} disabled={busy}>Actualizar</button><button className="ghost" onClick={printReport}>Imprimir reporte</button></div>
+    <CentroOrderSchedule collaborators={collaborators} />
     {calendarError && <p className="calendarWarning" role="alert">Calendario: {calendarError}</p>}
     {error && <div className="centroAlert" role="alert">{error}</div>}
     {notice && <p role="status">{notice}</p>}
@@ -131,6 +132,26 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
   </section>;
 }
 
+function CentroOrderSchedule({ collaborators }: { collaborators: Employee[] }) {
+  const matrixLeads = collaborators.filter(person => person.branch === "Matriz" && person.role === "JEFE_AREA");
+  const contactFor = (area: string, fallback: string) => matrixLeads.find(person => person.area.toLocaleLowerCase("es-MX").includes(area.toLocaleLowerCase("es-MX")))?.name ?? fallback;
+  const electricityLead = contactFor("electricidad", "jefe de área de Electricidad en Matriz");
+  const plumbingLead = contactFor("plomer", "jefe de área de Plomería en Matriz");
+  const toolsLead = contactFor("herramientas", "jefe de área de Herramientas en Matriz");
+  const sparePartsLead = contactFor("refacciones", "jefe de área de Refacciones en Matriz");
+  return <article className="panelCard centroOrderSchedule">
+    <div><small>ABASTECIMIENTO · SUCURSAL CENTRO</small><h3>Pedidos y seguimiento</h3></div>
+    <p>Daniel coordina los pedidos y solicita los estatus directamente con los jefes de área de Matriz. Dirección puede consultar este calendario y dar seguimiento.</p>
+    <div className="centroOrderGrid">
+      <div><strong>Lunes</strong><span>Pedido de plomería y electricidad</span><small>Seguimiento directo: {plumbingLead} y {electricityLead}.</small></div>
+      <div><strong>Martes</strong><span>Solicitar estatus del pedido de refacciones del viernes</span><small>Seguimiento directo: {sparePartsLead}.</small></div>
+      <div><strong>Miércoles</strong><span>Pedido de herramientas</span><small>Seguimiento directo: {toolsLead}.</small></div>
+      <div><strong>Jueves</strong><span>Solicitar estatus del pedido de plomería y electricidad del lunes</span><small>Seguimiento directo: {plumbingLead} y {electricityLead}.</small></div>
+      <div><strong>Viernes</strong><span>Pedido de refacciones</span><small>Seguimiento directo: {sparePartsLead}.</small></div>
+      <div><strong>Sábado</strong><span>Por la tarde: pedidos específicos o especiales. Solicitar estatus del pedido de herramientas del miércoles.</span><small>Herramientas: {toolsLead}. Especiales: contactar al jefe de área de Matriz del producto solicitado.</small></div>
+    </div>
+  </article>;
+}
 function AssignmentForm({ globalAccess, collaborators, today, onSaved, assign }: { globalAccess: boolean; collaborators: Employee[]; today: string; onSaved: () => void; assign: typeof assignCentroDay }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   return <details className="panelCard"><summary>Asignar sucursal y horario por día</summary><form className="centroFields" onSubmit={async e => {

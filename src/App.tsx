@@ -2614,6 +2614,7 @@ function Dashboard({
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       {myWorkFocus}
       {openingBoard}
+      <StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} />
       <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
       <article className="wide panelCard workLocationHero"><img src="/logo-xoxo-ferreton.png" alt="Xoxo Ferretón" /><MapPin /><div><small>HOY DEBES PRESENTARTE Y LABORAR EN</small><strong>{locationFor(user)}</strong><span>{locationFor(user)==="Sucursal Centro"?"Consulta tu horario asignado y la agenda dinámica de Centro. Apertura completa: 8:45–9:00.":"Tu agenda y procesos de este panel corresponden a Matriz."}</span></div></article>
       <button className="metric metricButton" onClick={() => onNavigate("tareas")}><span><ClipboardList /></span><div><strong>{myTasks.length}</strong><small>Mis tareas de hoy</small></div></button>
@@ -2637,6 +2638,7 @@ function Dashboard({
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       {myWorkFocus}
       {openingBoard}
+      <StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} />
       <WeeklyManagementAgenda user={user} schedules={activitySchedules} today={today} onNavigate={onNavigate} />
       <TodayAssignedActivities user={user} collaborators={collaborators} tasks={dailyTasks} onNavigate={onNavigate} />
       <Metric label="Colaboradores activos" value={collaborators.length.toString()} icon={<UserRound />} />
@@ -6577,6 +6579,29 @@ function DailyContinuityCard({ sequence }: { sequence: ReturnType<typeof workSeq
   return <article className="wide panelCard"><div className="sectionHead"><div><h2>Agenda completa y continuidad</h2><span>Al terminar una actividad continúa inmediatamente con la siguiente.</span></div><strong className={gaps.length ? "warn" : "ok"}>{gaps.length ? `${gaps.length} espacio(s) por cubrir` : "Agenda continua"}</strong></div><div className="taskList">{sequence.entries.map((entry)=>{const start=timeToMinutes(entry.start);const end=timeToMinutes(entry.end);const state=minutes>=end?"Horario concluido":minutes>=start&&minutes<end?"Ahora":sequence.next?.id===entry.id?"Siguiente":"Programada";return <div className={`taskRow continuityRow ${state==="Ahora"?"currentActivity":""}`} key={`${entry.kind}-${entry.id}`}><span><strong>{entry.start}-{entry.end}</strong><small>{entry.kind} · {entry.status}</small></span><span>{entry.title}</span><strong>{state}</strong></div>;})}{sequence.entries.length===0&&<p className="muted">Aún no existe una agenda para este lugar. Reporta a tu jefe antes de iniciar para evitar tiempo muerto.</p>}</div>{gaps.length>0&&<div className="gapWarnings"><strong>Espacios sin actividad programada:</strong>{gaps.map((gap)=><span key={`${gap.start}-${gap.end}`}>{gap.start}-{gap.end} ({gap.minutes} min)</span>)}</div>}</article>;
 }
 
+function StoreOpeningReport({user,checks,attendance,collaborators}:{user:Employee;checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[]}) {
+  const [date,setDate]=useState(todayKey());
+  const branches: StoreOpeningCheck["branch"][] = canGovern(user) ? ["Matriz","Sucursal Centro"] : [user.branch === "Sucursal Centro" ? "Sucursal Centro" : "Matriz"];
+  const time=(value?:string)=>value?new Date(value).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit"}):"—";
+  const person=(id?:string)=>id?collaborators.find(employee=>employee.id===id)?.name??id:"—";
+  return <article id="store-opening-report" className="wide panelCard storeOpeningReport">
+    <div className="sectionHead"><div><h2>Reporte diario de apertura y cierre</h2><span>Consulta quién laboró y los horarios confirmados por sucursal.</span></div><label>Fecha<input type="date" value={date} max={todayKey()} onChange={event=>setDate(event.target.value)} /></label><button className="ghost compact noPrint" onClick={()=>window.print()}>Imprimir</button></div>
+    <div className="openingCards">{branches.map(branch=>{
+      const record=checks.find(item=>item.date===date&&item.branch===branch);
+      const staff=collaborators.filter(employee=>employee.branch===branch&&employee.name!=="Vacante");
+      const present=staff.map(employee=>({employee,entry:attendance.find(item=>item.date===date&&item.employeeId===employee.id)})).filter(row=>row.entry?.in);
+      return <section className="openingCard" key={branch}><div className="sectionHead"><h3>{branch}</h3><strong className={`statusPill ${record?.closedAt?"muted":record?.openedAt?"ok":"warn"}`}>{record?.closedAt?"CERRADA":record?.openedAt?"ABIERTA":"SIN APERTURA REGISTRADA"}</strong></div>
+        <div className="grid two"><p><strong>Apertura:</strong> {time(record?.openedAt)} · {person(record?.doorsOpenedById??record?.openedById)}</p><p><strong>Cierre:</strong> {time(record?.closedAt)} · {person(record?.closedById)}</p>
+          <p><strong>Autorizó gerente:</strong> {time(record?.managerAuthorizedAt)} · {person(record?.managerAuthorizedById)}</p><p><strong>Autorizó cajero:</strong> {time(record?.cashierAuthorizedAt)} · {person(record?.cashierAuthorizedById)}</p>
+          <p><strong>Autorización de cierre:</strong> {time(record?.managerClosingAuthorizedAt)} · {person(record?.managerClosingAuthorizedById)}</p><p><strong>Cajero en cierre:</strong> {time(record?.cashierClosingAuthorizedAt)} · {person(record?.cashierClosingAuthorizedById)}</p>
+          <p><strong>Personal mínimo:</strong> {record?.minimumStaff?"Sí":"No"} · <strong>Sistemas:</strong> {record?.systemsReady?"Sí":"No"}</p><p><strong>Proceso de apertura:</strong> {record?.processComplete?"Completo":"Pendiente"} · <strong>ERP:</strong> {record?.erpReady?"Listo":"Pendiente"}</p>
+          <p><strong>Ubicación de apertura:</strong> {record?.openingLocation?locationLabel(record.openingLocation):"Sin ubicación"}{record?.openingLocation?.accuracyM?` · ±${Math.round(record.openingLocation.accuracyM)} m`:""}</p>
+        </div>
+        <h4>Personal que laboró ({present.length}/{staff.length})</h4>{present.length?<div className="taskList">{present.map(({employee,entry})=><div className="taskRow" key={employee.id}><span><strong>{employee.name}</strong><small>{employee.roleLabel} · Entrada {entry?.in}</small></span><strong>{entry?.out?`Salida ${entry.out}`:"Sin salida registrada"}</strong></div>)}</div>:<p className="muted">No hay entradas registradas para esta sucursal y fecha.</p>}
+      </section>;
+    })}</div>
+  </article>;
+}
 function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
   const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
 
@@ -6605,6 +6630,7 @@ function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,c
           <h2>Estado de apertura y cierre de tiendas</h2>
           <span>Gerente de tienda autoriza → cajero autoriza → abrir/cerrar cortinas y puertas. Apertura puntual: Matriz 8:00–8:15; Centro 8:45–9:00.</span>
         </div>
+        <button className="ghost compact noPrint" onClick={() => document.getElementById("store-opening-report")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Ver reporte de apertura</button>
       </div>
       <div className="openingCards">
         {branches.map((branch) => {
