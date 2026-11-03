@@ -111,6 +111,8 @@ export type DailyTask = {
   status: "Pendiente" | "En proceso" | "Completada" | "Incidencia" | "Pausada";
   priority: "Baja" | "Media" | "Alta";
   notes: string;
+  processId?: string;
+  deliveryNote?: string;
   currentStep?: string;
   employeeComment?: string;
   supervisorComment?: string;
@@ -885,10 +887,11 @@ export const processes: Process[] = [
     risk: "Si abre tarde, se registra incidencia y afecta evaluacion diaria.",
     notifyOnFailure: "Gerente general",
     steps: [
-      { title: "Seguridad, candados y cortinas", owner: "Gerente", time: "8:00 - 8:05", evidence: "none" },
-      { title: "Sistema POS, impresoras y fondo inicial", owner: "Cajero + Administrador", time: "8:00 - 8:10", evidence: "signature" },
-      { title: "Validacion final de caja, sistema y personal", owner: "Gerente + Administrador", time: "8:10 - 8:15", evidence: "signature" },
-      { title: "Apertura al publico", owner: "Gerente", time: "8:15", evidence: "none" },
+      { title: "Autorización del gerente y confirmación del personal presente", owner: "Gerente", time: "Antes de abrir", evidence: "signature" },
+      { title: "Verificar entrada y asistencia del equipo", owner: "Gerente + equipo", time: "Inicio de turno", evidence: "signature" },
+      { title: "Validar caja, fondo inicial, ERP y equipos", owner: "Cajero + administrador", time: "Antes de vender", evidence: "signature" },
+      { title: "Revisar sistemas, seguridad, cortinas y acceso", owner: "Gerente", time: "Antes de abrir", evidence: "photo" },
+      { title: "Confirmar hora de apertura al público en el Panel", owner: "Gerente", time: "Al abrir", evidence: "signature" },
     ],
   },
   {

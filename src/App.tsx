@@ -2133,6 +2133,7 @@ function App() {
         )}
         {view === "asistencia" && (
           <AttendanceView
+            onNavigate={navigate}
             user={user}
             attendance={scopeRows(attendance)}
             dailyClosures={dailyClosures}
@@ -2263,6 +2264,7 @@ function App() {
         {view === "evidencias" && <EvidenceGalleryView user={user} today={today} collaborators={collaborators} dailyTasks={scopeRows(dailyTasks)} activityRuns={scopeRows(activityRuns)} processInstances={scopeRows(processInstances)} />}
         {view === "tareas" && (
           <TasksView
+            onNavigate={navigate}
             user={user}
             collaborators={collaborators}
             dailyTasks={scopeRows(dailyTasks)}
@@ -2471,8 +2473,11 @@ function profileFor(role: Role) {
   return roleProfiles.find((profile) => profile.role === role);
 }
 
-export function TaskDescription({ task }: { task: Pick<DailyTask, "notes" | "requiresPhoto"> }) {
-  return <div className="taskDescription"><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}</div>;
+export function TaskDescription({ task, onNavigate }: { task: Pick<DailyTask, "notes" | "requiresPhoto" | "processId">; onNavigate?: (view: string) => void }) {
+  const process = processes.find((item) => item.id === task.processId);
+  const evidenceNames: Record<string, string> = { none: "Sin evidencia especial", photo: "Foto", signature: "Registro de confirmación", ticket: "Ticket o folio" };
+  const targetView = task.processId === "apertura" ? "panel" : task.processId === "apertura-centro" ? "operacion-centro" : undefined;
+  return <div className="taskDescription"><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}{process && <div className="taskProcessGuide"><h3>Proceso: {process.name}</h3><p>{process.area} · Si hay un problema: {process.notifyOnFailure}. Riesgo: {process.risk}</p><ol>{process.steps.map((step, index) => <li key={`${step.title}-${index}`}><strong>{step.title}</strong><small>{step.owner} · {step.time} · {evidenceNames[step.evidence] ?? step.evidence}</small></li>)}</ol>{targetView && onNavigate && <button type="button" className="ghost compact" onClick={() => onNavigate(targetView)}>{task.processId === "apertura" ? "Abrir checklist de apertura" : "Abrir Operación Centro"}</button>}</div>}</div>;
 }
 
 export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, cleaningRows, shift, onNavigate }: {
@@ -2946,6 +2951,7 @@ function TeamActivityRow({
 }
 
 export function AttendanceView({
+  onNavigate,
   user,
   attendance,
   dailyClosures,
@@ -2970,6 +2976,7 @@ export function AttendanceView({
   workLocation,
   setActivityPhoto,
 }: {
+  onNavigate: (view: string) => void;
   user: Employee;
   attendance: Attendance[];
   dailyClosures: DailyClosure[];
@@ -3047,6 +3054,7 @@ export function AttendanceView({
   };
   const completeTask = (task: DailyTask) => {
     if (task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) return;
+    if (task.processId && (task.deliveryNote ?? "").trim().length < 10) return;
     updateTask(task.id, { status: "Completada", completedAt: new Date().toISOString() });
   };
 
@@ -3167,7 +3175,7 @@ export function AttendanceView({
                     </span>
                   </div>
                   {task.startedAt && !task.completedAt && <LiveStopwatch startedAt={task.startedAt} slaMinutes={sla} pausedAt={task.pausedAt} pausedMinutes={task.pausedMinutes} />}
-                  <TaskDescription task={task} />
+                  <TaskDescription task={task} onNavigate={onNavigate} />
                   <div className="taskProgressInputs">
                     <input
                       value={task.currentStep ?? ""}
@@ -3187,6 +3195,7 @@ export function AttendanceView({
                       placeholder="Incidencia que detiene la tarea"
                     />
                   </div>
+                  {task.processId && <label className="taskDelivery">Resultado para entregar<textarea value={task.deliveryNote ?? ""} disabled={task.paused} onChange={(event) => updateTask(task.id, { deliveryNote: event.target.value })} placeholder="Resume lo realizado, el resultado y la evidencia entregada (mínimo 10 caracteres)." /></label>}
                   {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
@@ -3202,7 +3211,7 @@ export function AttendanceView({
                     >
                       Reportar incidencia y pausar
                     </button>
-                    <button className="primary compact" disabled={task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture))} onClick={() => completeTask(task)}>
+                    <button className="primary compact" disabled={task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) || Boolean(task.processId && (task.deliveryNote ?? "").trim().length < 10)} onClick={() => completeTask(task)}>
                       Marcar completada
                     </button>
                   </div>
@@ -4104,6 +4113,7 @@ function ProcessesView({
   notify: (title: string, message: string, recipientId: string | undefined, priority?: InternalRequest["priority"]) => void;
 }) {
   const startProcess = (processId: string, ownerId: string, notes: string) => {
+    if (processId === "apertura") { onNavigate("panel"); return; }
     if (processId === "apertura-centro") { onNavigate("operacion-centro"); return; }
     const process = processes.find((item) => item.id === processId);
     if (!process) return;
@@ -4525,6 +4535,7 @@ function ProcessCard({
   const [ownerId, setOwnerId] = useState(user.id);
   const [notes, setNotes] = useState("");
   const canStart = process.allowedRoles.includes(user.role) || canGovern(user);
+  const actionLabel = process.id === "apertura" ? "Abrir checklist del Panel" : process.id === "apertura-centro" ? "Abrir Operación Centro" : "Activar proceso";
   return (
     <article className="panelCard processCard">
       <div className="sectionHead">
@@ -4570,7 +4581,7 @@ function ProcessCard({
             setNotes("");
           }}
         >
-          Activar proceso
+          {actionLabel}
         </button>
       </div>
       <small className="mutedText">Si falla: notificar a {process.notifyOnFailure}</small>
@@ -4998,6 +5009,7 @@ function HistoryFilters({ from, to, employee, employees, onFrom, onTo, onEmploye
 }
 
 export function TasksView({
+  onNavigate,
   user,
   collaborators,
   dailyTasks,
@@ -5006,6 +5018,7 @@ export function TasksView({
   assignWorkLocation,
   onRemoveTask,
 }: {
+  onNavigate: (view: string) => void;
   user: Employee;
   collaborators: Employee[];
   dailyTasks: DailyTask[];
@@ -5017,6 +5030,7 @@ export function TasksView({
   const today = todayKey();
   const isAuxiliary = user.role === "AUXILIAR";
   const [taskError, setTaskError] = useState("");
+  const [selectedProcessId, setSelectedProcessId] = useState("");
   const [reviewStatus, setReviewStatus] = useState("Todas");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -5024,7 +5038,7 @@ export function TasksView({
   const addTask = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const employeeId=String(form.get("employeeId"));const start=String(form.get("start"));const end=String(form.get("end"));const notes=String(form.get("notes")).trim();
+    const employeeId=String(form.get("employeeId"));const start=String(form.get("start"));const end=String(form.get("end"));const notes=String(form.get("notes")).trim();const processId=String(form.get("processId") ?? "");
     const taskDate = String(form.get("date"));
     if (!assignable.some((employee) => employee.id === employeeId)) { setTaskError("Selecciona un colaborador al que puedas asignar tareas."); return; }
     if (!taskDate || !String(form.get("title")).trim()) { setTaskError("Indica la fecha y el título de la tarea."); return; }
@@ -5047,6 +5061,8 @@ export function TasksView({
         status: "Pendiente",
         priority: String(form.get("priority")) as DailyTask["priority"],
         notes,
+        processId: processes.some((process) => process.id === processId) ? processId : undefined,
+        deliveryNote: "",
         currentStep: "Asignada",
         employeeComment: "",
         supervisorComment: "",
@@ -5058,6 +5074,7 @@ export function TasksView({
     ];
     setDailyTasks(next);
     event.currentTarget.reset();
+    setSelectedProcessId("");
   };
 
   const updateTaskStatus = (id: string, status: DailyTask["status"]) => {
@@ -5066,6 +5083,7 @@ export function TasksView({
     if (status === "Completada" && target.requiresPhoto && (!target.beforeEvidenceCapture || !target.afterEvidenceCapture)) {
       setTaskError("Para completar la tarea faltan las fotos de antes y después. Se capturan en la jornada del colaborador."); return;
     }
+    if (status === "Completada" && target.processId && (target.deliveryNote ?? "").trim().length < 10) { setTaskError("El colaborador debe registrar el resultado para entregar antes de completar esta tarea."); return; }
     const scheduleError = taskScheduleError({ ...target, status, completedAt: status === "Completada" ? target.completedAt : undefined }, dailyTasks);
     if (scheduleError) { setTaskError(scheduleError); return; }
     setTaskError("");
@@ -5139,6 +5157,8 @@ export function TasksView({
           ))}
         </select>
         <input name="title" placeholder="Tarea o actividad" required />
+        <label>Proceso relacionado (opcional)<select name="processId" value={selectedProcessId} onChange={(event) => setSelectedProcessId(event.target.value)}><option value="">Sin proceso relacionado</option>{processes.map((process) => <option key={process.id} value={process.id}>{process.name} · {process.area}</option>)}</select></label>
+        {selectedProcessId && <TaskDescription task={{ notes: "", processId: selectedProcessId }} onNavigate={onNavigate} />}
         <div className="moneyInputs">
           <label>
             Inicio
@@ -5199,8 +5219,9 @@ export function TasksView({
                 </span>
                 <div><strong className={task.paused ? "danger" : ""}>{task.status}</strong>{taskOverdueReason(task, taskOverviewNow) && <p className="statusPill danger">Vencida · {taskOverdueReason(task, taskOverviewNow)}</p>}</div>
               </div>
-              <TaskDescription task={task} />
+              <TaskDescription task={task} onNavigate={onNavigate} />
               {canDirectAllTasks && <label>Editar descripción e instrucciones<textarea value={task.notes} onChange={(event)=>updateTaskPatch(task.id,{notes:event.target.value})} placeholder="Qué hacer, pasos a seguir y resultado esperado"/></label>}
+              {task.processId && (task.employeeId === user.id ? <label className="taskDelivery">Resultado para entregar<textarea value={task.deliveryNote ?? ""} onChange={(event) => updateTaskPatch(task.id, { deliveryNote: event.target.value })} placeholder="Qué se realizó, resultado obtenido y evidencia entregada (mínimo 10 caracteres)." /></label> : <div className="taskDelivery"><strong>Resultado entregado</strong><p>{task.deliveryNote?.trim() || "El colaborador aún no registra el resultado."}</p></div>)}
               <div className="taskFollowGrid">
                 <div>
                   <small>Paso actual</small>

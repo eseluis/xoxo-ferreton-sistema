@@ -2329,6 +2329,13 @@ textarea {
 .taskDescription { display: block; min-width: 0; padding: 12px; margin: 10px 0; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; }
 .taskDescription p { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; margin: 8px 0 0; color: var(--text); }
 .taskDescription > strong { color: var(--accent2); }
+.taskProcessGuide { margin-top: 14px; padding: 14px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); }
+.taskProcessGuide h3 { margin: 0 0 6px; color: var(--accent2); }
+.taskProcessGuide ol { display: grid; gap: 8px; padding-left: 24px; }
+.taskProcessGuide li { padding-left: 4px; }
+.taskProcessGuide li small { display: block; color: var(--muted); margin-top: 3px; }
+.taskDelivery { display: block; margin: 12px 0; }
+.taskDelivery textarea { width: 100%; min-height: 90px; margin-top: 6px; }
 /* Daily branch operations share the existing panel's colors and controls. */
 .globalPriority { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; margin-bottom:16px; border:1px solid #f4c766; border-radius:14px; background:#fff7e6; color:#513809; }
 .globalPriority span { font-size:12px; flex:1; min-width:180px; }
