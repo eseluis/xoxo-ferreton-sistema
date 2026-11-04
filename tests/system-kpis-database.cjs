@@ -50,10 +50,14 @@ const vm = require('node:vm');
   for(const [task,owner,data] of [['inventario-1','005',{pendientes:'Sin incidencias',private:'MANAGER_SECRET'}],['inventario-2','006',{evidence:'https://pos.alegra.com/inventory/own'}]]) {
    await db.query("insert into centro_operation_records(day,task_id,owner_id,status,data,history) values($1::date,$2,$3,'Validada',$4::jsonb,$5::jsonb)",[day,task,owner,JSON.stringify(data),JSON.stringify([{action:'submit',at:day+'T16:00:00Z'}])]);
   }
+  for(const [id,recipient,confidentiality] of [['incoming-visible','006','Normal'],['private-other','005','Confidencial']]) {
+    await db.query("insert into internal_request_records(record_id,employee_number,branch,record_date,payload,updated_by) values($1,'007','Matriz',$2::date,$3::jsonb,auth.uid())",[id,day,JSON.stringify({id,requestedById:'007',recipientId:recipient,date:day,status:'Abierta',confidentiality,message:'PRIVATE_MESSAGE'})]);
+  }
   const who=async id=>db.exec(`reset role;select set_config('test.user','00000000-0000-0000-0000-${String(id).padStart(12,'0')}',false);set role authenticated;`);
   await who(6);
   const own=(await db.query('select system_kpi_snapshot($1::date,$1::date) as result',[day])).rows[0].result;
   assert.deepEqual(own.sources.new_feature_records.rows.map(r=>r.id),['own']);
+  assert.ok(own.sources.internal_request_records.rows.some(r=>r.id==='incoming-visible'));assert.ok(!own.sources.internal_request_records.rows.some(r=>r.id==='private-other'));assert.ok(!JSON.stringify(own).includes('PRIVATE_MESSAGE'));
   assert.equal(own.sources.attendance_exit_requests.rows.length,1);assert.equal(own.sources.attendance_exit_requests.rows[0].id,'exit-own');assert.ok(!JSON.stringify(own).includes('PRIVATE_EXIT_REASON'));
   assert.ok(!JSON.stringify(own).includes('PRIVATE_DESCRIPTION'));assert.ok(!JSON.stringify(own).includes('PRIVATE_PHOTO'));
   const centro=(await db.query('select centro_kpi_snapshot($1::date,$1::date) as result',[day])).rows[0].result;
@@ -67,7 +71,7 @@ const vm = require('node:vm');
   const teamEvidence=(await db.query('select system_centro_evidence($1::date,$1::date) as result',[day])).rows[0].result;
   assert.equal(teamEvidence.length,2);assert.ok(teamEvidence.some(e=>e.comment==='Sin incidencias'&&e.commentAccepted&&e.evidenceComplete));
   await who(3);const all=(await db.query('select system_kpi_snapshot($1::date,$1::date) as result',[day])).rows[0].result;
-  assert.equal(all.sources.new_feature_records.rows.length,3);
+  assert.equal(all.sources.new_feature_records.rows.length,3);assert.ok(!all.sources.internal_request_records.rows.some(r=>r.id==='private-other'));
   await assert.rejects(()=>db.query("select system_kpi_snapshot('2026-01-01','2026-12-31')"),/63 días/);
   console.log('PASS: live SQL KPI/evidence APIs, automatic discovery, no photographs/private text in KPIs, own/team/store hierarchy and inventory comments');
  } finally {await db.close();}

@@ -32,9 +32,9 @@ begin
   if not has_table_privilege(current_user,format('public.%I',t.table_name),'SELECT') then
    sources:=sources||jsonb_build_object(t.table_name,jsonb_build_object('available',false,'rows','[]'::jsonb)); continue;
   end if;
-  extra:=case when t.table_name='internal_request_records' then ' and (payload->>''requestedById''=$4 or payload->>''recipientId''=$4)' else '' end;
+  extra:=case when t.table_name='internal_request_records' then ' and (payload->>''requestedById''=$4 or payload->>''recipientId''=$4 or (coalesce(payload->>''confidentiality'',''Normal'')<>''Confidencial'' and ($3 or ($5 and branch=$6))))' else ' and ($3 or employee_number=$4 or ($5 and branch=$6))' end;
   begin
-   execute format('select coalesce(jsonb_agg(public.system_metric_payload(payload)||jsonb_build_object(''id'',record_id,''employeeId'',employee_number,''branch'',branch,''date'',record_date)),''[]''::jsonb) from public.%I where record_date between $1 and $2 and ($3 or employee_number=$4 or ($5 and branch=$6))',t.table_name)||extra
+   execute format('select coalesce(jsonb_agg(public.system_metric_payload(payload)||jsonb_build_object(''id'',record_id,''employeeId'',employee_number,''branch'',branch,''date'',record_date)),''[]''::jsonb) from public.%I where record_date between $1 and $2',t.table_name)||extra
     into rows using from_day,to_day,public.can_manage_all(),actor.employee_number,is_manager,actor.branch;
    sources:=sources||jsonb_build_object(t.table_name,jsonb_build_object('available',true,'rows',rows));
   exception when insufficient_privilege or undefined_function or datatype_mismatch or invalid_parameter_value or undefined_column then sources:=sources||jsonb_build_object(t.table_name,jsonb_build_object('available',false,'rows','[]'::jsonb)); end;
