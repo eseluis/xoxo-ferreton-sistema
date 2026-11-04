@@ -1,0 +1,25 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),ts=require('typescript');
+const cache=new Map();function load(file){file=path.resolve(file);if(cache.has(file))return cache.get(file);const exports={};cache.set(file,exports);vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,{exports,Date,Intl,require:n=>load(path.resolve(path.dirname(file),n+'.ts'))});return exports;}
+const {evidenceAssessment}=load('src/evidenceMetrics.ts'),{systemMetrics}=load('src/systemKpis.ts');
+const now=new Date('2026-11-04T18:00:00Z');
+const base={date:'2026-11-04',scheduled:'09:00-10:00',status:'Completada',startedAt:'2026-11-04T15:00:00Z',completedAt:'2026-11-04T15:50:00Z',requiresPair:true,before:{dataUrl:'before'},after:{dataUrl:'after'},slaMinutes:60};
+assert.equal(evidenceAssessment({...base,scheduled:'08:45-09:00',completedAt:'2026-11-04T14:30:00Z',startedAt:undefined,windowStartRequired:true},now).onTime,false);
+assert.equal(evidenceAssessment({...base,startedAt:undefined},now).onTime,null);
+assert.equal(evidenceAssessment(base,now).result,'En tiempo y forma');
+assert.equal(evidenceAssessment({...base,after:undefined},now).inForm,false);
+assert.equal(evidenceAssessment({...base,completedAt:'2026-11-04T16:01:00Z'},now).onTime,false);
+assert.equal(evidenceAssessment({...base,scheduled:'09:00-11:00',completedAt:'2026-11-04T16:30:00Z',pausedMinutes:40},now).onTime,true);
+assert.equal(evidenceAssessment({...base,completedAt:undefined,status:'Validada'},now).onTime,null);
+assert.equal(evidenceAssessment({...base,status:'Por validar',validationRequired:true},now).inForm,null);
+assert.equal(evidenceAssessment({date:base.date,scheduled:base.scheduled,status:'Validada',submittedAt:base.completedAt,requiresEvidence:true,commentAccepted:true,comment:'Sin incidencias',validationRequired:true},now).inForm,true);
+const available=rows=>({available:true,rows});
+const sources={daily_task_records:available([{...base,id:'a',start:'09:00',end:'10:00',requiresPhoto:true,evidenceComplete:true},{...base,id:'b',start:'09:00',end:'10:00',requiresPhoto:true,evidenceComplete:false},{...base,id:'removed',removedAt:'2026-11-04',requiresPhoto:true}]),process_instance_records:available([{id:'legacy',processId:'apertura',status:'Activo'},{id:'real',processId:'venta',status:'Completado'}]),cash_cut_records:available([{id:'1',erpSales:100,difference:10},{id:'2',erpSales:200,difference:-10}]),bank_transaction_records:available([{amount:1000,type:'Deposito',reconciled:true}]),new_feature_records:available([{id:'new',status:'Activo'}]),centro_records:available([{taskId:'inventario-1',status:'Por validar',date:base.date,start:'10:00',end:'11:00',requiresEvidence:true,evidenceComplete:true,completedAt:base.completedAt}])};
+const metrics=systemMetrics(sources,now),find=id=>metrics.find(m=>m.id===id);
+assert.equal(find('sales').value,300,'deposits do not inflate sales');
+assert.equal(find('cash-difference').value,20,'opposite differences cannot cancel');
+assert.equal(find('process_instance_records-count').value,1,'shared opening counted only by its source');
+assert.equal(find('daily_task_records-missing').value,1);
+assert.equal(find('new_feature_records-count').value,1,'new standard module gets coverage without recapture');
+assert.equal(find('centro_records-complete').value,0,'pending validation is not validated completion');
+assert.equal(systemMetrics({daily_task_records:available([])},now).find(m=>m.id==='daily_task_records-quality').value,null,'no data never becomes success');
+console.log('PASS: timing, paused SLA, required evidence, review, no-data, new modules and financial deduplication');

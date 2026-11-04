@@ -1,3 +1,5 @@
+import { SystemKpis } from "./AutomaticKpiPanel";
+import { evidenceAssessment, type EvidenceFacts } from "./evidenceMetrics";
 import { RequestsPanel } from "./RequestsPanel";
 import { requestPending, requestsInSection, type InternalRequest } from "./requestOverview";
 import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
@@ -2265,7 +2267,7 @@ function App() {
             addMonthlyBudget={addMonthlyBudget}
           />
         )}
-        {view === "kpis" && <KpiDashboard user={user} collaborators={collaborators} records={scopeRows(kpiRecords)} saveRecord={saveKpiRecord} />}
+        {view === "kpis" && <KpiDashboard onNavigate={navigate} user={user} collaborators={collaborators} records={scopeRows(kpiRecords)} saveRecord={saveKpiRecord} />}
         {(view === "finanzas" || view === "bancos") && (
           <FinanceView
             user={user} suppliers={scopeRows(suppliers)} payables={scopeRows(payables)}
@@ -2277,7 +2279,7 @@ function App() {
           />
         )}
         {view === "garantias" && <WarrantyView user={user} collaborators={collaborators} addWarranty={addWarranty} updateWarranty={updateWarranty} warranties={scopeRows(warranties)} />}
-        {view === "evidencias" && <EvidenceGalleryView user={user} today={today} collaborators={collaborators} dailyTasks={scopeRows(dailyTasks)} activityRuns={scopeRows(activityRuns)} processInstances={scopeRows(processInstances)} />}
+        {view === "evidencias" && <EvidenceGalleryView openingChecks={storeOpeningChecks} workLocations={workLocations} user={user} today={today} collaborators={collaborators} dailyTasks={scopeRows(dailyTasks)} activityRuns={scopeRows(activityRuns)} processInstances={scopeRows(processInstances)} />}
         {view === "tareas" && (
           <TasksView
             onNavigate={navigate}
@@ -5373,7 +5375,8 @@ function AuditEditor({ audit, collaborators, canEdit, onSave }: { audit: Process
   return <article className="panelCard"><div className="sectionHead"><div><h2>{draft.processName}</h2><span>{draft.date} · {draft.branch} · responsable {collaborators.find((employee)=>employee.id===draft.responsibleId)?.name||draft.responsibleId}</span></div><span className={`statusPill ${draft.status==="Cerrada"?"ok":draft.status==="En corrección"?"danger":"warn"}`}>{draft.status} · {score.toFixed(0)}%</span></div><div className="auditChecklist">{draft.checks.map((check,index)=><div className="auditCheck" key={`${check.title}-${index}`}><strong>{index+1}. {check.title}</strong><select disabled={!canEdit} value={check.result} onChange={(event)=>updateCheck(index,{result:event.target.value as typeof check.result})}><option>Pendiente</option><option>Cumple</option><option>No cumple</option><option>No aplica</option></select><input disabled={!canEdit} value={check.finding} onChange={(event)=>updateCheck(index,{finding:event.target.value})} placeholder="Hallazgo o evidencia revisada"/><input disabled={!canEdit} value={check.correctiveAction} onChange={(event)=>updateCheck(index,{correctiveAction:event.target.value})} placeholder="Acción correctiva"/><input disabled={!canEdit} type="date" value={check.dueDate} onChange={(event)=>updateCheck(index,{dueDate:event.target.value})}/><label className="auditClose"><input disabled={!canEdit||check.result!=="No cumple"} type="checkbox" checked={check.closed} onChange={(event)=>updateCheck(index,{closed:event.target.checked})}/> Corregido</label></div>)}</div>{canEdit&&<div className="taskActions"><button className="primary compact" onClick={()=>onSave(draft)}>Guardar auditoría</button></div>}</article>;
 }
 
-function KpiDashboard({ user, collaborators, records, saveRecord }: {
+function KpiDashboard({ user, collaborators, records, saveRecord, onNavigate }: {
+  onNavigate: (view: string) => void;
   user: Employee; collaborators: Employee[]; records: KpiRecord[];
   saveRecord: (event: React.FormEvent<HTMLFormElement>) => void;
 }) {
@@ -5385,9 +5388,10 @@ function KpiDashboard({ user, collaborators, records, saveRecord }: {
   const green = visible.filter((item)=>compliance(item)>=100).length; const yellow = visible.filter((item)=>compliance(item)>=85&&compliance(item)<100).length; const red = visible.filter((item)=>compliance(item)<85).length;
   const canManage = canGovern(user)||["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role);
   const suggestions = ["Ventas","Margen bruto","Ticket promedio","Exactitud de inventario","Diferencias de inventario","Productos agotados","Rotación de inventario","Gastos sobre ventas","Cotizaciones convertidas","Clientes nuevos","Asistencia","Tareas cumplidas","SLA cumplido","Garantías resueltas","Cuentas vencidas","Conciliación bancaria"];
-  return <section className="stack">
+  return <section className="stack kpiDashboard">
     <article className="panelCard"><div className="sectionHead"><div><h2>Tablero de cumplimiento</h2><span>Meta contra resultado real por responsable.</span></div></div><div className="reportFilters"><label>Mes<input type="month" value={month} onChange={(event)=>setMonth(event.target.value)}/></label><label>Sucursal<select value={branch} onChange={(event)=>setBranch(event.target.value)}><option>Todas</option><StoreBranchOptions user={user} corporate /></select></label><label>Puesto<select value={role} onChange={(event)=>setRole(event.target.value)}><option value="TODOS">Todos</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label></div></article>
-    <div className="grid"><Metric label="Promedio de metas registradas" value={`${average.toFixed(0)}%`} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
+    <SystemKpis user={user} collaborators={collaborators} month={month} branch={branch} role={role} onNavigate={onNavigate} />
+    <div className="grid"><Metric label="Promedio de metas registradas" value={visible.length ? `${average.toFixed(0)}%` : "Sin metas registradas"} icon={<BarChart3/>}/><Metric label="En meta" value={String(green)} icon={<CheckCircle2/>}/><Metric label="En atención" value={String(yellow)} icon={<Clock/>}/><Metric label="En intervención" value={String(red)} icon={<AlertTriangle/>}/></div>
     {canManage&&<form className="panelCard form" onSubmit={saveRecord}><h2>Configurar meta y capturar resultado</h2><p>Diario: la fecha elegida. Semanal: siete días desde esa fecha. Mensual: el mes completo. Una captura del mismo indicador, periodo y responsable actualiza ese resultado.</p><div className="kpiFormGrid"><label>Inicio de medición<input name="periodStart" type="date" defaultValue={todayKey()} required/></label><label>Indicador<input name="name" list="kpi-suggestions" placeholder="Nombre del KPI" required/><datalist id="kpi-suggestions">{suggestions.map((item)=><option key={item} value={item}/>)}</datalist></label><label>Área<input name="area" placeholder="Ventas, Caja, Inventario..." required/></label><label>Puesto<select name="role" required><option value="TODOS">Todo el equipo</option>{roleProfiles.map((profile)=><option key={profile.role} value={profile.role}>{roleLabel(profile.role)}</option>)}</select></label><label>Responsable<select name="employeeId"><option value="">General del puesto/sucursal</option>{collaborators.map((employee)=><option key={employee.id} value={employee.id}>{employee.name}</option>)}</select></label><label>Sucursal<select name="branch" defaultValue={user.branch}><StoreBranchOptions user={user} corporate /></select></label><label>Meta<input name="target" type="number" step="0.01" required/></label><label>Resultado real<input name="actual" type="number" step="0.01" placeholder="Resultado medido" required/></label><label>Unidad<select name="unit"><option>$</option><option>%</option><option>unidades</option><option>días</option><option>eventos</option><option>puntos</option></select></label><label>Regla<select name="direction"><option>Mayor es mejor</option><option>Menor es mejor</option></select></label><label>Frecuencia<select name="frequency"><option>Mensual</option><option>Semanal</option><option>Diario</option></select></label></div><textarea name="notes" placeholder="Fuente del dato, criterio o explicación"/><button className="primary">Guardar KPI</button></form>}
     <article className="panelCard"><div className="sectionHead"><div><h2>Matriz de KPIs</h2><span>{month} · {branch} · {role==="TODOS"?"Todos los puestos":roleLabel(role as Role)}</span></div><strong>{visible.length} indicadores</strong></div><div className="operationTable kpiTable"><div className="operationRow head"><span>Indicador</span><span>Responsable</span><span>Meta</span><span>Real</span><span>Cumplimiento</span><span>Semáforo</span></div>{visible.map((item)=>{const percent=compliance(item);return <div className="operationRow" key={item.id}><span><strong>{item.name}</strong><small>{item.area} · {item.frequency} · {item.periodStart ? `${item.periodStart} a ${item.periodEnd}` : `Registro anterior de ${item.month}: periodo no confirmado`}</small></span><span>{item.employeeId?collaborators.find((employee)=>employee.id===item.employeeId)?.name||item.employeeId:item.role==="TODOS"?item.branch:roleLabel(item.role)}</span><span>{item.unit==="$"?"$":""}{item.target.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><span>{item.unit==="$"?"$":""}{item.actual.toLocaleString("es-MX")}{item.unit==="%"?"%":item.unit!=="$"?` ${item.unit}`:""}</span><strong>{percent.toFixed(0)}%</strong><span className={`statusPill ${percent>=100?"success":percent>=85?"warning":"danger"}`}>{percent>=100?"Correcto":percent>=85?"Atención":"Intervención"}</span></div>})}{visible.length===0&&<p className="muted">No hay indicadores capturados para estos filtros.</p>}</div></article>
   </section>;
@@ -6266,7 +6270,8 @@ function ReportsView({
   );
 }
 
-type EvidenceGalleryItem = {
+type EvidenceGalleryItem = EvidenceFacts & {
+  branch?: string; description?: string; recordProof?: boolean; pictures?: {label:string;dataUrl:string}[];
   id: string;
   employeeId: string;
   kind: "Tarea" | "Actividad" | "Aseo" | "Proceso" | "Centro";
@@ -6283,12 +6288,15 @@ type EvidenceGalleryItem = {
 };
 
 function evidenceStatusClass(status: string) {
-  if (status === "Completada" || status === "Completada con retraso") return "ok";
+  if (status === "Completada con retraso") return "danger";
+  if (status === "Completada") return "ok";
   if (status === "Vencida" || status === "Incidencia") return "danger";
   return "warn";
 }
 
 function EvidenceGalleryView({
+  openingChecks,
+  workLocations,
   user,
   today,
   collaborators,
@@ -6296,6 +6304,8 @@ function EvidenceGalleryView({
   activityRuns,
   processInstances,
 }: {
+  openingChecks: StoreOpeningCheck[];
+  workLocations: WorkLocation[];
   user: Employee;
   today: string;
   collaborators: Employee[];
@@ -6321,7 +6331,7 @@ function EvidenceGalleryView({
         if (!supabase) throw new Error("Sin conexión para consultar el historial.");
         const [snapshots, centro] = await Promise.all([
           supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
-          supabase.rpc("attendance_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+          supabase.rpc("system_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
         ]);
         if (!alive) return;
         if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
@@ -6333,38 +6343,44 @@ function EvidenceGalleryView({
     void read(); return () => { alive = false; };
   }, [evidenceDate, evidenceEnd]);
 
-  const visibleEmployees = canViewAll(user)
-    ? collaborators
-    : collaborators.filter((employee) => employee.branch === user.branch || employee.supervisorId === user.id || employee.id === user.id);
+  const visibleEmployees = canViewAll(user) ? collaborators : canManageStore(user)
+    ? collaborators.filter(employee => employee.branch === user.branch || workLocations.some(location => location.employeeId === employee.id && location.location === user.branch && location.date >= evidenceDate && location.date <= evidenceEnd) || employee.id === user.id)
+    : collaborators.filter(employee => employee.id === user.id);
   const visibleIds = new Set(visibleEmployees.map((employee) => employee.id));
 
+  const branchFor = (employeeId: string, date?: string, stored?: string) => stored || plans.find(plan => plan.employee_number === employeeId && plan.day === date)?.branch || workLocations.find(location => location.employeeId === employeeId && location.date === date)?.location || (date === today ? collaborators.find(employee => employee.id === employeeId)?.branch : undefined) || "Sucursal no registrada";
   const items: EvidenceGalleryItem[] = [
-    ...centroEvidence,
+    ...openingChecks.filter(check=>check.date>=evidenceDate&&check.date<=evidenceEnd&&check.openedAt&&(canGovern(user)||canManageStore(user)&&check.branch===user.branch||[check.openedById,check.doorsOpenedById,check.managerAuthorizedById,check.cashierAuthorizedById].includes(user.id))).map(check=>({
+      id:check.id,employeeId:check.openedById||check.doorsOpenedById||check.managerAuthorizedById||"Sin responsable registrado",kind:"Proceso" as const,title:"Apertura oficial de tienda",date:check.date,branch:check.branch,recordProof:true,
+      description:"Registro compartido de Panel y Procesos: autorización de gerencia, personal, caja y ERP, sistemas y apertura al público.",scheduled:check.branch==="Sucursal Centro"?"08:45-09:00":"08:00-08:15",completedAt:check.openedAt,windowStartRequired:true,requiresEvidence:false,validationRequired:true,
+      status:check.managerAuthorizedAt&&check.cashOpenConfirmedAt&&check.erpReady&&check.minimumStaff&&check.systemsReady&&check.processComplete&&check.doorsOpenedAt?"Validada":"Completada",comment:`Registro oficial confirmado. Gerencia: ${collaborators.find(employee=>employee.id===check.managerAuthorizedById)?.name??check.managerAuthorizedById??"Sin dato"}. Caja / ERP: ${collaborators.find(employee=>employee.id===check.cashierAuthorizedById)?.name??check.cashierAuthorizedById??"Sin dato"}.`,
+    })),
+    ...centroEvidence.filter(item => visibleIds.has(item.employeeId)),
     ...plans.filter(plan => visibleIds.has(plan.employee_number)).flatMap(plan => plan.slots.filter(slot => slot.kind !== "Centro" && slot.evidence && slot.evidence !== "none" && !findSlotRun(slot, activityRuns.filter(run => run.employeeId === plan.employee_number && run.date === plan.day))).map(slot => ({
-      id: `${plan.employee_number}-${plan.day}-${slot.key}`, employeeId: plan.employee_number, kind: slot.kind as "Actividad" | "Aseo", title: slot.title, date: plan.day, scheduled: `${slot.start}-${slot.end}`, status: "Sin comenzar", requiresPair: slot.evidence === "photo",
+      id: `${plan.employee_number}-${plan.day}-${slot.key}`, employeeId: plan.employee_number, kind: slot.kind as "Actividad" | "Aseo", title: slot.title, date: plan.day, scheduled: `${slot.start}-${slot.end}`, status: "Sin comenzar", requiresPair: slot.evidence === "photo", branch: plan.branch, description: slot.instructions || slot.title, slaMinutes: slot.slaMinutes,
     }))),
     ...dailyTasks
       .filter((task) => task.date >= evidenceDate && task.date <= evidenceEnd && (task.requiresPhoto || task.beforeEvidenceCapture || task.afterEvidenceCapture) && visibleIds.has(task.employeeId))
       .map((task) => ({
         id: task.id, employeeId: task.employeeId, kind: "Tarea" as const, title: task.title, date: task.date, requiresPair: Boolean(task.requiresPhoto),
-        scheduled: `${task.start}-${task.end}`, status: task.status,
+        scheduled: `${task.start}-${task.end}`, status: task.status, branch: branchFor(task.employeeId,task.date,(task as DailyTask & {branch?:string}).branch), description: task.notes || task.title, startedAt: task.startedAt, completedAt: task.completedAt, pausedAt: task.pausedAt, pausedMinutes: task.pausedMinutes, slaMinutes: task.slaMinutes,
         before: task.beforeEvidenceCapture, after: task.afterEvidenceCapture,
       })),
     ...activityRuns
       .filter((run) => run.date >= evidenceDate && run.date <= evidenceEnd && (run.evidence && run.evidence !== "none" || run.beforeEvidenceCapture || run.afterEvidenceCapture || run.evidenceCapture) && visibleIds.has(run.employeeId))
       .map((run) => ({
         id: run.id, employeeId: run.employeeId, kind: run.itemType, title: run.title, date: run.date, requiresPair: run.evidence === "photo",
-        scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, status: run.status,
+        scheduled: `${run.scheduledStart}-${run.scheduledEnd}`, status: run.status, branch: branchFor(run.employeeId,run.date,(run as ActivityRun & {branch?:string}).branch), description: plans.find(plan=>plan.employee_number===run.employeeId&&plan.day===run.date)?.slots.find(slot=>[slot.key,...(slot.aliases??[])].includes(`${run.itemType}-${run.itemId}`))?.instructions || `Actividad registrada: ${run.title}. Este registro no guardó instrucciones detalladas.`, startedAt: run.startedAt, completedAt: run.completedAt, pausedAt: run.pausedAt, pausedMinutes: run.pausedMinutes, slaMinutes: run.slaMinutes,
         before: run.beforeEvidenceCapture, after: run.afterEvidenceCapture, single: run.evidenceCapture,
       })),
     ...processInstances.filter(instance => instance.date >= evidenceDate && instance.date <= evidenceEnd && visibleIds.has(instance.ownerId)).flatMap(instance => instance.stepStates
-      .filter(step => step.evidence && step.evidence !== "none" || step.evidenceCapture || step.beforeEvidenceCapture || step.afterEvidenceCapture)
+      .filter(step => instance.processId === "apertura" ? Boolean(step.evidenceCapture || step.beforeEvidenceCapture || step.afterEvidenceCapture) : step.evidence && step.evidence !== "none" || step.evidenceCapture || step.beforeEvidenceCapture || step.afterEvidenceCapture)
       .map((step, index) => ({ id: `${instance.id}-${index}`, employeeId: instance.ownerId, kind: "Proceso" as const, title: `${instance.title} · ${step.title}`, date: instance.date,
-        requiresPair: step.evidence === "photo", scheduled: "Paso de proceso", status: step.done ? "Completada" : "Pendiente", before: step.beforeEvidenceCapture, after: step.afterEvidenceCapture, single: step.evidenceCapture }))),
+        requiresPair: step.evidence === "photo", scheduled: "Paso de proceso", status: step.done ? "Completada" : "Pendiente", branch: branchFor(instance.ownerId,instance.date,(instance as ProcessInstance & {branch?:string}).branch), description: step.note || `${instance.notes || instance.title}. ${step.title}. Responsable del paso: ${step.owner}.`, startedAt: instance.startedAt, completedAt: step.completedAt, before: step.beforeEvidenceCapture, after: step.afterEvidenceCapture, single: step.evidenceCapture }))),
   ];
 
-  const withPhotos = items.filter((item) => item.before || item.after || item.single || item.link || item.links?.length);
-  const missingPhotos = items.filter((item) => item.requiresPair ? !item.before?.dataUrl || !item.after?.dataUrl : !item.before && !item.after && !item.single && !item.link);
+  const withPhotos = items.filter((item) => item.before?.dataUrl || item.after?.dataUrl || item.single?.dataUrl || item.link || item.links?.length || item.pictures?.length || item.recordProof || item.commentAccepted && item.comment?.trim());
+  const missingPhotos = items.filter((item) => item.evidenceComplete === false || !item.recordProof && (item.requiresPair ? !(item.evidenceComplete ?? Boolean(item.before?.dataUrl && item.after?.dataUrl)) : !item.single && !item.before && !item.after && !item.link && !item.links?.length && !item.pictures?.length && !item.recordProof && !(item.commentAccepted && item.comment?.trim())));
   const filteredByEmployee = (list: EvidenceGalleryItem[]) => list.filter((item) => employeeFilter === "Todos" || item.employeeId === employeeFilter);
   const shown = filteredByEmployee(onlyMissing ? missingPhotos : withPhotos);
 
@@ -6393,9 +6409,9 @@ function EvidenceGalleryView({
         {historyLoading && <p role="status">Consultando calendario y evidencias históricas…</p>}
         {historyError && <p role="alert" className="loginError">{historyError}</p>}
         <p className="muted">Las actividades sin comenzar aparecen cuando existe un plan guardado de ese día. Una foto inicial sin foto final sigue contando como evidencia pendiente.</p>
-        {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente para estos filtros." : "No hay fotos para estos filtros."}</p>}
+        {shown.length === 0 && <p className="muted">{onlyMissing ? "No hay evidencia pendiente para estos filtros." : "No hay evidencias para estos filtros."}</p>}
         <div className="evidenceGallery">
-          {shown.map((item) => (
+          {shown.map((item) => { const assessment = evidenceAssessment(item); return (
             <article className="evidenceGalleryCard" key={`${item.kind}-${item.date}-${item.id}`}>
               <div className="sectionHead">
                 <div>
@@ -6404,6 +6420,9 @@ function EvidenceGalleryView({
                 </div>
                 <span className={`statusPill ${evidenceStatusClass(item.status)}`}>{item.status}</span>
               </div>
+              <div className="evidenceFacts"><strong>Sucursal: {item.branch || branchFor(item.employeeId,item.date)}</strong><p><strong>Descripción de la actividad:</strong> {item.description || item.title}</p><div className="inlineTimes"><span className={`statusPill ${assessment.tone}`}>{assessment.result}</span><span>{assessment.timing}</span><span>{assessment.form}</span></div>{assessment.reasons.map(reason=><small key={reason}>{reason}</small>)}<p>Inicio: {item.startedAt && Number.isFinite(Date.parse(item.startedAt)) ? new Date(item.startedAt).toLocaleString("es-MX",{timeZone:"America/Mexico_City"}) : "No registrado"} · Entrega: {(item.completedAt || item.submittedAt) && Number.isFinite(Date.parse(item.completedAt || item.submittedAt || "")) ? new Date(item.completedAt || item.submittedAt || "").toLocaleString("es-MX",{timeZone:"America/Mexico_City"}) : "No registrada"}</p></div>
+              {item.comment && <p><strong>Resultado / comentario:</strong> {item.comment}</p>}
+              {item.pictures?.map((picture,index)=><div key={index}><strong>{picture.label}</strong><img className="calendarEvidence" src={picture.dataUrl} alt={`${item.title} · ${picture.label}`} /></div>)}
               {(item.before || item.after) && (
                 <div className="beforeAfterEvidence">
                   <div><strong>Antes</strong>{item.before ? <EvidenceCaptured value={item.before} label="Antes" onClear={() => {}} retakeLabel="" readOnly /> : <p className="muted">Pendiente</p>}</div>
@@ -6413,9 +6432,9 @@ function EvidenceGalleryView({
               {item.single && <EvidenceCaptured value={item.single} label={item.title} onClear={() => {}} retakeLabel="" readOnly />}
               {item.link && <a href={item.link} target="_blank" rel="noreferrer">Abrir evidencia de Centro</a>}
               {item.links?.map((link, index) => <p key={index}><a href={link.url} target="_blank" rel="noreferrer">{link.label}</a></p>)}
-              {!item.before && !item.after && !item.single && !item.link && !item.links?.length && <p className="danger">Sin evidencia subida todavía.</p>}
+              {!item.before && !item.after && !item.single && !item.link && !item.links?.length && !item.pictures?.length && !item.recordProof && !(item.commentAccepted && item.comment?.trim()) && <p className="danger">Sin evidencia subida todavía.</p>}
             </article>
-          ))}
+          );})}
         </div>
       </article>
     </section>
