@@ -6347,6 +6347,12 @@ function EvidenceGalleryView({
     ? collaborators.filter(employee => employee.branch === user.branch || workLocations.some(location => location.employeeId === employee.id && location.location === user.branch && location.date >= evidenceDate && location.date <= evidenceEnd) || employee.id === user.id)
     : collaborators.filter(employee => employee.id === user.id);
   const visibleIds = new Set(visibleEmployees.map((employee) => employee.id));
+  // The supplied records already passed database and branch permissions. Keep history
+  // reviewable even when a collaborator no longer appears in today's directory.
+  if (canViewAll(user) || canManageStore(user)) {
+    for (const id of [...dailyTasks.map(row=>row.employeeId), ...activityRuns.map(row=>row.employeeId), ...processInstances.map(row=>row.ownerId), ...plans.map(row=>row.employee_number), ...centroEvidence.map(row=>row.employeeId)]) if(id) visibleIds.add(id);
+  }
+  const historicalIds = [...visibleIds].filter(id=>!visibleEmployees.some(employee=>employee.id===id));
 
   const branchFor = (employeeId: string, date?: string, stored?: string) => stored || plans.find(plan => plan.employee_number === employeeId && plan.day === date)?.branch || workLocations.find(location => location.employeeId === employeeId && location.date === date)?.location || (date === today ? collaborators.find(employee => employee.id === employeeId)?.branch : undefined) || "Sucursal no registrada";
   const items: EvidenceGalleryItem[] = [
@@ -6399,6 +6405,7 @@ function EvidenceGalleryView({
             <select value={employeeFilter} onChange={(event) => setEmployeeFilter(event.target.value)}>
               <option value="Todos">Todos los colaboradores</option>
               {visibleEmployees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
+              {historicalIds.map(id=><option key={id} value={id}>Colaborador {id} · registro histórico</option>)}
             </select>
             <select value={onlyMissing ? "faltantes" : "con-foto"} onChange={(event) => setOnlyMissing(event.target.value === "faltantes")}>
               <option value="con-foto">Con evidencia subida ({filteredByEmployee(withPhotos).length})</option>
