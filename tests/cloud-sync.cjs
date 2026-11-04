@@ -11,8 +11,14 @@ const client = {
   auth: { getUser: async () => ({ data: { user: { id: 'tester' } } }) },
   from: () => ({ select: () => ({ order: async () => ({ data: rows.map(payload => ({ payload })), error: null }) }) }),
   rpc: async (name, args) => {
-    calls.push({ name, records: args.records });
+    calls.push({ name, records: args.records, args });
     if (failure) return { error: failure };
+    if (name === 'centro_assign_day') {
+      const row = { id: `${args.target_day}-${args.employee_id}`, employeeId: args.employee_id, date: args.target_day,
+        location: args.target_location, start: args.shift_start, end: args.shift_end };
+      rows = [...rows.filter(x => x.id !== row.id), row];
+      return { error: null };
+    }
     if (name === 'archive_daily_task') {
       rows = rows.map(row => row.id === args.task_id ? {...row, removedAt:'2026-09-10'} : row);
       return {error:null};
@@ -93,4 +99,26 @@ function boot() {
   assert.equal(calls.length, openingCalls + 1);
   assert.ok(storage.has('xoxo.pending.' + openingKey));
   console.log('PASS: la apertura reintenta sólo campos modificados, conserva borrados y nunca reemplaza el historial');
+  failure = null;
+  const locations = 'xoxo.workLocations';
+  const jan = {id:'2026-11-04-006',employeeId:'006',date:'2026-11-04',location:'Matriz',start:'08:00',end:'17:30'};
+  const ruben = {...jan,id:'2026-11-04-011',employeeId:'011',location:'Sucursal Centro',start:'09:30',end:'19:00'};
+  rows = [jan, ruben];
+  const moved = {...jan, location:'Sucursal Centro'};
+  const revision = api.markCloudPending(locations, [moved], [moved]);
+  await api.cloudSave(locations, [moved]);
+  api.clearCloudPending(locations, revision);
+  assert.equal(calls.at(-1).name, 'centro_assign_day');
+  assert.equal(rows.find(x => x.employeeId === '011').location, 'Sucursal Centro');
+  assert.equal(rows.find(x => x.employeeId === '006').location, 'Sucursal Centro');
+  assert.equal(calls.at(-1).args.shift_end, '17:30');
+  console.log('PASS: trasladar a Jan conserva el traslado de Rubén y el horario individual');
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  const normalization = app.match(/const normalizedCollaborators = ([^;]+);/)[1];
+  const normalized = vm.runInNewContext(normalization, {cloudCollaborators:[{id:'006',branch:'Matriz',shift:'B'}, {id:'011',branch:'Sucursal Centro',shift:'A'}], organizationOverrides:{'006':{branch:'Sucursal Centro',shift:'A'},'011':{branch:'Matriz',shift:'B'}}});
+  assert.equal(normalized[0].branch, 'Matriz');
+  assert.equal(normalized[0].shift, 'B');
+  assert.equal(normalized[1].branch, 'Sucursal Centro');
+  assert.equal(normalized[1].shift, 'A');
+  console.log('PASS: iniciar sesión respeta la sucursal y turno guardados');
 })().catch(error => { console.error(error); process.exitCode = 1; });

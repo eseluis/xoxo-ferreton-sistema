@@ -606,7 +606,7 @@ const save = (key: string, value: unknown, changes?: unknown[]) => {
   try { revision = markCloudPending(key, value, changes); } catch (error) {
     console.error("No se pudo preparar el respaldo pendiente", error);
   }
-  void cloudSave(key, value)
+  void cloudSave(key, value, changes)
     .then(() => { clearCloudPending(key, revision); window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } })); })
     .catch((error) => {
       console.error("No se pudo guardar la evidencia en la nube; se conserva localmente para reintento", error);
@@ -920,7 +920,7 @@ function App() {
         "010": { branch: "Matriz", shift: "A", supervisorId: "003" }, "007": { branch: "Matriz", shift: "B", supervisorId: "003" },
         "011": { branch: "Matriz", shift: "B", supervisorId: "003" }, "012": { branch: "Matriz", shift: "B", supervisorId: "003" },
       };
-      const normalizedCollaborators = cloudCollaborators.map((employee) => ({ ...employee, ...(organizationOverrides[employee.id] || {}) }));
+      const normalizedCollaborators = cloudCollaborators.map((employee) => ({ ...(organizationOverrides[employee.id] || {}), ...employee }));
       setCollaborators(normalizedCollaborators);
       setAttendance(cloudAttendance);
       setEvaluations(cloudEvaluations);
@@ -1099,8 +1099,17 @@ function App() {
       const next = await cloudRefresh<WorkLocation[]>("xoxo.workLocations");
       if (alive && next) setWorkLocations(next);
     };
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail?.error && ["xoxo.collaborators", "xoxo.workLocations"].includes(detail?.key)) {
+        void refresh();
+        window.dispatchEvent(new Event("centro-refresh"));
+        window.dispatchEvent(new Event("calendar-refresh"));
+      }
+    };
     const timer = window.setInterval(() => void refresh(), 15000);
-    return () => { alive = false; clearInterval(timer); };
+    window.addEventListener("xoxo-sync", onSync);
+    return () => { alive = false; clearInterval(timer); window.removeEventListener("xoxo-sync", onSync); };
   }, [isAuthenticated]);
   const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole, currentWorkLocation);
   const currentCleaningRow = getEditableCleaningRow(user, cleaningRole, currentWorkLocation);
@@ -1323,10 +1332,16 @@ function App() {
   };
 
   const assignWorkLocation = (employeeId: string, location: WorkLocation["location"]) => {
+    const employee = collaborators.find(item => item.id === employeeId);
+    if (!employee || !canGovern(user)) return;
+    const previous = workLocations.find(item => item.employeeId === employeeId && item.date === today);
+    const shift = shiftMap[employee.shift];
+    const assignment: WorkLocation = { id: `${today}-${employeeId}`, employeeId, date: today, location, assignedById: user.id,
+      start: previous?.start ?? shift.start, end: previous?.end ?? shift.end };
     const next = workLocations.filter((item) => !(item.employeeId === employeeId && item.date === today));
-    next.push({ id: `${today}-${employeeId}`, employeeId, date: today, location, assignedById: user.id });
+    next.push(assignment);
     setWorkLocations(next);
-    save("xoxo.workLocations", next);
+    save("xoxo.workLocations", next, [assignment]);
   };
 
   const pauseForPriority = (reason: string) => {
@@ -5139,7 +5154,7 @@ export function TasksView({
   const reviewedTasks = summaryTasks.filter(task => taskMatchesFilter(task, reviewStatus, taskOverviewNow))
     .sort((a, b) => Number(Boolean(taskOverdueReason(b, taskOverviewNow))) - Number(Boolean(taskOverdueReason(a, taskOverviewNow))) || b.date.localeCompare(a.date) || (b.assignedAt || "").localeCompare(a.assignedAt || ""));
   const canDirectAllTasks = ["001", "002", "003"].includes(user.id);
-  const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.id === "006");
+  const locationTargets = collaborators.filter((employee) => employee.role === "AUXILIAR" || employee.role === "JEFE_AREA");
 
   return (
     <section className="grid two">
@@ -6811,8 +6826,14 @@ function StoreOverview({ day }: { day: string }) {
       if (active && !error) setOverview(data ?? []);
     };
     void refresh();
-    const timer = window.setInterval(refresh, 60000);
-    return () => { active = false; window.clearInterval(timer); };
+    const onSync = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (!detail?.error && ["xoxo.collaborators", "xoxo.workLocations", "xoxo.attendance", "xoxo.storeOpeningChecks"].includes(detail?.key)) void refresh();
+    };
+    const timer = window.setInterval(refresh, 15000);
+    window.addEventListener("xoxo-sync", onSync);
+    window.addEventListener("centro-refresh", refresh);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener("xoxo-sync", onSync); window.removeEventListener("centro-refresh", refresh); };
   }, [day]);
   return <article className="panelCard noPrint"><div className="sectionHead"><h2>Operación de las tiendas</h2><span>Estado general y compañeros laborando</span></div>{overview.length ? <div className="grid two">{overview.map(store => <div key={store.branch}><strong>{store.branch} · {store.status}</strong><p>{store.people.length ? store.people.map(person => `${person.name} (${person.roleLabel})`).join(", ") : "Sin compañeros registrados laborando"}</p></div>)}</div> : <p className="muted">El estado general aún no está disponible.</p>}</article>;
 }

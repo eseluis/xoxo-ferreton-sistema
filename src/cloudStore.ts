@@ -24,7 +24,7 @@ const mutationQueues = new Map<string, Promise<void>>();
 // potentially stale assignments from another collaborator's session.
 const observedRows = new Map<string, Map<string, string>>();
 const assignmentModule = (key: string) => key === "xoxo.dailyTasks" || key === "xoxo.internalRequests";
-const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.activityRuns" || key === "xoxo.processInstances" || key === "xoxo.kpiRecords" || key === "xoxo.cashSessions" || key === "xoxo.cashCuts";
+const incrementalModule = (key: string) => assignmentModule(key) || key === "xoxo.workLocations" || key === "xoxo.activityRuns" || key === "xoxo.processInstances" || key === "xoxo.kpiRecords" || key === "xoxo.cashSessions" || key === "xoxo.cashCuts";
 const localVersions = new Map<string, number>();
 function changedRows(key: string, value: unknown): unknown[] | undefined {
   if (!incrementalModule(key) || !Array.isArray(value)) return undefined;
@@ -228,6 +228,7 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
   if (version !== localVersions.get(key)) return pendingRecord<T>(key)?.value ?? fallback;
   if (error || !data) return fallback;
+  if (Array.isArray(data.value)) rememberRows(key, data.value);
   return data.value as T;
 }
 
@@ -259,6 +260,7 @@ export async function cloudRefresh<T>(key: string): Promise<T | undefined> {
   const { data, error } = await supabase.from("app_state").select("value").eq("key", key).maybeSingle();
   if (version !== localVersions.get(key)) return undefined;
   if (error || !data) return undefined;
+  if (Array.isArray(data.value)) rememberRows(key, data.value);
   return data.value as T;
 }
 
@@ -284,6 +286,20 @@ async function performCloudSave(key: string, value: unknown, changes?: unknown[]
   if (key === "xoxo.collaborators") {
     const { error } = await supabase.rpc("save_store_collaborators", { records: value });
     if (error) throw error;
+    return;
+  }
+  if (key === "xoxo.workLocations") {
+    // The RPC locks and merges one employee/day, then reconciles Centro's agenda.
+    // Never send the whole cached roster back to app_state.
+    if (!changes) throw new Error("Vuelve a seleccionar la tienda para confirmar el traslado pendiente.");
+    for (const row of changes as { employeeId: string; date: string; location: string; start?: string; end?: string }[]) {
+      if (!row.start || !row.end) throw new Error("Vuelve a seleccionar la tienda para confirmar el horario del traslado.");
+      const { error } = await supabase.rpc("centro_assign_day", {
+        employee_id: row.employeeId, target_day: row.date, target_location: row.location,
+        shift_start: row.start, shift_end: row.end,
+      });
+      if (error) throw error;
+    }
     return;
   }
   if (key === "xoxo.storeOpeningChecks") {

@@ -74,9 +74,10 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
     return () => { alive = false; };
   }, [teamPeople, days, revision, api]);
   const forDay = (day: string) => {
-    const plan = data.plans.find(p => p.day === day && p.employee_number === employeeId);
+    const savedPlan = data.plans.find(p => p.day === day && p.employee_number === employeeId);
     const employee = collaborators.find(e => e.id === employeeId) ?? user;
     const branch = locations.find(l => l.employeeId === employeeId && l.date === day)?.location ?? employee.branch;
+    const plan = savedPlan && (day < today || savedPlan.branch === branch) ? savedPlan : undefined;
     const preview: DayPlan | undefined = !plan && day >= today ? { employee_number: employeeId, day, branch, slots: branch === "Sucursal Centro" ? [...buildRoutine(employee, schedules, cleaning, branch, day), ...CENTRO_TASKS.map(t => ({ key: `Centro-${t.id}`, kind: "Centro" as const, itemId: t.id, title: t.title, start: t.start, end: t.end, instructions: `${t.instructions} Responsable por confirmar según presencia y horario.`, evidence: t.evidence ? "link" : "none", slaMinutes: 0 }))] : buildRoutine(employee, schedules, cleaning, branch, day) } : undefined;
     const items = dayItems(day, employeeId, plan ?? preview, runs, tasks, data.centro);
     return { plan, preview, items, result: summarizeDay(day, today, time, items, Boolean(plan)) };
@@ -84,8 +85,10 @@ export function OperationCalendarView({ user, collaborators, today, runs, tasks,
   const detail = forDay(selected);
   const selectedDayTeam = teamPeople.map(person => {
     const snapshot = teamSnapshots[person.id];
-    const plan = snapshot?.plans.find(item => item.day === selected && item.employee_number === person.id);
-    const branch = plan?.branch ?? locations.find(item => item.employeeId === person.id && item.date === selected)?.location ?? person.branch;
+    const savedPlan = snapshot?.plans.find(item => item.day === selected && item.employee_number === person.id);
+    const currentBranch = locations.find(item => item.employeeId === person.id && item.date === selected)?.location ?? person.branch;
+    const branch = selected < today ? savedPlan?.branch ?? currentBranch : currentBranch;
+    const plan = savedPlan && (selected < today || savedPlan.branch === branch) ? savedPlan : undefined;
     const preview: DayPlan | undefined = !plan && selected >= today ? {
       employee_number: person.id, day: selected, branch,
       slots: branch === "Sucursal Centro"
