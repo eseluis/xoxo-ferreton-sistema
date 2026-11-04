@@ -6385,7 +6385,7 @@ function EvidenceGalleryView({
   const shown = filteredByEmployee(onlyMissing ? missingPhotos : withPhotos);
 
   return (
-    <section className="stack">
+    <section className="stack evidencePage">
       <article className="panelCard">
         <div className="sectionHead">
           <div>

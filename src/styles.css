@@ -2448,3 +2448,12 @@ textarea {
 .evidenceFacts{padding:14px 0;border-block:1px solid var(--border);margin:12px 0}.evidenceFacts small{display:block;margin-top:6px}.evidenceFacts p{line-height:1.6}
 
 .kpiDashboard{grid-template-columns:minmax(0,1fr)}.kpiDashboard>*{grid-column:1 / -1}
+
+.evidencePage,.evidencePage>.panelCard{min-width:0;max-width:100%}
+.evidencePage>.panelCard>.sectionHead{flex-wrap:wrap;align-items:flex-start;gap:16px}
+.evidencePage .inlineTimes{display:flex;flex-wrap:wrap;gap:10px;min-width:0;max-width:100%}
+.evidencePage .evidenceGallery{grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));align-items:start}
+.evidencePage .evidenceGalleryCard{min-width:0;align-content:start;align-self:start;overflow-wrap:anywhere}
+.evidencePage .evidenceGalleryCard>.sectionHead{align-items:flex-start;flex-wrap:wrap;gap:8px}
+.evidencePage .evidenceGalleryCard>.sectionHead small{display:block;margin-top:6px}
+.evidencePage .calendarEvidence{display:block;width:100%;height:auto;max-height:360px;object-fit:contain}
