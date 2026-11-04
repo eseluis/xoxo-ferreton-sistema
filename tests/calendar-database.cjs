@@ -9,6 +9,7 @@ const {PGlite}=require('@electric-sql/pglite');
     create table app_state(key text,value jsonb);
     create table centro_operation_records(day date,task_id text,owner_id text,status text,data jsonb);
     create function current_profile() returns profiles language sql stable security definer set search_path=public as $$ select p from profiles p where user_id=auth.uid() and active limit 1 $$;
+    create function centro_is_supervisor() returns boolean language sql stable as $$ select coalesce((current_profile()).employee_number='003',false) $$;
     create function can_manage_all() returns boolean language sql stable as $$ select coalesce((current_profile()).employee_number='003',false) $$;
     create function can_manage_branch(b text) returns boolean language sql stable as $$ select can_manage_all() $$;
     grant usage on schema public,auth to authenticated; grant select on app_state to authenticated;

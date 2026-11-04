@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "check": "tsc --noEmit && vite build",
-    "test:centro": "node scripts/centro-templates.cjs --check && node tests/centro-operation.cjs && node tests/centro-database.cjs",
+    "test:centro": "node scripts/centro-templates.cjs --check && node tests/centro-operation.cjs && node tests/centro-database.cjs && node tests/centro-hierarchy.cjs",
     "backup:structure": "node scripts/backup-structure.cjs",
     "test:calendar": "node tests/operation-calendar.cjs && node tests/calendar-database.cjs"
   },

@@ -1,7 +1,7 @@
 import { supabase } from "./cloudStore";
-import type { CentroPerson, CentroRecord } from "./centroOperation";
+import type { CentroPerson, CentroRecord, CentroAssignment } from "./centroOperation";
 
-export type CentroContext = { roster: CentroPerson[]; records: CentroRecord[]; previous: CentroRecord[] };
+export type CentroContext = { roster: CentroPerson[]; records: CentroRecord[]; previous: CentroRecord[]; assignments?: CentroAssignment[]; outsideBusy?: boolean };
 function message(error: { message: string; code?: string }) {
   if (error.code === "PGRST202" || error.message.includes("centro_context")) return "Falta activar la base de datos de Operación Centro: aplicar supabase-centro-operation.sql. No se ha confirmado ningún guardado.";
   return error.message;

@@ -11,7 +11,7 @@ const employees: Employee[] = [
   {id:'102',name:'Responsable de prueba',role:'GERENTE_TIENDA',roleLabel:'Gerente de tienda',branch:'Sucursal Centro',area:'Operación',shift:'Completo',commissionBase:''},
   {id:'003',name:'Supervisor de prueba',role:'GERENTE_GENERAL',roleLabel:'Gerente general',branch:'Matriz',area:'Dirección',shift:'Directivo',commissionBase:''},
 ];
-let context: CentroContext = {roster:employees.slice(0,2).map(p=>({...p,start:'00:00',end:'23:59',present:true,arrived:true})),records:[],previous:[]};
+let context: CentroContext = {roster:employees.slice(0,2).map(p=>({...p,start:'00:00',end:'23:59',present:true,arrived:true})),records:[{day,task_id:'apertura',owner_id:'102',status:'Validada',version:1,data:{incidencias:'GERENCIA_PRIVADO'},history:[],updated_at:new Date().toISOString()},{day,task_id:'aseo-1',owner_id:'101',status:'Validada',version:1,data:{incidencias:'MI_ACTIVIDAD'},history:[],updated_at:new Date().toISOString()}],previous:[]};
 let actor='101';
 const api={
   fetchCentroContext: async()=>structuredClone(context),
@@ -24,5 +24,5 @@ const api={
   },
   assignCentroDay:async()=>{},
 };
-function Fixture(){const [user,setUser]=useState(employees[0]);const [key,setKey]=useState(0);return <main style={{margin:0,padding:24,maxWidth:1400}}><p><strong>Prueba local con datos ficticios · No guarda en producción</strong></p><div className="centroActions"><button onClick={()=>{actor='101';setUser(employees[0]);setKey(k=>k+1);}}>Ver como auxiliar</button><button onClick={()=>{actor='003';setUser(employees[2]);setKey(k=>k+1);}}>Ver como 003</button><button onClick={()=>{context.roster[1].present=!context.roster[1].present;setKey(k=>k+1);}}>Cambiar disponibilidad del segundo colaborador</button></div><CentroOperationView key={key} user={user} collaborators={employees} today={day} openingChecks={[]} onNavigate={()=>{}} onAssignmentsChanged={()=>{}} onPriorityPause={()=>{}} api={api}/></main>}
+function Fixture(){const [user,setUser]=useState(employees[0]);const [key,setKey]=useState(0);return <main style={{margin:0,padding:24,maxWidth:1400}}><p><strong>Prueba local con datos ficticios · No guarda en producción</strong></p><div className="centroActions"><button onClick={()=>{actor='101';setUser(employees[0]);setKey(k=>k+1);}}>Ver como auxiliar</button><button onClick={()=>{actor='102';setUser(employees[1]);setKey(k=>k+1);}}>Ver como gerente</button><button onClick={()=>{actor='003';setUser(employees[2]);setKey(k=>k+1);}}>Ver como 003</button><button onClick={()=>{context.roster[1].present=!context.roster[1].present;setKey(k=>k+1);}}>Cambiar disponibilidad del segundo colaborador</button></div><CentroOperationView key={key} user={user} collaborators={employees} today={day} openingChecks={[]} onNavigate={()=>{}} onAssignmentsChanged={()=>{}} onPriorityPause={()=>{}} api={api}/></main>}
 createRoot(document.getElementById('root')!).render(<Fixture/>);

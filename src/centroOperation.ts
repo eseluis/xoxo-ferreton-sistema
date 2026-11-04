@@ -71,6 +71,17 @@ export function buildCentroAgenda(day: string, roster: CentroPerson[], records: 
     };
   });
 }
+// Server assignments keep ownership consistent while other people's records stay private.
+export type CentroAssignment = { taskId: string; ownerId: string | null };
+export function visibleCentroAgenda(user: Employee, agenda: CentroAgendaItem[], assignments?: CentroAssignment[]): CentroAgendaItem[] {
+  const supervisor = isCentroSupervisor(user);
+  return agenda.flatMap(item => {
+    const assigned = assignments?.find(a => a.taskId === item.id);
+    if (assignments && !assigned) return [];
+    const scoped = assigned ? { ...item, ownerId: assigned.ownerId ?? undefined } : item;
+    return supervisor || scoped.ownerId === user.id ? [scoped] : [];
+  });
+}
 export function centroCompletionError(task: CentroTask, data: CentroRecord["data"], records: CentroRecord[] = []): string | undefined {
   for (const f of task.fields) {
     const value = data[f.key];

@@ -45,10 +45,10 @@ begin
   select branch into target_branch from public.profiles where employee_number=target_employee and active limit 1;
   if actor<>target_employee and not public.can_manage_branch(coalesce(target_branch,'')) then raise exception 'Sin permiso para consultar a este colaborador'; end if;
   return coalesce((select jsonb_agg(to_jsonb(r) || jsonb_build_object('data','{}'::jsonb) order by day,task_id) from public.centro_operation_records r
-    where day between from_day and to_day and (owner_id=target_employee or exists (
+    where day between from_day and to_day and (owner_id=target_employee or (public.centro_is_supervisor() and exists (
       select 1 from public.operation_day_plans p cross join lateral jsonb_array_elements(p.slots) s
       where p.employee_number=target_employee and p.day=r.day and s->>'key'='Centro-'||r.task_id
-    ))),'[]'::jsonb);
+    )))),'[]'::jsonb);
 end $$;
 revoke all on function public.operation_calendar_centro(date,date,text) from public,anon;
 grant execute on function public.operation_calendar_centro(date,date,text) to authenticated;
