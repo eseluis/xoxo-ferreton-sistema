@@ -10,6 +10,7 @@
     "check": "tsc --noEmit && vite build",
     "test:centro": "node scripts/centro-templates.cjs --check && node tests/centro-operation.cjs && node tests/centro-database.cjs && node tests/centro-hierarchy.cjs",
     "backup:structure": "node scripts/backup-structure.cjs",
+    "test:opening": "node tests/opening-process.cjs && node tests/opening-database.cjs",
     "test:calendar": "node tests/operation-calendar.cjs && node tests/calendar-database.cjs"
   },
   "dependencies": {

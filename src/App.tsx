@@ -1830,7 +1830,7 @@ function App() {
       if (closures.some((closure) => closure.date === priorDate)) return;
       const priorTasks = (tasksCloud ?? dailyTasks).filter((task) => task.date === priorDate);
       const incompleteTasks = priorTasks.filter((task) => task.status !== "Completada");
-      const incompleteProcesses = (processesCloud ?? processInstances).filter((process) => process.date === priorDate && process.status !== "Completado");
+      const incompleteProcesses = (processesCloud ?? processInstances).filter((process) => process.date === priorDate && process.processId !== "apertura" && process.status !== "Completado");
       const incompleteActivities = (runsCloud ?? activityRuns).filter((run) => run.startedAt && oaxacaDateKeyFrom(run.startedAt) === priorDate && !run.completedAt);
       const existingRequests = requestsCloud ?? internalRequests;
       const taskAlerts: InternalRequest[] = incompleteTasks.map((task) => ({ id: `cierre-${priorDate}-${task.id}`, type: "Reporte", title: `Tarea no terminada: ${task.title}`, message: `El corte diario detectó que ${collaborators.find((person) => person.id === task.employeeId)?.name ?? task.employeeId} no terminó esta tarea. Debe revisarse la evidencia y determinar la sanción correspondiente.`, requestedById: "sistema", recipientId: task.assignedById, date: today, priority: "Alta", status: "Abierta", confidentiality: "Normal", response: "" }));
@@ -2187,6 +2187,7 @@ function App() {
         {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={scopeRows(branchOpenings)} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
+            openingBoard={<><StoreOpeningBoard user={{ ...user, branch: currentWorkLocation }} today={today} cashSessions={scopeRows(cashSessions)} cashCuts={scopeRows(cashCuts)} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators.map(employee => ({ ...employee, branch: workLocations.find(item => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch }))} onUpdate={updateStoreOpening} onOpenCash={() => navigate("caja")} /><StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators} /></>}
             onNavigate={navigate}
             user={user}
             collaborators={collaborators}
@@ -4112,7 +4113,8 @@ function OrgView({ collaborators }: { collaborators: Employee[] }) {
   );
 }
 
-function ProcessesView({
+export function ProcessesView({
+  openingBoard,
   onNavigate,
   user,
   collaborators,
@@ -4120,6 +4122,7 @@ function ProcessesView({
   setProcessInstances,
   notify,
 }: {
+  openingBoard: React.ReactNode;
   onNavigate: (view: string) => void;
   user: Employee;
   collaborators: Employee[];
@@ -4162,10 +4165,14 @@ function ProcessesView({
   const visibleInstances = canViewAll(user)
     ? processInstances
     : processInstances.filter((instance) => instance.processId === "recepcion-mercancia" || instance.ownerId === user.id || instance.startedById === user.id);
-  const activeInstances = visibleInstances.filter((instance) => instance.status === "Activo" || instance.status === "Incidencia");
+  const openingHistory = visibleInstances.filter(instance => instance.processId === "apertura");
+  const activeInstances = visibleInstances.filter((instance) => instance.processId !== "apertura" && (instance.status === "Activo" || instance.status === "Incidencia"));
 
   return (
     <section className="stack">
+      <article className="panelCard"><div className="sectionHead"><div><h2>Apertura de tienda · registro compartido con Panel</h2><p>La apertura se registra una sola vez por tienda y día. Los cambios realizados aquí se reflejan en Panel y viceversa, con las mismas autorizaciones.</p></div><button className="ghost" onClick={() => onNavigate("panel")}>Ver en Panel</button></div></article>
+      {openingBoard}
+      {openingHistory.length > 0 && <details className="panelCard"><summary>Historial anterior de apertura ({openingHistory.length}) · sólo consulta</summary><p>Estos registros se conservan como historial. La apertura vigente se controla en el checklist compartido de arriba.</p>{openingHistory.map(instance => <div key={instance.id}><strong>{instance.date} · {instance.title}</strong><p>Responsable: {collaborators.find(employee => employee.id === instance.ownerId)?.name ?? instance.ownerId}</p>{instance.notes && <p>{instance.notes}</p>}<ul>{instance.stepStates.map((step,index) => <li key={index}>{step.title} · {step.done ? "Registrado" : "Sin registro anterior"}{step.note && ` · ${step.note}`}</li>)}</ul></div>)}</details>}
       <article className="panelCard">
         <div className="sectionHead">
           <div>
@@ -4295,7 +4302,7 @@ function ProcessesView({
       </article>
 
       <section className="processGrid">
-        {processes.filter(process => process.id !== "apertura-centro").map((process) => (
+        {processes.filter(process => process.id !== "apertura-centro" && process.id !== "apertura").map((process) => (
           <ProcessCard key={process.id} process={process} user={user} owners={availableOwners} startProcess={startProcess} />
         ))}
       </section>
@@ -6661,7 +6668,7 @@ function StoreOpeningReport({user,checks,attendance,collaborators}:{user:Employe
     })}</div>}
   </article>;
 }
-function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
+export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
   const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
 
   // Autorreparación: si una caja se abrió antes de que existiera cashOpenConfirmedAt (o el
