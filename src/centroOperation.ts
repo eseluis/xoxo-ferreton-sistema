@@ -22,7 +22,7 @@ export const CENTRO_TASKS: CentroTask[] = [
   { id: "apertura", title: "Apertura oficial", start: "08:45", end: "09:00", category: "Apertura", control: true, instructions: "La apertura se confirma en el control existente: venta lista para cobrar, sesión Xoxo, checklist completo y puerta abierta. Ventana correcta: 8:45–9:00. Sin descuentos económicos automáticos.", fields: [t("incidencias", "Incidencias de apertura")] },
   ...[1, 2].map(i => ({ id: `aseo-${i}`, title: `Aseo · parte ${i}`, start: "09:00", end: "09:30", category: "Aseo", instructions: "Alternar piso y baños cada día. Intercambiar barrer/trapear o baño 1/baño 2. Registrar fotos de antes y después en esta misma actividad; no repetir el aseo en otro módulo.", fields: [{ key: "fotoAntes", label: "Foto antes del aseo", type: "photo" as const, required: true }, { key: "fotoDespues", label: "Foto después del aseo", type: "photo" as const, required: true }, check("realizado", "Aseo realizado"), t("incidencias", "Incidencias encontradas")] })),
   { id: "presentacion", title: "Mostradores y entrada", start: "09:30", end: "10:00", category: "Exhibición", instructions: "Limpiar mostradores y exhibición, retirar objetos ajenos, regresar productos a su ubicación y cuidar la primera impresión.", fields: [check("mostradores", "Mostradores listos"), check("entrada", "Entrada lista"), t("precios", "Precios faltantes"), t("fuera", "Productos fuera de lugar"), t("vacios", "Espacios vacíos detectados")] },
-  ...[1, 2].map(i => ({ id: `inventario-${i}`, title: `Inventario · 25 códigos (${i}/2)`, start: "10:00", end: "11:00", category: "Inventario", inventory: true, instructions: "Meta sucursal: 50 códigos distintos. Revisar código, descripción, existencia física/sistema, precio, ubicación, etiqueta y alta. Error → corrección → evidencia → responsable → validación. Atender clientes y retomar sin perder avances.", fields: [t("pendientes", "Correcciones pendientes")] })),
+  ...[1, 2].map(i => ({ id: `inventario-${i}`, title: `Inventario · revisión en Alegra POS · bloque ${i}/2`, start: "10:00", end: "11:00", category: "Inventario", inventory: true, instructions: "Revisa el inventario en Alegra POS. Para terminar este bloque, agrega el enlace de evidencia de Alegra POS o comenta las correcciones realizadas. Si no encontraste incidencias, escribe Sin incidencias. No es necesario volver a capturar productos ni cantidades.", fields: [t("pendientes", "Resultado de la revisión: correcciones realizadas o Sin incidencias")] })),
   ...[1, 2].map(i => ({ id: `trafico-${i}`, title: `Generación de tráfico · turno ${i}`, start: i === 1 ? "11:00" : "12:00", end: i === 1 ? "12:00" : "13:00", category: "Tráfico", outdoor: true, instructions: "Preparar propuesta antes de salir. Solo una persona afuera y otra disponible en tienda. En modo reducido: seguimientos digitales e invitaciones desde tienda.", fields: [t("propuesta", "¿Qué harás, dónde, a quién y qué ofrecerás?", true), n("metaContactos", "Meta de contactos"), t("herramientas", "Herramientas necesarias", true), n("contactados", "Personas contactadas"), n("negocios", "Negocios visitados"), n("contactos", "Contactos obtenidos"), n("interesados", "Interesados"), n("cotizaciones", "Cotizaciones generadas"), n("visitas", "Posibles visitas"), t("aprendizaje", "¿Qué aprendiste?", true)] })),
   { id: "exhibicion", title: "Adaptación Sucursal Centro", start: "13:00", end: "14:00", category: "Exhibición", evidence: true, instructions: "Elegir una actividad del proyecto. Registrar avance diario y acumulado; al terminar, continuar con la siguiente mejora.", fields: [t("proyecto", "Actividad del proyecto", true), t("material", "Material y herramientas"), t("inicio", "Fecha de inicio"), t("terminacion", "Fecha de terminación"), n("avance", "Avance acumulado (%)"), t("antes", "Antes: descripción o enlace", true), t("despues", "Después: descripción o enlace", true), t("problemas", "Problemas y material faltante")] },
   { id: "seguimiento", title: "Comidas escalonadas y seguimiento", start: "14:00", end: "15:00", category: "Atención", instructions: "Coordinar las comidas sin dejar la tienda sola. Registrar salida/regreso de comida en Registro diario. Atender WhatsApp, cotizaciones, visitantes y prospectos. Con una persona, solicitar cobertura al supervisor para el descanso.", fields: [n("seguimientos", "Seguimientos realizados"), t("pendientes", "Clientes y cotizaciones pendientes"), t("cobertura", "Organización de comidas / cobertura", true)] },
@@ -79,14 +79,9 @@ export function centroCompletionError(task: CentroTask, data: CentroRecord["data
   }
   if (task.evidence && !String(data.evidence ?? "").trim()) return "Agrega evidencia (enlace de fotografía o video).";
   if (task.inventory) {
-    const items = Array.isArray(data.items) ? data.items : [];
-    if (items.length < 25) return "Este bloque requiere al menos 25 códigos revisados; puedes guardar avances.";
-    const otherCodes = records.filter(r => r.task_id !== task.id && r.task_id.startsWith("inventario-")).flatMap(r => Array.isArray(r.data.items) ? r.data.items.map(i => i.code.trim().toLowerCase()) : []);
-    const codes = items.map(i => i.code.trim().toLowerCase());
-    if (new Set(codes).size !== codes.length || codes.some(code => otherCodes.includes(code))) return "Hay códigos duplicados en el inventario del día.";
-    if (items.some(i => !i.code.trim() || !i.description.trim() || !i.location.trim() || !i.result || [i.physical, i.system, i.price].some(v => !Number.isFinite(v) || v < 0))) return "Completa código, descripción, cantidades, precio, ubicación y resultado de cada producto.";
-    if (items.some(i => i.result !== "Correcto" && (!i.correction.trim() || !i.evidence.trim()))) return "Cada diferencia necesita corrección o seguimiento y evidencia.";
-    if (items.some(i => i.result === "Correcto" && (!i.label || !i.registered || i.physical !== i.system))) return "Un producto sin etiqueta, sin alta o con diferencia no puede marcarse correcto.";
+    const link = String(data.evidence ?? "").trim();
+    if (link && !/^https?:\/\/\S+$/i.test(link)) return "Agrega un enlace válido de Alegra POS (https://…).";
+    if (!link && !String(data.pendientes ?? "").trim()) return "Agrega el enlace de Alegra POS o comenta las correcciones realizadas; si no hubo incidencias, escribe Sin incidencias.";
   }
   if (task.id === "exhibicion" && Number(data.avance ?? 0) > 100) return "El avance no puede exceder 100%.";
   if (task.id === "atencion" && Number(data.compradores ?? 0) > Number(data.visitantes ?? 0)) return "Los compradores no pueden superar a los visitantes.";
@@ -95,11 +90,14 @@ export function centroCompletionError(task: CentroTask, data: CentroRecord["data
 export function centroSummary(records: CentroRecord[]) {
   const data = (id: string) => records.find(r => r.task_id === id)?.data ?? {};
   const attention = data("atencion");
-  const inventory = records.filter(r => r.task_id.startsWith("inventario-")).flatMap(r => Array.isArray(r.data.items) ? r.data.items : []);
+  const inventory = records.filter(r => r.task_id.startsWith("inventario-") && (
+    /^https?:\/\/\S+$/i.test(String(r.data.evidence ?? "").trim()) || String(r.data.pendientes ?? "").trim() ||
+    String(r.data.fotoInventario ?? "").startsWith("data:image/") || (Array.isArray(r.data.items) && r.data.items.length > 0)
+  ));
   const measured = (key: string) => attention[key] === undefined || attention[key] === "" || !Number.isFinite(Number(attention[key])) ? null : Number(attention[key]);
   const visitors = measured("visitantes"), buyers = measured("compradores"), tickets = measured("tickets"), sales = measured("ventas");
   return { visitors, buyers, tickets, sales, conversion: visitors && buyers !== null ? buyers / visitors * 100 : null, averageTicket: tickets && sales !== null ? sales / tickets : null,
-    inventory: new Set(inventory.map(i => i.code.trim().toLowerCase()).filter(Boolean)).size,
+    inventory: inventory.length,
     validated: records.filter(r => r.status === "Validada").length,
     tomorrow: ["producto1", "producto2", "producto3"].filter(key => String(data("manana")[key] ?? "").trim()).length,
   };
