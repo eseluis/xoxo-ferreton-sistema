@@ -77,9 +77,11 @@ export function UniformRole({user}:{user:Employee}) {
  </article>;
 }
 
-export function AttendanceReadiness({user,renderPhoto}:{user:Employee;renderPhoto:(value:Capture|undefined,onCapture:(photo:Capture)=>void,onClear:()=>void)=>ReactNode}) {
- const {data,error,refresh}=useWorkContext<ReadyContext>('work_readiness_context');const [phase,setPhase]=useState('in');const [checks,setChecks]=useState<Record<string,boolean>>({});const [note,setNote]=useState('');const [photo,setPhoto]=useState<Capture>();const [busy,setBusy]=useState(false);const [message,setMessage]=useState('');
+export function AttendanceReadiness({user,renderPhoto,hasEntry,hasExit}:{user:Employee;hasEntry:boolean;hasExit:boolean;renderPhoto:(value:Capture|undefined,onCapture:(photo:Capture)=>void,onClear:()=>void)=>ReactNode}) {
+ const {data,error,refresh}=useWorkContext<ReadyContext>('work_readiness_context');const [phase,setPhase]=useState(hasEntry?'out':'in');const [checks,setChecks]=useState<Record<string,boolean>>({});const [note,setNote]=useState('');const [photo,setPhoto]=useState<Capture>();const [busy,setBusy]=useState(false);const [message,setMessage]=useState('');
  const record=data?.rows.find(r=>r.phase===phase);
+ const locked=phase==='in'?hasEntry:hasExit;
+ useEffect(()=>{if(hasEntry)setPhase('out');},[hasEntry]);
  useEffect(()=>{setChecks(record?.checks??{});setNote(record?.note??'');setPhoto(record?.photo?{dataUrl:record.photo,capturedAt:record.photoSubmittedAt??record.completedAt}:undefined);setMessage('');},[user.id,data?.today,phase,record?.completedAt]);
  if(data&&!data.applicable)return null;
  const keys=data?.toolsRequired?['cutter','flexometro','guantes','uniform']:['uniform'];const names:Record<string,string>={cutter:'Cutter',flexometro:'Flexómetro',guantes:'Guantes',uniform:`Playera ${data?.color??''}`};
@@ -90,10 +92,11 @@ export function AttendanceReadiness({user,renderPhoto}:{user:Employee;renderPhot
   <div className="readinessTabs"><button type="button" aria-pressed={phase==='in'} onClick={()=>setPhase('in')}>Checklist de entrada</button><button type="button" aria-pressed={phase==='out'} onClick={()=>setPhase('out')}>Checklist de salida</button></div>
   {error&&<p className="loginError">{error}</p>}
   {data&&<><p>Hoy: <strong>{data.color}</strong>{phase==='out'&&<> · Para mañana: <strong>{data.tomorrowColor}</strong></>}</p>
-   {keys.map(k=><label className="readinessItem" key={k}>{names[k]}<select aria-label={`${names[k]} en ${phase==='in'?'entrada':'salida'}`} value={typeof checks[k]==='boolean'?String(checks[k]):''} onChange={e=>setChecks(v=>({...v,[k]:e.target.value==='true'}))}><option value="" disabled>Selecciona</option><option value="true">Sí, lo porto</option><option value="false">No, reportar incidencia</option></select></label>)}
-   <label>{incident?'Describe lo que falta (obligatorio)':'Observaciones (opcional)'}<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength={2000}/></label>
-   {(required||photo)&&<div><p><strong>Foto semanal de {phase==='in'?'entrada':'salida'}:</strong> muestra tu playera{data.toolsRequired?', cutter, flexómetro y guantes':''} en la misma foto.</p>{renderPhoto(photo,setPhoto,()=>setPhoto(undefined))}</div>}
-   <button type="button" className="primary" disabled={busy||!answered||incident&&note.trim().length<10||required&&!photo} onClick={()=>void save()}>{busy?'Guardando…':`Guardar checklist de ${phase==='in'?'entrada':'salida'}`}</button>
+   {keys.map(k=><label className="readinessItem" key={k}>{names[k]}<select aria-label={`${names[k]} en ${phase==='in'?'entrada':'salida'}`} disabled={locked} value={typeof checks[k]==='boolean'?String(checks[k]):''} onChange={e=>setChecks(v=>({...v,[k]:e.target.value==='true'}))}><option value="" disabled>Selecciona</option><option value="true">Sí, lo porto</option><option value="false">No, reportar incidencia</option></select></label>)}
+   <label>{incident?'Describe lo que falta (obligatorio)':'Observaciones (opcional)'}<textarea disabled={locked} value={note} onChange={e=>setNote(e.target.value)} maxLength={2000}/></label>
+   {!locked&&(required||photo)&&<div><p><strong>Foto semanal de {phase==='in'?'entrada':'salida'}:</strong> muestra tu playera{data.toolsRequired?', cutter, flexómetro y guantes':''} en la misma foto.</p>{renderPhoto(photo,setPhoto,()=>setPhoto(undefined))}</div>}
+   <button type="button" className="primary" disabled={locked||busy||!answered||incident&&note.trim().length<10||required&&!photo} onClick={()=>void save()}>{busy?'Guardando…':`Guardar checklist de ${phase==='in'?'entrada':'salida'}`}</button>
+   {locked&&<p className="muted">Esta checada ya está registrada. Su revisión no puede editarse.{!record?" El nuevo checklist se aplica desde tu próxima checada.":""}</p>}
    {record&&<p className={`statusPill ${record.status==='Conforme'?'ok':'warn'}`}>Guardado: {record.status} · {new Date(record.completedAt).toLocaleTimeString('es-MX',{timeZone:'America/Mexico_City'})}</p>}
   </>}{message&&<p role="status">{message}</p>}
  </section>;

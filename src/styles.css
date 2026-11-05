@@ -2458,8 +2458,10 @@ textarea {
 .evidencePage .evidenceGalleryCard>.sectionHead small{display:block;margin-top:6px}
 .evidencePage .calendarEvidence{display:block;width:100%;height:auto;max-height:360px;object-fit:contain}
 /* Pedidos, uniforme y preparación de entrada/salida. */
-.preparationCard { min-width:0; }
-.orderSteps { display:grid; gap:14px; margin-top:16px; }
+.preparationCard { min-width:0; grid-column:1 / -1; }
+.preparationCard .sectionHead { flex-wrap:wrap; gap:10px; align-items:flex-start; }
+.preparationCard .statusPill { white-space:normal; overflow-wrap:anywhere; max-width:100%; box-sizing:border-box; }
+.orderSteps { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:14px; margin-top:16px; align-items:start; }
 .preparationStep,.readinessChecklist { border:1px solid var(--border); border-radius:12px; padding:16px; background:var(--surface-alt); min-width:0; }
 .preparationStep p,.preparationStep strong { overflow-wrap:anywhere; }
 .preparationStep label,.readinessChecklist label,.preparationTeam label { display:grid; gap:6px; margin:12px 0; }

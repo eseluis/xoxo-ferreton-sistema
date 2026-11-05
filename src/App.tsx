@@ -3133,7 +3133,7 @@ export function AttendanceView({
           const punctuality = arrivalPunctuality(myAttendance?.in ? timeToMinutes(myAttendance.in) : nowMinutes);
           return (
             <>
-              <AttendanceReadiness user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
+              <AttendanceReadiness user={user} hasEntry={Boolean(myAttendance?.in)} hasExit={Boolean(myAttendance?.out)} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
               <div className="punchGrid">
                 <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
                   Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
