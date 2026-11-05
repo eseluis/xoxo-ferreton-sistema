@@ -18,15 +18,17 @@ export function SystemKpis({user,collaborators,month,branch,role,onNavigate}:{us
     client.rpc("centro_kpi_snapshot",{from_day:from,to_day:to}),
     client.rpc("store_opening_checks"),
     client.from("operation_day_plans").select("employee_number,day,branch,slots").gte("day",from).lte("day",to),
+    client.rpc("work_preparation_metrics",{from_day:from,to_day:to}),
    ]);
    if(!alive)return;
    const next:MetricSources={};const errors:string[]=[];
    results.forEach((result,index)=>{
-    const key=["system","centro_records","opening_records","planned_activity_records"][index];
-    if(result.status!=="fulfilled"||result.value.error){errors.push(["Registros operativos","Operación Centro","Apertura","Agenda guardada"][index]);if(index>0)next[key]={available:false,rows:[]};return;}
+    const key=["system","centro_records","opening_records","planned_activity_records","preparation"][index];
+    if(result.status!=="fulfilled"||result.value.error){errors.push(["Registros operativos","Operación Centro","Apertura","Agenda guardada","Pedidos y uniforme"][index]);if(index===4){next.matriz_order_records={available:false,rows:[]};next.work_readiness_records={available:false,rows:[]};}else if(index>0)next[key]={available:false,rows:[]};return;}
     const data=result.value.data;
     if(index===0)Object.assign(next,data?.sources??{});
     else if(index===1)next[key]={available:true,rows:(data??[]).map((r:MetricRow)=>({...r,validationRequired:true}))};
+    else if(index===4)Object.assign(next,data??{});
     else if(index===2)next[key]={available:true,rows:(data??[]).filter((r:MetricRow)=>r.date>=from&&r.date<=to)};
     else {
      if(!next.activity_run_records?.available){next[key]={available:false,rows:[]};errors.push("Estado de actividades no disponible");return;}

@@ -6,6 +6,8 @@ export type SystemMetric = { id: string; name: string; value: number|null; unit:
 export const sourceInfo: Record<string,{name:string;destination:string;done?:string[];completionName?:string}> = {
  attendance_exit_requests:{name:"Solicitudes de salida visibles",destination:"asistencia",completionName:"Solicitudes de salida respondidas",done:["Autorizada","Rechazada","Cerrada"]},
  attendance_exit_authorizations:{name:"Salidas excepcionales autorizadas",destination:"asistencia"},
+ matriz_order_records:{name:"Pasos de pedidos Matriz",destination:"panel",done:["Completada"]},
+ work_readiness_records:{name:"Herramientas y uniforme",destination:"asistencia"},
  attendance_records:{name:"Asistencia registrada",destination:"asistencia"},
  daily_task_records:{name:"Tareas",destination:"tareas",done:["Completada"]},
  activity_run_records:{name:"Actividades y aseo",destination:"asistencia",done:["Completada","Completada con retraso"]},
@@ -46,6 +48,10 @@ export function systemMetrics(sources:MetricSources, now=new Date()): SystemMetr
    add(source,source+"-complete",rule.completionName??("Cumplimiento · "+rule.name),rows.length?completed/rows.length*100:null,"%",`${completed} terminados / ${rows.length} registros. ${source==="centro_records"?"Sólo Validada cuenta como cumplimiento; Por validar sigue pendiente.":"Los pendientes futuros no se consideran vencidos."}`);
   }
  }
+ const readiness=sources.work_readiness_records;
+ if(readiness?.available){const rows=readiness.rows;const toolRows=rows.filter(r=>r.toolsRequired);add("work_readiness_records","uniform-compliance","Uniforme conforme en checadas",rows.length?rows.filter(r=>r.uniformOk===true).length/rows.length*100:null,"%",`${rows.filter(r=>r.uniformOk===true).length}/${rows.length} revisiones respondidas. No se presume conformidad por una foto.`,rows.some(r=>r.uniformOk===false));add("work_readiness_records","tools-compliance","Herramientas completas en checadas",toolRows.length?toolRows.filter(r=>r.toolsOk===true).length/toolRows.length*100:null,"%",`${toolRows.filter(r=>r.toolsOk===true).length}/${toolRows.length} revisiones de jefes y auxiliares. Incidencias declaradas quedan registradas.`,toolRows.some(r=>r.toolsOk===false));add("work_readiness_records","weekly-photos","Evidencias semanales recibidas",rows.filter(r=>r.hasPhoto).length,"fotos","Fotos de entrada y salida de los días seleccionados; no se evalúa automáticamente su contenido.");}
+ const orders=sources.matriz_order_records;
+ if(orders?.available){const rows=orders.rows;const late=rows.filter(r=>evidenceAssessment(metricFacts(r),now).onTime===false);add("matriz_order_records","orders-overdue","Pasos de pedidos fuera de horario",late.length,"pasos","Incluye pasos no iniciados desde la activación del rol y entregas posteriores a las 11:00. Cada paso corresponde a su responsable.",late.length>0);}
  const tasks=sources.daily_task_records;
  const runs=sources.planned_activity_records?.available?sources.planned_activity_records:sources.activity_run_records;
  for(const [key,entry] of [["daily_task_records",tasks],["activity_run_records",runs],["centro_records",sources.centro_records]] as const) {

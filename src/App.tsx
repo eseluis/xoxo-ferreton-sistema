@@ -1,3 +1,4 @@
+import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparation";
 import { SystemKpis } from "./AutomaticKpiPanel";
 import { evidenceAssessment, type EvidenceFacts } from "./evidenceMetrics";
 import { RequestsPanel } from "./RequestsPanel";
@@ -1226,14 +1227,27 @@ function App() {
   };
 
   const updateAttendance = async (field: keyof Attendance) => {
-    const arrivalLocation = field === "in" ? await checkStoreLocation(currentWorkLocation) : undefined;
+    if (field === "in" || field === "out") {
+      try {
+        if (!supabase) throw new Error("No hay conexión para registrar la checada.");
+        const arrival = field === "in" ? await checkStoreLocation(currentWorkLocation) : null;
+        const { data, error } = await supabase.rpc("register_prepared_attendance", { phase: field, arrival });
+        if (error) throw new Error(error.message);
+        const next = attendance.filter(entry => !(entry.employeeId === user.id && entry.date === today));
+        next.push(data as Attendance); setAttendance(next);
+        window.localStorage.setItem("xoxo.attendance", JSON.stringify(next));
+        window.dispatchEvent(new Event("xoxo-work-preparation"));
+        window.dispatchEvent(new Event("xoxo-sync"));
+        if (field === "in" && currentWorkLocation === "Sucursal Centro") setView("operacion-centro");
+      } catch (error) { window.alert(error instanceof Error ? error.message : "No se pudo registrar la checada."); }
+      return;
+    }
     const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
     const existing = latest.find((entry) => entry.employeeId === user.id && entry.date === today) ?? myAttendance;
     const next = latest.filter((entry) => !(entry.employeeId === user.id && entry.date === today));
-    next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow(), ...(arrivalLocation ? {arrivalLocation} : {}) });
+    next.push({ ...(existing ?? { employeeId: user.id, date: today }), [field]: timeNow() });
     setAttendance(next);
     save("xoxo.attendance", next);
-    if (field === "in" && currentWorkLocation === "Sucursal Centro") setView("operacion-centro");
   };
 
   // Registrar la entrada de otro colaborador cuando ya pasó la hora de autochecado (8:45),
@@ -2189,6 +2203,7 @@ function App() {
         {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={scopeRows(branchOpenings)} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
+            orderBoard={<MatrizOrders user={user} location={currentWorkLocation} collaborators={collaborators} />}
             openingBoard={<><StoreOpeningBoard user={{ ...user, branch: currentWorkLocation }} today={today} cashSessions={scopeRows(cashSessions)} cashCuts={scopeRows(cashCuts)} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators.map(employee => ({ ...employee, branch: workLocations.find(item => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch }))} onUpdate={updateStoreOpening} onOpenCash={() => navigate("caja")} /><StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators} /></>}
             onNavigate={navigate}
             user={user}
@@ -2635,6 +2650,8 @@ function Dashboard({
     const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
+      <UniformRole user={user} />
       {myWorkFocus}
       {openingBoard}
       <StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} />
@@ -2659,6 +2676,8 @@ function Dashboard({
   return (
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
+      <UniformRole user={user} />
       {myWorkFocus}
       {openingBoard}
       <StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators} />
@@ -3114,6 +3133,7 @@ export function AttendanceView({
           const punctuality = arrivalPunctuality(myAttendance?.in ? timeToMinutes(myAttendance.in) : nowMinutes);
           return (
             <>
+              <AttendanceReadiness user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
               <div className="punchGrid">
                 <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
                   Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
@@ -4116,6 +4136,7 @@ function OrgView({ collaborators }: { collaborators: Employee[] }) {
 }
 
 export function ProcessesView({
+  orderBoard,
   openingBoard,
   onNavigate,
   user,
@@ -4125,6 +4146,7 @@ export function ProcessesView({
   notify,
 }: {
   openingBoard: React.ReactNode;
+  orderBoard: React.ReactNode;
   onNavigate: (view: string) => void;
   user: Employee;
   collaborators: Employee[];
@@ -4173,6 +4195,7 @@ export function ProcessesView({
   return (
     <section className="stack">
       <article className="wide panelCard"><div className="sectionHead"><div><h2>Apertura de tienda · registro compartido con Panel</h2><p>La apertura se registra una sola vez por tienda y día. Los cambios realizados aquí se reflejan en Panel y viceversa, con las mismas autorizaciones.</p></div><button className="ghost" onClick={() => onNavigate("panel")}>Ver en Panel</button></div></article>
+      {orderBoard}
       {openingBoard}
       {openingHistory.length > 0 && <details className="wide panelCard"><summary>Historial anterior de apertura ({openingHistory.length}) · sólo consulta</summary><p>Estos registros se conservan como historial. La apertura vigente se controla en el checklist compartido de arriba.</p>{openingHistory.map(instance => <div key={instance.id}><strong>{instance.date} · {instance.title}</strong><p>Responsable: {collaborators.find(employee => employee.id === instance.ownerId)?.name ?? instance.ownerId}</p>{instance.notes && <p>{instance.notes}</p>}<ul>{instance.stepStates.map((step,index) => <li key={index}>{step.title} · {step.done ? "Registrado" : "Sin registro anterior"}{step.note && ` · ${step.note}`}</li>)}</ul></div>)}</details>}
       <article className="panelCard">
@@ -6329,14 +6352,15 @@ function EvidenceGalleryView({
     const read = async () => {
       try {
         if (!supabase) throw new Error("Sin conexión para consultar el historial.");
-        const [snapshots, centro] = await Promise.all([
+        const [snapshots, centro, preparation] = await Promise.all([
           supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
           supabase.rpc("system_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+          supabase.rpc("work_preparation_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
         ]);
         if (!alive) return;
         if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
-        if (!centro.error) setCentroEvidence((centro.data as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
-        if (snapshots.error || centro.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message));
+        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
+        if (snapshots.error || centro.error || preparation.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message));
       } catch (failure) { if (alive) setHistoryError(failure instanceof Error ? failure.message : "No se pudo leer el historial."); }
       finally { if (alive) setHistoryLoading(false); }
     };

@@ -2457,3 +2457,24 @@ textarea {
 .evidencePage .evidenceGalleryCard>.sectionHead{align-items:flex-start;flex-wrap:wrap;gap:8px}
 .evidencePage .evidenceGalleryCard>.sectionHead small{display:block;margin-top:6px}
 .evidencePage .calendarEvidence{display:block;width:100%;height:auto;max-height:360px;object-fit:contain}
+/* Pedidos, uniforme y preparación de entrada/salida. */
+.preparationCard { min-width:0; }
+.orderSteps { display:grid; gap:14px; margin-top:16px; }
+.preparationStep,.readinessChecklist { border:1px solid var(--border); border-radius:12px; padding:16px; background:var(--surface-alt); min-width:0; }
+.preparationStep p,.preparationStep strong { overflow-wrap:anywhere; }
+.preparationStep label,.readinessChecklist label,.preparationTeam label { display:grid; gap:6px; margin:12px 0; }
+.preparationStep textarea,.readinessChecklist textarea { min-height:78px; width:100%; box-sizing:border-box; }
+.preparationStep input,.readinessChecklist select,.preparationTeam select { width:100%; min-width:0; box-sizing:border-box; }
+.readinessTabs { display:flex; gap:8px; flex-wrap:wrap; }
+.readinessTabs button[aria-pressed="true"] { background:#155b38; color:white; }
+.readinessItem { grid-template-columns:minmax(100px,1fr) minmax(140px,1.5fr); align-items:center; }
+.readinessChecklist { margin:18px 0; }
+.readinessChecklist .photoPreview img { max-height:260px; object-fit:contain; }
+.uniformWeek { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; margin:12px 0; }
+.uniformWeek>div { padding:10px; background:var(--surface-hover); border-radius:8px; display:grid; gap:5px; }
+.uniformWeek strong { display:flex; align-items:center; gap:5px; font-size:14px; }
+.shirtColor { display:inline-block; width:13px; height:13px; border-radius:50%; flex-shrink:0; }
+.shirtNegro { background:#242424; }.shirtAzul { background:#2359ad; }.shirtRojo { background:#bd3030; }.shirtVerde { background:#288049; }
+.preparationTeam { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:0 18px; }
+@media(max-width:800px){.uniformWeek{grid-template-columns:repeat(4,minmax(0,1fr));}.preparationStep .sectionHead{display:grid;gap:8px;}}
+@media(max-width:450px){.uniformWeek{grid-template-columns:repeat(2,minmax(0,1fr));}.readinessItem{grid-template-columns:1fr;}}
