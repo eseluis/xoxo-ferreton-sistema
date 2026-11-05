@@ -2164,6 +2164,7 @@ function App() {
         )}
         {view === "asistencia" && (
           <AttendanceView
+            centroCleaningBoard={currentWorkLocation === "Sucursal Centro" ? <CentroOperationView cleaningOnly user={user} collaborators={collaborators} today={today} openingChecks={storeOpeningChecks} onNavigate={navigate} onPriorityPause={pauseForPriority} onAssignmentsChanged={() => {}} /> : undefined}
             onNavigate={navigate}
             user={user}
             attendance={scopeRows(attendance)}
@@ -2990,6 +2991,7 @@ function TeamActivityRow({
 export function AttendanceView({
   onNavigate,
   user,
+  centroCleaningBoard,
   attendance,
   dailyClosures,
   collaborators,
@@ -3015,6 +3017,7 @@ export function AttendanceView({
 }: {
   onNavigate: (view: string) => void;
   user: Employee;
+  centroCleaningBoard?: React.ReactNode;
   attendance: Attendance[];
   dailyClosures: DailyClosure[];
   collaborators: Employee[];
@@ -3105,6 +3108,7 @@ export function AttendanceView({
           </span>
         </div>
         <p className="statusPill ok">Lugar de trabajo hoy: {workLocation}</p>
+        {workLocation === "Sucursal Centro" ? centroCleaningBoard : <>
         <div className="cleaningHero">
           <Sparkles />
           <div>
@@ -3127,6 +3131,7 @@ export function AttendanceView({
           </div>;
         })}
         <p className="muted">Toma o sube las fotos de antes y después aquí mismo. El botón inicia el aseo si está pendiente; cada foto se guarda en el mismo registro de la agenda. La atención al cliente tiene prioridad.</p>
+        </>}
         {(() => {
           const nowMinutes = timeToMinutes(timeNow());
           const arrivalBlocked = workLocation !== "Sucursal Centro" && !myAttendance?.in && nowMinutes >= ARRIVAL_BLOCK_AT;

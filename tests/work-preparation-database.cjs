@@ -25,7 +25,8 @@ const {PGlite}=require('@electric-sql/pglite');
    insert into app_state(key,value) values ('xoxo.collaborators','[{"id":"013","area":"Plomeria","supervisorId":"015"},{"id":"014","area":"Electricidad","supervisorId":"008"}]'),('xoxo.workLocations','[]');
    select set_config('test.user','00000000-0000-0000-0000-000000000003',false);`);
   const sql=fs.readFileSync('supabase-matriz-orders-uniform.sql','utf8').replaceAll("now() at time zone 'America/Mexico_City'","current_setting('test.clock')::timestamp");
-  await db.exec(sql);await db.exec(sql); // rerunnable, doesn't replace existing preferences
+  await db.exec(sql);await db.exec(sql);
+  const weeklySql=fs.readFileSync('supabase-weekly-uniform-photo.sql','utf8').replaceAll("now() at time zone 'America/Mexico_City'","current_setting('test.clock')::timestamp");await db.exec(weeklySql);await db.exec(weeklySql); // rerunnable, doesn't replace existing preferences
   await db.exec(`update matriz_order_settings set activated_on='2026-11-02';grant usage on schema public,auth to authenticated;`);
   const who=async id=>db.exec(`reset role;select set_config('test.user','00000000-0000-0000-0000-${String(id).padStart(12,'0')}',false);set role authenticated;`);
   const rpc=async(q,args=[])=>((await db.query(q,args)).rows[0]);
@@ -57,15 +58,15 @@ const {PGlite}=require('@electric-sql/pglite');
   // Semana completa, sábado incluye las cinco áreas, domingos sin nuevos pedidos.
   await who(3);await db.exec(`reset role;select set_config('test.clock','2026-11-07 10:15:00',false);`);ctx=await context();assert.equal(ctx.rows.length,10);assert.equal(new Set(ctx.rows.map(r=>r.area)).size,5);
   await db.exec(`select set_config('test.clock','2026-11-08 10:15:00',false);`);assert.equal((await context()).rows.length,0);
-  // Herramientas y uniforme: 2 fotos exigidas, sin exponer selección futura.
+  // Herramientas y uniforme: una muestra aleatoria semanal, sin exponer selección futura.
   await db.exec(`select set_config('test.clock','2026-11-04 08:00:00',false);`);await who(13);let r=await ready();assert.equal(r.toolsRequired,true);assert.ok(!('selected_day' in r));
-  await db.exec(`reset role;update work_photo_weeks set selected_day='2026-11-03' where employee_number='013';delete from attendance_records where record_id='aux';`);await who(13);r=await ready();assert.equal(r.entryPhotoRequired,true);assert.equal(r.exitPhotoRequired,true);
+  await db.exec(`reset role;update work_photo_weeks set selected_day='2026-11-03',selected_phase='in' where employee_number='013';delete from attendance_records where record_id='aux';`);await who(13);r=await ready();assert.equal(r.entryPhotoRequired,true);assert.equal(r.exitPhotoRequired,false);assert.equal(r.weeklyEvidenceMet,false);
   await fails("select save_work_readiness('in','{}')",[],/todos/);
   const checks={cutter:true,flexometro:true,guantes:true,uniform:true};const image='data:image/jpeg;base64,YWJj';
   await fails('select save_work_readiness($1,$2::jsonb)',['in',JSON.stringify(checks)],/foto semanal/);
   await fails("select register_prepared_attendance('in')",[],/checklist/);
   await fails("select save_work_readiness('in',$1::jsonb,'','not-an-image')",[JSON.stringify(checks)],/foto JPG/);
-  await db.query("select save_work_readiness('in',$1::jsonb,'',$2)",[JSON.stringify(checks),image]);r=await ready();assert.equal(r.entryPhotoRequired,false);assert.equal(r.exitPhotoRequired,true);
+  await db.query("select save_work_readiness('in',$1::jsonb,'',$2)",[JSON.stringify(checks),image]);r=await ready();assert.equal(r.entryPhotoRequired,false);assert.equal(r.exitPhotoRequired,false);assert.equal(r.weeklyEvidenceMet,true);
   await db.query("select register_prepared_attendance('in')");
   await fails("select save_work_readiness('in',$1::jsonb,'',$2)",[JSON.stringify(checks),image],/ya no puede/);
   await fails("select save_work_readiness('out',$1::jsonb,'',$2)",[JSON.stringify({...checks,cutter:false}),image],/faltante/);
@@ -73,6 +74,11 @@ const {PGlite}=require('@electric-sql/pglite');
   await db.query("select register_prepared_attendance('out')");r=await ready();assert.equal(r.exitPhotoRequired,false);assert.equal(r.rows.find(r=>r.phase==='out').status,'Incidencia');
   metrics=(await rpc("select work_preparation_metrics('2026-11-02','2026-11-07') c")).c;assert.ok(!JSON.stringify(metrics).includes(image));assert.equal(metrics.work_readiness_records.rows.length,2);assert.equal(metrics.work_readiness_records.rows[1].toolsOk,false);
   const evidence=(await rpc("select work_preparation_evidence('2026-11-02','2026-11-07') c")).c;assert.equal(evidence.length,2);assert.ok(evidence[0].single.dataUrl);assert.ok(evidence.every(e=>e.description&&e.branch==='Matriz'));
+  await db.exec(`reset role;select set_config('test.clock','2026-11-06 08:00:00',false);`);await who(13);r=await ready();assert.equal(r.entryPhotoRequired,false);assert.equal(r.exitPhotoRequired,false);assert.equal(r.weeklyEvidenceMet,true);
+  await db.query("select save_work_readiness('in',$1::jsonb)",[JSON.stringify(checks)]);
+  await db.exec(`reset role;select set_config('test.clock','2026-11-11 08:00:00',false);`);await who(13);await ready();
+  await db.exec(`reset role;update work_photo_weeks set selected_day='2026-11-10',selected_phase='out' where employee_number='013' and week_start='2026-11-09';`);await who(13);r=await ready();assert.equal(r.weeklyEvidenceMet,false);assert.equal(r.entryPhotoRequired,false);assert.equal(r.exitPhotoRequired,true);
+  await db.exec(`reset role;select set_config('test.clock','2026-11-04 08:00:00',false);`);
   await who(14);assert.equal((await ready()).variant,'Mujeres');await fails("select set_work_uniform('013','Hombres')",[],/permiso/);
   await who(6);assert.equal((await ready()).variant,'Hombres');await fails("select set_work_uniform('006','Mujeres')",[],/permiso/);
   assert.equal((await rpc("select work_uniform_color('Hombres','2026-11-05') c")).c,'Verde');assert.equal((await rpc("select work_uniform_color('Mujeres','2026-11-05') c")).c,'Negro');

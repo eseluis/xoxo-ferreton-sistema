@@ -13,7 +13,8 @@
     "test:system-kpis": "node tests/evidence-system-kpis.cjs && node tests/system-kpis-database.cjs",
     "test:opening": "node tests/opening-process.cjs && node tests/opening-database.cjs",
     "test:calendar": "node tests/operation-calendar.cjs && node tests/calendar-database.cjs",
-    "test:work-preparation": "node tests/work-preparation.cjs && node tests/work-preparation-database.cjs"
+    "test:work-preparation": "node tests/work-preparation.cjs && node tests/work-preparation-database.cjs",
+    "test:centro-cleaning": "node tests/centro-cleaning-daily.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

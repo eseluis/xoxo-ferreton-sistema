@@ -8,10 +8,10 @@ import { assignCentroDay, fetchCentroContext, saveCentroRecord, type CentroActio
 
 type Opening = { date: string; branch: string; erpReady?: boolean; processComplete: boolean; systemsReady: boolean; doorsOpenedAt?: string; openedAt?: string; cashOpenConfirmedAt?: string; closedAt?: string };
 const defaultApi = { fetchCentroContext, saveCentroRecord, assignCentroDay };
-type Props = { user: Employee; collaborators: Employee[]; today: string; openingChecks: Opening[]; onNavigate: (view: string) => void; onAssignmentsChanged: () => void; onPriorityPause: (reason: string) => void; api?: typeof defaultApi };
+type Props = { user: Employee; collaborators: Employee[]; today: string; openingChecks: Opening[]; onNavigate: (view: string) => void; onAssignmentsChanged: () => void; onPriorityPause: (reason: string) => void; api?: typeof defaultApi; cleaningOnly?: boolean };
 const empty: CentroContext = { roster: [], records: [], previous: [] };
 
-export function CentroOperationView({ user, collaborators, today, openingChecks, onNavigate, onAssignmentsChanged, onPriorityPause, api = defaultApi }: Props) {
+export function CentroOperationView({ user, collaborators, today, openingChecks, onNavigate, onAssignmentsChanged, onPriorityPause, api = defaultApi, cleaningOnly = false }: Props) {
   const supervisor = isCentroSupervisor(user);
   const [day, setDay] = useState(today);
   const [context, setContext] = useState<CentroContext>(empty);
@@ -107,6 +107,17 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
     window.addEventListener("afterprint", () => sections.forEach((section, index) => { section.open = previous[index]; }), { once: true });
     window.print();
   };
+  if (cleaningOnly) return <section className="centroOperation centroDailyCleaning" aria-label="Mi aseo asignado de Centro">
+    <div className="sectionHead"><div><h3>Mi aseo asignado · Sucursal Centro</h3><p>Inicia aquí, registra las fotos de antes y después y entrega tu aseo. El avance se comparte con Operación Centro.</p></div><button type="button" className="ghost" disabled={busy} onClick={() => setRevision(v => v + 1)}>Actualizar mi aseo</button></div>
+    {error && <p className="centroAlert" role="alert">{error}</p>}
+    {notice && <p role="status">{notice}</p>}
+    {calendarError && <p className="calendarWarning" role="alert">Calendario: {calendarError}</p>}
+    {!ready && !error && <p>Cargando tu aseo de Centro…</p>}
+    {ready && !me?.present && <p className="centroAlert">Registra tu entrada y revisa tu horario. Debes estar disponible en Centro para iniciar o retomar el aseo.</p>}
+    {ready && mine.filter(item => item.category === "Aseo").map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={user.name} supervisor={false} editable={day === today && !!me?.present && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={[]} />)}
+    {ready && !mine.some(item => item.category === "Aseo") && <p>No tienes un bloque de aseo asignado en la agenda actual de Centro. Actualiza o solicita a gerencia revisar la cobertura.</p>}
+    <button type="button" className="ghost" onClick={() => onNavigate("operacion-centro")}>Ver mi operación completa de Centro</button>
+  </section>;
   return <section className="centroOperation">
     <div className="centroHero panelCard">
       <div><small>OPERACIÓN DIARIA</small><h2>Sucursal Centro</h2><p className="centroPriority">{CENTRO_PRIORITY}</p></div>

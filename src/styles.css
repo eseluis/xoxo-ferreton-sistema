@@ -2360,6 +2360,9 @@ textarea {
 .centroMetrics strong { font-size:22px; }
 .centroAgenda { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-items:start; }
 .centroTask { min-width:0; }
+.centroDailyCleaning .centroFields { grid-template-columns:1fr; }
+.centroDailyCleaning>.sectionHead { flex-wrap:wrap; gap:12px; align-items:flex-start; }
+.centroDailyCleaning .centroActions button { max-width:100%; }
 .centroTask h3 { margin:8px 0; }
 .centroTask p { line-height:1.6; font-size:14px; }
 .centroTask details { margin:14px 0; }
