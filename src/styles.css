@@ -2483,3 +2483,7 @@ textarea {
 .preparationTeam { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:0 18px; }
 @media(max-width:800px){.uniformWeek{grid-template-columns:repeat(4,minmax(0,1fr));}.preparationStep .sectionHead{display:grid;gap:8px;}}
 @media(max-width:450px){.uniformWeek{grid-template-columns:repeat(2,minmax(0,1fr));}.readinessItem{grid-template-columns:1fr;}}
+
+.attendanceReceipt { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:16px; margin-bottom:14px; border:1px solid var(--accent2); border-radius:12px; background:var(--surface); color:var(--text); overflow-wrap:anywhere; }
+.attendanceReceipt.attendanceError { border-color:var(--danger); }
+.attendanceSyncStatus { padding:12px; margin:12px 0; border:1px solid var(--border); border-radius:10px; }

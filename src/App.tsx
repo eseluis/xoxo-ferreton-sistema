@@ -1,3 +1,4 @@
+import { attendanceReader, readAttendanceDay, confirmAttendancePunch, isConfirmedPunch } from "./attendanceSync";
 import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparation";
 import { SystemKpis } from "./AutomaticKpiPanel";
 import { evidenceAssessment, type EvidenceFacts } from "./evidenceMetrics";
@@ -767,6 +768,14 @@ function App() {
   const [view, setView] = useState("panel");
   const [collaborators, setCollaborators] = useState<Employee[]>(() => load("xoxo.collaborators", defaultEmployees));
   const [attendance, setAttendance] = useState<Attendance[]>(() => load("xoxo.attendance", []));
+  const [attendanceSyncState, setAttendanceSyncState] = useState({ checkedAt: "", error: "" });
+  const [attendanceReceipt, setAttendanceReceipt] = useState({ busy: false, error: false, message: "", phase: "" });
+  const attendancePunchBusy = useRef(false);
+  const attendanceSession = `${isAuthenticated}:${activeId}`;
+  const attendanceSessionRef = useRef(attendanceSession);
+  attendanceSessionRef.current = attendanceSession;
+  const attendanceReaderRef = useRef<{refresh:()=>Promise<void>;invalidate:()=>void}|null>(null);
+  const attendanceDay = todayKey();
   const [evaluations, setEvaluations] = useState<Evaluation[]>(() => load("xoxo.evaluations", []));
   const [cashIncidents, setCashIncidents] = useState<CashIncident[]>(() => load("xoxo.cash", []));
   const [cashSessions, setCashSessions] = useState<CashSession[]>(() => load("xoxo.cashSessions", []));
@@ -995,6 +1004,29 @@ function App() {
   }, [isAuthenticated]);
 
   useEffect(() => {
+    if (!isAuthenticated || !dataHydrated) { setAttendanceSyncState({checkedAt:"",error:""}); setAttendanceReceipt({busy:false,error:false,message:"",phase:""}); attendancePunchBusy.current=false; return; }
+    const reader = attendanceReader(() => readAttendanceDay<Attendance>(attendanceDay), rows => {
+      setAttendance(previous => {
+        const next = [...previous.filter(row => row.date !== attendanceDay), ...rows];
+        try { window.localStorage.setItem("xoxo.attendance", JSON.stringify(next)); } catch { /* Server confirmation is independent of browser storage. */ }
+        return next;
+      });
+      setAttendanceSyncState({checkedAt:new Date().toISOString(),error:""});
+      setAttendanceReceipt(previous => {
+        const phase=previous.phase;const own=rows.find(row=>row.employeeId===activeId);
+        if(previous.error&&(phase==="in"||phase==="out")&&isConfirmedPunch(own,activeId,attendanceDay,phase)) return {busy:false,error:false,phase,message:`${phase==="in"?"Entrada":"Salida"} confirmada en el servidor: ${own[phase]}. Se verificó al recuperar la conexión.`};
+        return previous;
+      });
+    }, error => setAttendanceSyncState(previous => ({...previous,error:error instanceof Error?error.message:"No se pudo verificar la asistencia."})));
+    attendanceReaderRef.current = reader;
+    const refresh = () => { if (document.visibilityState !== "hidden") void reader.refresh(); };
+    const onSync = (event: Event) => { const detail=(event as CustomEvent<{key?:string;error?:string}>).detail; if(!detail?.error&&(!detail?.key||detail.key==="xoxo.attendance")) refresh(); };
+    refresh(); const timer=window.setInterval(refresh,15000);
+    window.addEventListener("focus",refresh);window.addEventListener("online",refresh);window.addEventListener("xoxo-sync",onSync);document.addEventListener("visibilitychange",refresh);
+    return () => { reader.stop(); if(attendanceReaderRef.current===reader)attendanceReaderRef.current=null;clearInterval(timer);window.removeEventListener("focus",refresh);window.removeEventListener("online",refresh);window.removeEventListener("xoxo-sync",onSync);document.removeEventListener("visibilitychange",refresh); };
+  }, [isAuthenticated,dataHydrated,attendanceDay,activeId]);
+
+  useEffect(() => {
     if (!isAuthenticated) return;
     let refreshing = false;
     const refreshOperationalState = async () => {
@@ -1006,11 +1038,10 @@ function App() {
       refreshing = true;
       const mutationAtRefreshStart = lastCloudMutationAt;
       try {
-        const [latestTasks, latestProcesses, latestRequests, latestAttendance, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures, latestCollaborators, latestCleaningRole, latestSlaReviews] = await Promise.all([
+        const [latestTasks, latestProcesses, latestRequests, latestCashSessions, latestOpeningChecks, latestActivityRuns, latestWorkLocations, latestClosures, latestCollaborators, latestCleaningRole, latestSlaReviews] = await Promise.all([
           cloudRefresh<DailyTask[]>("xoxo.dailyTasks"),
           cloudRefresh<ProcessInstance[]>("xoxo.processInstances"),
           cloudRefresh<InternalRequest[]>("xoxo.internalRequests"),
-          cloudRefresh<Attendance[]>("xoxo.attendance"),
           cloudRefresh<CashSession[]>("xoxo.cashSessions"),
           cloudRefresh<StoreOpeningCheck[]>("xoxo.storeOpeningChecks"),
           cloudRefresh<ActivityRun[]>("xoxo.activityRuns"),
@@ -1028,7 +1059,6 @@ function App() {
         if (latestTasks) setDailyTasks(latestTasks);
         if (latestProcesses) setProcessInstances(latestProcesses);
         if (latestRequests) setInternalRequests(latestRequests);
-        if (latestAttendance) setAttendance(latestAttendance);
         if (latestCashSessions) setCashSessions(latestCashSessions);
         if (latestOpeningChecks) setStoreOpeningChecks(latestOpeningChecks);
         if (latestActivityRuns) setActivityRuns(latestActivityRuns);
@@ -1042,8 +1072,8 @@ function App() {
       }
     };
     void refreshOperationalState();
-    // Antes eran 8 segundos (450 consultas/hora por sesión). Cinco minutos son
-    // suficientes como respaldo; los cambios propios se muestran de inmediato.
+    // Los módulos con fotos mantienen el respaldo de cinco minutos.
+    // Asistencia se consulta por separado cada 15 segundos.
     const interval = window.setInterval(() => void refreshOperationalState(), 5 * 60 * 1000);
     const refreshOnFocus = () => {
       if (Date.now() - lastCloudMutationAt > 30000) void refreshOperationalState();
@@ -1227,19 +1257,35 @@ function App() {
   };
 
   const updateAttendance = async (field: keyof Attendance) => {
+    if (attendancePunchBusy.current) return;
     if (field === "in" || field === "out") {
+      attendancePunchBusy.current=true;
+      const requestSession=attendanceSessionRef.current;
+      attendanceReaderRef.current?.invalidate();
+      setAttendanceReceipt({busy:true,error:false,phase:field,message:field==="in"?"Preparando entrada y verificando ubicación… Mantén esta pantalla abierta.":"Enviando salida al servidor…"});
       try {
-        if (!supabase) throw new Error("No hay conexión para registrar la checada.");
         const arrival = field === "in" ? await checkStoreLocation(currentWorkLocation) : null;
-        const { data, error } = await supabase.rpc("register_prepared_attendance", { phase: field, arrival });
-        if (error) throw new Error(error.message);
-        const next = attendance.filter(entry => !(entry.employeeId === user.id && entry.date === today));
-        next.push(data as Attendance); setAttendance(next);
-        window.localStorage.setItem("xoxo.attendance", JSON.stringify(next));
+        if(requestSession!==attendanceSessionRef.current)return;
+        setAttendanceReceipt({busy:true,error:false,phase:field,message:"Confirmando tu checada en el servidor…"});
+        const data = await confirmAttendancePunch<Attendance>(user.id,today,field,arrival);
+        if(requestSession!==attendanceSessionRef.current)return;
+        attendanceReaderRef.current?.invalidate();
+        setAttendance(previous => {
+          const next = [...previous.filter(entry => !(entry.employeeId === user.id && entry.date === today)), data];
+          try { window.localStorage.setItem("xoxo.attendance", JSON.stringify(next)); } catch { /* The punch is already on the server. */ }
+          return next;
+        });
+        setAttendanceReceipt({busy:false,error:false,phase:field,message:`${field==="in"?"Entrada":"Salida"} confirmada en el servidor: ${data[field]}. No necesitas volver a registrarla en otro dispositivo.`});
+        void attendanceReaderRef.current?.refresh();
         window.dispatchEvent(new Event("xoxo-work-preparation"));
-        window.dispatchEvent(new Event("xoxo-sync"));
+        window.dispatchEvent(new CustomEvent("xoxo-sync",{detail:{key:"xoxo.attendance",error:""}}));
+        window.dispatchEvent(new Event("centro-refresh"));
         if (field === "in" && currentWorkLocation === "Sucursal Centro") setView("operacion-centro");
-      } catch (error) { window.alert(error instanceof Error ? error.message : "No se pudo registrar la checada."); }
+      } catch (error) {
+        if(requestSession!==attendanceSessionRef.current)return;
+        setAttendanceReceipt({busy:false,error:true,phase:field,message:`No se pudo confirmar la checada: ${error instanceof Error?error.message:"Error de conexión"}. Verifica la recepción antes de volver a intentar.`});
+        void attendanceReaderRef.current?.refresh();
+      } finally { if(requestSession===attendanceSessionRef.current)attendancePunchBusy.current=false; }
       return;
     }
     const latest = await cloudRefresh<Attendance[]>("xoxo.attendance") ?? attendance;
@@ -2111,6 +2157,7 @@ function App() {
       </aside>
 
       <main>
+        {attendanceReceipt.message && <div className={`attendanceReceipt ${attendanceReceipt.error?"attendanceError":""}`} role={attendanceReceipt.error?"alert":"status"} aria-live="polite"><strong>{attendanceReceipt.message}</strong>{!attendanceReceipt.busy&&<button type="button" className="ghost" onClick={()=>void attendanceReaderRef.current?.refresh()}>Verificar recepción</button>}</div>}
         <div className="globalPriority"><strong>{CENTRO_PRIORITY}</strong><span>Atiende, conserva el avance y retoma. Una condición de seguridad bloquea la actividad.</span><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Cliente")}>Atender cliente</button><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Seguridad")}>Pausar por seguridad</button>{canSeeCentro && <button className="primary" onClick={() => navigate("operacion-centro")}>Operación Centro</button>}</div>
         {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert"><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" onClick={() => window.location.reload()}>Reintentar y recargar</button></div>}
         <header className="topbar">
@@ -2165,6 +2212,8 @@ function App() {
         {view === "asistencia" && (
           <AttendanceView
             centroCleaningBoard={currentWorkLocation === "Sucursal Centro" ? <CentroOperationView cleaningOnly user={user} collaborators={collaborators} today={today} openingChecks={storeOpeningChecks} onNavigate={navigate} onPriorityPause={pauseForPriority} onAssignmentsChanged={() => {}} /> : undefined}
+            attendanceBusy={attendanceReceipt.busy}
+            attendanceSync={{...attendanceSyncState,refresh:()=>void attendanceReaderRef.current?.refresh()}}
             onNavigate={navigate}
             user={user}
             attendance={scopeRows(attendance)}
@@ -2991,6 +3040,8 @@ function TeamActivityRow({
 export function AttendanceView({
   onNavigate,
   user,
+  attendanceBusy = false,
+  attendanceSync,
   centroCleaningBoard,
   attendance,
   dailyClosures,
@@ -3017,6 +3068,8 @@ export function AttendanceView({
 }: {
   onNavigate: (view: string) => void;
   user: Employee;
+  attendanceBusy?: boolean;
+  attendanceSync?: {checkedAt:string;error:string;refresh:()=>void};
   centroCleaningBoard?: React.ReactNode;
   attendance: Attendance[];
   dailyClosures: DailyClosure[];
@@ -3139,13 +3192,14 @@ export function AttendanceView({
           return (
             <>
               <AttendanceReadiness user={user} hasEntry={Boolean(myAttendance?.in)} hasExit={Boolean(myAttendance?.out)} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
+              {attendanceSync&&<div className="attendanceSyncStatus"><p>{attendanceSync.checkedAt?`Asistencias verificadas en el servidor: ${new Date(attendanceSync.checkedAt).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City"})}. Actualización cada 15 segundos.`:"Verificando asistencias con el servidor…"}</p>{attendanceSync.error&&<p className="loginError">No se pudo actualizar: {attendanceSync.error}. Se conserva la última consulta; no se supone una checada nueva.</p>}<button type="button" className="ghost" onClick={attendanceSync.refresh}>Actualizar asistencias</button></div>}
               <div className="punchGrid">
-                <button disabled={arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
+                <button disabled={attendanceBusy || arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
                   Entrada {myAttendance?.in && <span>{myAttendance.in}</span>}
                   {!myAttendance?.in && <small className={`statusPill ${punctuality.className}`}>{workLocation === "Sucursal Centro" ? `Horario asignado: ${shift?.start ?? "08:45"}` : punctuality.label}</small>}
                 </button>
-                <button onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
-                <button onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
+                <button disabled={attendanceBusy} onClick={() => updateAttendance("lunchOut")}>Salida comida {myAttendance?.lunchOut && <span>{myAttendance.lunchOut}</span>}</button>
+                <button disabled={attendanceBusy} onClick={() => updateAttendance("lunchIn")}>Entrada comida {myAttendance?.lunchIn && <span>{myAttendance.lunchIn}</span>}</button>
                 <button onClick={() => updateAttendance("out")}>Salida {myAttendance?.out && <span>{myAttendance.out}</span>}</button>
               </div>
               {myAttendance?.in && <p className="muted">Ubicación al registrar entrada: {locationLabel(myAttendance.arrivalLocation)}{myAttendance.arrivalLocation?.accuracyM ? ` · precisión ±${Math.round(myAttendance.arrivalLocation.accuracyM)} m` : ""}</p>}
