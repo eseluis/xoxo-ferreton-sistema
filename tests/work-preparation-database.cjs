@@ -74,7 +74,7 @@ const {PGlite}=require('@electric-sql/pglite');
   metrics=(await rpc("select work_preparation_metrics('2026-11-02','2026-11-07') c")).c;assert.ok(!JSON.stringify(metrics).includes(image));assert.equal(metrics.work_readiness_records.rows.length,2);assert.equal(metrics.work_readiness_records.rows[1].toolsOk,false);
   const evidence=(await rpc("select work_preparation_evidence('2026-11-02','2026-11-07') c")).c;assert.equal(evidence.length,2);assert.ok(evidence[0].single.dataUrl);assert.ok(evidence.every(e=>e.description&&e.branch==='Matriz'));
   await who(14);assert.equal((await ready()).variant,'Mujeres');await fails("select set_work_uniform('013','Hombres')",[],/permiso/);
-  await who(6);assert.equal((await ready()).variant,'Hombres');
+  await who(6);assert.equal((await ready()).variant,'Hombres');await fails("select set_work_uniform('006','Mujeres')",[],/permiso/);
   assert.equal((await rpc("select work_uniform_color('Hombres','2026-11-05') c")).c,'Verde');assert.equal((await rpc("select work_uniform_color('Mujeres','2026-11-05') c")).c,'Negro');
   // No se puede brincar checklist mediante el guardado modular de una asistencia propia.
   await fails("insert into attendance_records(record_id,employee_number,branch,record_date,payload,updated_by) values('bypass','006','Matriz','2026-11-04','{\"in\":\"08:00\"}',auth.uid())",[],/checklist/);

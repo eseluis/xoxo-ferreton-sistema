@@ -131,7 +131,7 @@ end $$;
 create or replace function public.set_work_uniform(person text,variant text)
 returns void language plpgsql security definer set search_path=public as $$
 begin
- if (current_profile()).employee_number is null or not exists(select 1 from profiles where employee_number=person and active and ((current_profile()).employee_number=person or can_manage_branch(branch))) then raise exception 'Sin permiso'; end if;
+ if (current_profile()).employee_number is null or not exists(select 1 from profiles where employee_number=person and active and can_manage_branch(branch)) then raise exception 'Sin permiso'; end if;
  if variant not in ('Hombres','Mujeres','Comun') then raise exception 'Rol no válido'; end if;
  insert into work_uniform_preferences values(person,variant,now()) on conflict(employee_number) do update set variant=excluded.variant,updated_at=now();
 end $$;
