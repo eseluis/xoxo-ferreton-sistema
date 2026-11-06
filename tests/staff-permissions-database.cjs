@@ -62,6 +62,8 @@ const {PGlite}=require('@electric-sql/pglite');
   await assert.rejects(db.query("update staff_permission_requests set status='Autorizada'"),/permission denied/);
   const metrics=(await db.query("select staff_permission_metrics('2026-11-01','2026-11-10') c")).rows[0].c;assert.ok(!JSON.stringify(metrics).includes('Necesito permiso'));assert.equal(metrics.staff_cycle_records.rows.length,1);
 
+
+  await db.exec(`reset role;insert into profiles(user_id,employee_number,display_name,role,branch) values('00000000-0000-0000-0000-000000000002','002','Director','DIRECTOR','Corporativo');update app_state set value=value||'[{"id":"003","supervisorId":"002"}]' where key='xoxo.collaborators';`);await who(3);assert.equal((await ctx()).supervisorId,'002');await assert.rejects(ctx('002'),/Sin permiso/);
   // Today's plan is captured for absent people too, matches canonical aliases, skips rest.
   const ts=require('typescript'),vm=require('node:vm');const data={};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/data.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:data});
   await db.exec('reset role');await db.query("insert into app_state(key,value) values('xoxo.activitySchedules',$1),('xoxo.cleaningRole',$2) on conflict(key) do update set value=excluded.value",[JSON.stringify(data.defaultActivitySchedules),JSON.stringify(data.defaultCleaningRole)]);

@@ -6,22 +6,24 @@ create table if not exists staff_rest_exceptions(employee_number text not null,d
 create table if not exists staff_weekly_reviews(employee_number text not null,item_key text not null,fingerprint text not null,reviewer text not null,note text not null,reviewed_at timestamptz not null default now(),primary key(employee_number,item_key));
 create table if not exists staff_cycle_snapshots(employee_number text not null,cycle_start date not null,cycle_end date not null,payload jsonb not null,closed_at timestamptz not null default now(),primary key(employee_number,cycle_start));
 create table if not exists staff_permission_requests(id text primary key default gen_random_uuid()::text,employee_number text not null,supervisor_id text not null,branch text not null,kind text not null check(kind in('Permiso','Cambio de descanso','Falta por urgencia','No regresar de comida')),target_day date not null,original_rest_day date,reason text not null,status text not null default 'Pendiente' check(status in('Pendiente','Autorizada','Rechazada')),compliance jsonb not null,decision_compliance jsonb,requested_at timestamptz not null default now(),responded_at timestamptz,responded_by text,response text,version integer not null default 0,client_token text not null,unique(employee_number,client_token));
+create or replace function staff_role_rank(role_name text)
+returns integer language sql immutable set search_path=public as $$select case role_name when 'AUXILIAR' then 1 when 'JEFE_AREA' then 2 when 'CAJERO' then 2 when 'GERENTE_TIENDA' then 3 when 'ADMIN_TIENDA' then 3 when 'ADMIN_GENERAL' then 4 when 'GERENTE_GENERAL' then 5 when 'DIRECTOR' then 6 when 'APODERADA_LEGAL' then 7 else 0 end$$;
 create or replace function staff_supervisor(person text,day date)
 returns text language plpgsql stable security definer set search_path=public as $$
 declare p profiles; candidate text; own_rank integer;
 begin
  select * into p from profiles where employee_number=person and active;if p.employee_number is null then return null;end if;
- own_rank:=case p.role when 'AUXILIAR' then 1 when 'JEFE_AREA' then 2 when 'CAJERO' then 2 when 'GERENTE_TIENDA' then 3 when 'ADMIN_TIENDA' then 3 else 4 end;
+ own_rank:=staff_role_rank(p.role);
  if own_rank=1 then select c->>'supervisorId' into candidate from app_state st cross join lateral jsonb_array_elements(st.value)c join profiles boss on boss.employee_number=c->>'supervisorId' where st.key='xoxo.collaborators' and c->>'id'=person and boss.active and boss.role='JEFE_AREA' and work_branch(boss.employee_number,day)=work_branch(person,day) limit 1;end if;
  if own_rank<3 and candidate is null then select employee_number into candidate from profiles where active and role in('GERENTE_TIENDA','ADMIN_TIENDA') and branch=work_branch(person,day) and employee_number<>person order by employee_number limit 1;end if;
  if candidate is null then
  select c->>'supervisorId' into candidate from app_state s cross join lateral jsonb_array_elements(s.value)c join profiles boss on boss.employee_number=c->>'supervisorId' and boss.active where s.key='xoxo.collaborators' and c->>'id'=person and boss.employee_number<>person and
- (case boss.role when 'AUXILIAR' then 1 when 'JEFE_AREA' then 2 when 'CAJERO' then 2 when 'GERENTE_TIENDA' then 3 when 'ADMIN_TIENDA' then 3 else 4 end)>own_rank and (boss.branch=work_branch(person,day) or boss.role in('APODERADA_LEGAL','DIRECTOR','GERENTE_GENERAL','ADMIN_GENERAL')) limit 1;
+ staff_role_rank(boss.role)>own_rank and (boss.branch=work_branch(person,day) or boss.role in('APODERADA_LEGAL','DIRECTOR','GERENTE_GENERAL','ADMIN_GENERAL')) limit 1;
  end if;
- if candidate is null and person<>'003' and exists(select 1 from profiles where employee_number='003' and active) then candidate:='003';end if;return candidate;
+ if candidate is null and own_rank<5 and person<>'003' and exists(select 1 from profiles where employee_number='003' and active) then candidate:='003';end if;return candidate;
 end $$;
 create or replace function staff_can_review(person text)
-returns boolean language sql stable security definer set search_path=public as $$select coalesce((current_profile()).employee_number<>person and (can_manage_all() or (current_profile()).employee_number=staff_supervisor(person,(now() at time zone 'America/Mexico_City')::date)),false)$$;
+returns boolean language sql stable security definer set search_path=public as $$select coalesce((current_profile()).employee_number<>person and ((can_manage_all() and staff_role_rank((current_profile()).role)>(select staff_role_rank(role) from profiles where employee_number=person)) or (current_profile()).employee_number=staff_supervisor(person,(now() at time zone 'America/Mexico_City')::date)),false)$$;
 create or replace function staff_is_rest(person text,day date)
 returns boolean language sql stable security definer set search_path=public as $$select coalesce((select is_rest from staff_rest_exceptions where employee_number=person and staff_rest_exceptions.day=staff_is_rest.day),(select weekday=extract(dow from day)::integer from staff_rest_settings where employee_number=person),false)$$;
 create or replace function staff_cycle(person text,day date)
@@ -144,7 +146,7 @@ begin
  if person<>actor and not staff_can_review(person) then raise exception 'Sin permiso para consultar este colaborador';end if;
  perform staff_capture_today_plans();perform staff_close_cycles(person);info:=staff_cycle(person,today);
  if info->>'configured'='true' then report:=staff_cycle_report(person,(info->>'start')::date,(info->>'end')::date,now() at time zone 'America/Mexico_City');end if;
- select coalesce(jsonb_agg(to_jsonb(r) order by requested_at desc),'[]') into requests from (select * from staff_permission_requests where employee_number=actor or supervisor_id=actor or (can_manage_all() and employee_number<>actor) order by requested_at desc limit 150)r;
+ select coalesce(jsonb_agg(to_jsonb(r) order by requested_at desc),'[]') into requests from (select * from staff_permission_requests where employee_number=actor or supervisor_id=actor or staff_can_review(employee_number) order by requested_at desc limit 150)r;
  select coalesce(jsonb_agg(to_jsonb(r) order by cycle_end desc),'[]') into history from (select * from staff_cycle_snapshots where employee_number=person order by cycle_end desc limit 26)r;
  select coalesce(jsonb_agg(jsonb_build_object('id',p.employee_number,'name',p.display_name,'restDay',s.weekday) order by p.display_name),'[]') into people from profiles p left join staff_rest_settings s using(employee_number) where p.active and (p.employee_number=actor or staff_can_review(p.employee_number));
  return jsonb_build_object('employeeId',person,'cycle',info,'report',report,'history',history,'requests',requests,'people',people,'supervisorId',staff_supervisor(actor,today),'canReview',staff_can_review(person),'canConfigure',can_manage_all(),'clock',to_char(now() at time zone 'America/Mexico_City','HH24:MI'));
@@ -182,7 +184,7 @@ declare r staff_permission_requests;info jsonb;report jsonb;actor text:=(current
 begin
  if actor is null then raise exception 'Sesión requerida';end if;
  select * into r from staff_permission_requests where id=request_id for update;
- if r.id is null or actor=r.employee_number or (actor<>r.supervisor_id and not can_manage_all()) then raise exception 'Sólo el superior autorizado puede responder';end if;
+ if r.id is null or actor=r.employee_number or (actor<>r.supervisor_id and not staff_can_review(r.employee_number)) then raise exception 'Sólo el superior autorizado puede responder';end if;
  if r.status<>'Pendiente' or r.version<>expected_version then raise exception 'La solicitud ya cambió en otra sesión';end if;
  if length(trim(response_note))<10 then raise exception 'Explica la decisión (mínimo 10 caracteres), incluyendo la excepción si no cumple 80%%';end if;
  if approve and r.target_day<today then raise exception 'No se autorizan cambios retroactivos';end if;
@@ -235,7 +237,7 @@ grant select on staff_rest_settings,staff_rest_exceptions,staff_cycle_snapshots,
 drop policy if exists staff_rest_read on staff_rest_settings;create policy staff_rest_read on staff_rest_settings for select to authenticated using(employee_number=(current_profile()).employee_number or staff_can_review(employee_number));
 drop policy if exists staff_exception_read on staff_rest_exceptions;create policy staff_exception_read on staff_rest_exceptions for select to authenticated using(employee_number=(current_profile()).employee_number or staff_can_review(employee_number));
 drop policy if exists staff_cycle_read on staff_cycle_snapshots;create policy staff_cycle_read on staff_cycle_snapshots for select to authenticated using(employee_number=(current_profile()).employee_number or staff_can_review(employee_number));
-drop policy if exists staff_request_read on staff_permission_requests;create policy staff_request_read on staff_permission_requests for select to authenticated using(employee_number=(current_profile()).employee_number or supervisor_id=(current_profile()).employee_number or (can_manage_all() and employee_number<>(current_profile()).employee_number));
+drop policy if exists staff_request_read on staff_permission_requests;create policy staff_request_read on staff_permission_requests for select to authenticated using(employee_number=(current_profile()).employee_number or supervisor_id=(current_profile()).employee_number or staff_can_review(employee_number));
 create or replace function staff_permission_metrics(from_day date,to_day date)
 returns jsonb language plpgsql security invoker set search_path=public as $$
 begin
@@ -245,7 +247,7 @@ begin
 end $$;
 revoke all on function staff_permission_metrics(date,date) from public,anon;grant execute on function staff_permission_metrics(date,date) to authenticated;
 -- Internal adapters are never exposed to clients.
-revoke all on function staff_supervisor(text,date),staff_is_rest(text,date),staff_cycle(text,date),staff_week_items(text,date,date,timestamp),staff_cycle_report(text,date,date,timestamp),staff_close_cycles(text),staff_capture_today_plans(),staff_close_before_source_change() from public,anon,authenticated;
+revoke all on function staff_role_rank(text),staff_supervisor(text,date),staff_is_rest(text,date),staff_cycle(text,date),staff_week_items(text,date,date,timestamp),staff_cycle_report(text,date,date,timestamp),staff_close_cycles(text),staff_capture_today_plans(),staff_close_before_source_change() from public,anon,authenticated;
 revoke all on function staff_can_review(text) from public,anon;grant execute on function staff_can_review(text) to authenticated;
 revoke all on function staff_permission_context(text),staff_review_activity(text,text,text,text),staff_request_permission(text,date,text,date,text),staff_respond_permission(text,boolean,text,integer),staff_cleaning_scoreboard(date,date) from public,anon;
 grant execute on function staff_permission_context(text),staff_review_activity(text,text,text,text),staff_request_permission(text,date,text,date,text),staff_respond_permission(text,boolean,text,integer),staff_cleaning_scoreboard(date,date) to authenticated;
