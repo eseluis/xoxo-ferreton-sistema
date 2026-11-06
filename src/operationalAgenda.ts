@@ -14,12 +14,14 @@ export function cleaningRowsFor(employee: Employee, rows: CleaningRole[], branch
 export function routineFor(employee: Employee, schedules: ActivitySchedule[], branch: string, day?: string) {
   const weekday = day ? new Date(`${day}T12:00:00Z`).getUTCDay() : undefined;
   const eligible = schedules.filter(item => (!item.branch || item.branch === branch) &&
-    (!item.weekdays || (weekday !== undefined && item.weekdays.includes(weekday))));
+    (!item.weekdays || (weekday !== undefined && item.weekdays.includes(weekday))) && (!item.activeFrom||!!day&&day>=item.activeFrom) && (!item.activeUntil||!!day&&day<=item.activeUntil));
   const shared = eligible.filter(item => item.sharedRoutine && (item.employeeIds?.length ? item.employeeIds.includes(employee.id) : item.ownerRoles.includes(employee.role)));
   if (branch === "Sucursal Centro") return shared;
   const base = eligible.filter(item => !item.sharedRoutine);
   const targeted = base.filter(item => item.employeeIds?.includes(employee.id));
-  return [...(targeted.length ? targeted : base.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role))), ...shared];
+  const result=[...(targeted.length ? targeted : base.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role))), ...shared];
+  const project=shared.find(item=>item.id==="matriz-invewin-configuracion");
+  return project?result.map(item=>item.id==="matriz-operacion-programada"?{...item,start:project.end,durationMinutes:(Number(item.end.slice(0,2))*60+Number(item.end.slice(3)))-(Number(project.end.slice(0,2))*60+Number(project.end.slice(3)))}:item):result;
 }
 // Only explicit references to the daily cleaning role, or matching generic blocks,
 // are aliases. Mixed display/merchandising activities remain separate obligations.

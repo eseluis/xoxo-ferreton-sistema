@@ -1,3 +1,4 @@
+import {InvewinProject,INVEWIN_ID} from "./InvewinProject";
 import {useCleaningDeadline} from "./cleaningDeadline";
 import {StaffPermissions,CleaningExpectedPoints} from "./StaffPermissions";
 import { MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
@@ -2714,6 +2715,7 @@ function Dashboard({
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
       {myWorkFocus}
@@ -2741,6 +2743,7 @@ function Dashboard({
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
       {myWorkFocus}
@@ -3137,6 +3140,7 @@ export function AttendanceView({
     startActivityRun({ itemType: run?.itemType ?? (slot.kind === "Aseo" ? "Aseo" : "Actividad"), itemId: run?.itemId ?? slot.itemId, title: slot.title, scheduledStart: slot.start, scheduledEnd: slot.end, slaMinutes: slot.slaMinutes, evidence: slot.evidence });
   };
   const renderSlot = (slot: (typeof slots)[number]) => {
+    if(slot.itemId===INVEWIN_ID)return <InvewinProject key={slot.key} user={user} location={workLocation}/>;
     const controlled=isControlledCleaning(slot);const gate=cleaningControl.gates.find(g=>g.key===slot.key);
     const run = controlled ? gate?.run : findSlotRun(slot, ownRuns);
     return <LiveActivityCard title={slot.title} scheduledStart={gate?.start??slot.start} scheduledEnd={gate?.end??slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
@@ -6439,16 +6443,17 @@ function EvidenceGalleryView({
     const read = async () => {
       try {
         if (!supabase) throw new Error("Sin conexión para consultar el historial.");
-        const [snapshots, centro, preparation, openingTeamEvidence] = await Promise.all([
+        const [snapshots, centro, preparation, openingTeamEvidence, invewinEvidence] = await Promise.all([
           supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
           supabase.rpc("system_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("work_preparation_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("matriz_opening_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+          supabase.rpc("invewin_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
         ]);
         if (!alive) return;
         if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
-        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : []), ...(!openingTeamEvidence.error ? openingTeamEvidence.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
-        if (snapshots.error || centro.error || preparation.error || openingTeamEvidence.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message ?? openingTeamEvidence.error?.message));
+        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : []), ...(!openingTeamEvidence.error ? openingTeamEvidence.data ?? [] : []), ...(!invewinEvidence.error ? invewinEvidence.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
+        if (snapshots.error || centro.error || preparation.error || openingTeamEvidence.error || invewinEvidence.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message ?? openingTeamEvidence.error?.message ?? invewinEvidence.error?.message));
       } catch (failure) { if (alive) setHistoryError(failure instanceof Error ? failure.message : "No se pudo leer el historial."); }
       finally { if (alive) setHistoryLoading(false); }
     };

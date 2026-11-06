@@ -88,6 +88,8 @@ export type ActivitySchedule = {
   objective?: string;
   weekdays?: number[]; // Domingo = 0, lunes = 1, ... sábado = 6; omitido = diario.
   sharedRoutine?: boolean;
+  activeFrom?: string;
+  activeUntil?: string;
 };
 
 export type CleaningRole = {
@@ -658,6 +660,8 @@ export const defaultCleaningRole: CleaningRole[] = [
 ];
 
 export const defaultActivitySchedules: ActivitySchedule[] = [
+  {id:"matriz-invewin-configuracion",name:"Configuración del nuevo sistema Invewin · mínimo 50 códigos",area:"Catálogo Invewin",branch:"Matriz",ownerRoles:["JEFE_AREA"],sharedRoutine:true,activeFrom:"2026-11-06",activeUntil:"2026-12-01",start:"11:00",end:"12:30",durationMinutes:90,evidence:"none",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],objective:"Tener en Invewin la totalidad de productos de Matriz dados de alta y verificados antes del 2 de diciembre de 2026.",instructions:"Registrar al menos 50 códigos diferentes por jefe y día laborable, con descripción, código, precio y cantidad de venta. Trabajar por zonas: terminar un anaquel o muestrario antes de empezar otro. Dar de alta y comprobar los datos en Invewin, registrar los códigos y referencia de comprobación en el proceso Invewin del Panel, y enviar a validación del superior. No volver a contar códigos ya validados. Fecha límite: 1 de diciembre de 2026; la atención al cliente conserva prioridad."},
+
   {
     id: "semanal-entrega-reporte", name: "Entrega y envío de reporte semanal", area: "Reporte semanal",
     start: "12:00", end: "13:00", durationMinutes: 60, weekdays: [1], sharedRoutine: true,

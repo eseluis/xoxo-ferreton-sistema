@@ -79,6 +79,9 @@ begin
   finger:=md5(p::text);validated:=exists(select 1 from staff_weekly_reviews v where v.employee_number=person and v.item_key=key and v.fingerprint=finger and v.reviewed_at at time zone 'America/Mexico_City'<=cutoff);
   -- La validación nativa de Centro se controla en su RPC; no se confía en marcas del cliente.
   if s->>'source'='Centro' and p->>'status'='Validada' then validated:=true;end if;
+  if p->>'itemId'='matriz-invewin-configuracion' and to_regclass('public.invewin_daily_records') is not null then
+   if exists(select 1 from invewin_daily_records d where d.employee_number=person and d.record_date=day and d.payload->>'status'='Validada') then validated:=true;end if;
+  end if;
   elapsed:=case when coalesce(p->>'startedAt','')<>'' and coalesce(p->>'completedAt','')<>'' then greatest(0,extract(epoch from ((p->>'completedAt')::timestamptz-(p->>'startedAt')::timestamptz))/60-coalesce((p->>'pausedMinutes')::numeric,0)) else null end;
   points:=case when not completed or not proof then 0 when p->>'cleaningDeadlineMissed'='true' or p->>'cleaningOnTime'='false' or p->>'onTime'='false' or elapsed>coalesce((p->>'slaMinutes')::numeric,99999) then 1 else 2 end;
   entry:=entry||jsonb_build_array((s-'raw')||jsonb_build_object('title',coalesce(p->>'title',p->>'phase','Actividad'),'start',coalesce(p->>'start',p->>'scheduledStart'),'end',coalesce(p->>'end',p->>'scheduledEnd'),'cleaning',cleaning,'completed',completed,'evidenceComplete',proof,'validated',completed and proof and validated,'due',due,'fingerprint',finger,'autoPoints',case when cleaning then points else 0 end));
@@ -119,7 +122,7 @@ begin
  for person in select * from profiles where active and display_name<>'Vacante' loop
   if staff_is_rest(person.employee_number,capture_day) or exists(select 1 from operation_day_plans where employee_number=person.employee_number and operation_day_plans.day=capture_day) then continue;end if;
   branch:=work_branch(person.employee_number,capture_day);slots:='[]';consumed:='[]';
-  select coalesce(jsonb_agg(a),'[]') into routine from app_state st cross join lateral jsonb_array_elements(st.value)a where st.key='xoxo.activitySchedules' and (coalesce(a->>'branch','')='' or a->>'branch'=branch) and (not a?'weekdays' or a->'weekdays' @> to_jsonb(extract(dow from capture_day)::integer));
+  select coalesce(jsonb_agg(a),'[]') into routine from app_state st cross join lateral jsonb_array_elements(st.value)a where st.key='xoxo.activitySchedules' and (coalesce(a->>'branch','')='' or a->>'branch'=branch) and (not a?'weekdays' or a->'weekdays' @> to_jsonb(extract(dow from capture_day)::integer)) and coalesce(nullif(a->>'activeFrom','')::date,capture_day)<=capture_day and coalesce(nullif(a->>'activeUntil','')::date,capture_day)>=capture_day;
   targeted:=exists(select 1 from jsonb_array_elements(routine)a where coalesce(a->>'sharedRoutine','false')<>'true' and a->'employeeIds' ? person.employee_number);
   select coalesce(jsonb_agg(a),'[]') into routine from jsonb_array_elements(routine)a where
    (a->>'sharedRoutine'='true' and (case when jsonb_array_length(coalesce(a->'employeeIds','[]'))>0 then a->'employeeIds' ? person.employee_number else a->'ownerRoles' ? person.role end)) or

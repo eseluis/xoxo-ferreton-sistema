@@ -6,6 +6,7 @@ export type SystemMetric = { id: string; name: string; value: number|null; unit:
 export const sourceInfo: Record<string,{name:string;destination:string;done?:string[];completionName?:string}> = {
  staff_permission_records:{name:"Permisos y descansos",destination:"solicitudes",completionName:"Solicitudes con decisión",done:["Autorizada","Rechazada"]},
  staff_cycle_records:{name:"Cierres por descanso",destination:"solicitudes"},
+ invewin_daily_records:{name:"Configuración Invewin Matriz",destination:"panel",done:["Validada"]},
  attendance_exit_requests:{name:"Solicitudes de salida visibles",destination:"asistencia",completionName:"Solicitudes de salida respondidas",done:["Autorizada","Rechazada","Cerrada"]},
  attendance_exit_authorizations:{name:"Salidas excepcionales autorizadas",destination:"asistencia"},
  matriz_opening_step_records:{name:"Equipo de apertura Matriz",destination:"procesos",done:["Completada"]},
@@ -53,6 +54,8 @@ export function systemMetrics(sources:MetricSources, now=new Date()): SystemMetr
  }
  const cycles=sources.staff_cycle_records;
  if(cycles?.available){const rows=cycles.rows.filter(r=>!r.missingPlanDays);const total=rows.reduce((s,r)=>s+Number(r.total??0),0),validated=rows.reduce((s,r)=>s+Number(r.validated??0),0);add("staff_cycle_records","weekly-validated","Actividades hechas y validadas en ciclos cerrados",total?validated/total*100:null,"%",`${validated}/${total} obligaciones exigibles. ${cycles.rows.length-rows.length} cierres parciales excluidos por días sin plan. El mínimo de 80% orienta la decisión humana.`);}
+ const invewin=sources.invewin_daily_records;
+ if(invewin?.available){const valid=invewin.rows.filter(r=>r.status==="Validada");add("invewin_daily_records","invewin-codes","Códigos dados de alta y validados en Invewin",valid.reduce((n,r)=>n+Number(r.codeCount??0),0),"códigos","Sólo entregas validadas; no se vuelven a contar códigos validados en otra entrega. La totalidad del catálogo se coteja con el área y el ERP.");add("invewin_daily_records","invewin-timely","Entregas Invewin en horario",valid.length?valid.filter(r=>r.onTime===true).length/valid.length*100:null,"%","Ventana diaria 11:00–12:30. Meta mínima de 50 códigos por jefe y día laborable; vigencia hasta el 1 de diciembre de 2026.");}
  const readiness=sources.work_readiness_records;
  if(readiness?.available){const rows=readiness.rows;const toolRows=rows.filter(r=>r.toolsRequired);add("work_readiness_records","uniform-compliance","Uniforme conforme en checadas",rows.length?rows.filter(r=>r.uniformOk===true).length/rows.length*100:null,"%",`${rows.filter(r=>r.uniformOk===true).length}/${rows.length} revisiones respondidas. No se presume conformidad por una foto.`,rows.some(r=>r.uniformOk===false));add("work_readiness_records","tools-compliance","Herramientas completas en checadas",toolRows.length?toolRows.filter(r=>r.toolsOk===true).length/toolRows.length*100:null,"%",`${toolRows.filter(r=>r.toolsOk===true).length}/${toolRows.length} revisiones de jefes y auxiliares. Incidencias declaradas quedan registradas.`,toolRows.some(r=>r.toolsOk===false));add("work_readiness_records","weekly-photos","Evidencias semanales recibidas",rows.filter(r=>r.hasPhoto).length,"fotos","Fotos de entrada y salida de los días seleccionados; no se evalúa automáticamente su contenido.");}
  const orders=sources.matriz_order_records;
