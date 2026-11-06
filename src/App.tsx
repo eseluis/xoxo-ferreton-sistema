@@ -1,3 +1,4 @@
+import {useCleaningDeadline} from "./cleaningDeadline";
 import {StaffPermissions,CleaningExpectedPoints} from "./StaffPermissions";
 import { MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
 import { attendanceReader, readAttendanceDay, confirmAttendancePunch, isConfirmedPunch } from "./attendanceSync";
@@ -391,6 +392,7 @@ type ActivityRun = {
   pausedMinutes?: number;
   pauseReason?: string;
   employeeComment?: string;
+  cleaningDeadlineMissed?: boolean;
 };
 
 const SLA_WARN_RATIO = 0.8;
@@ -401,10 +403,10 @@ function minutesBetween(startIso?: string, endIso?: string) {
   return Math.max(0, (end - new Date(startIso).getTime()) / 60000);
 }
 
-function slaStatus(run: PriorityClock & { slaMinutes: number }): SlaState {
+function slaStatus(run: PriorityClock & { slaMinutes: number; cleaningDeadlineMissed?: boolean }): SlaState {
   if (run.pausedAt && !run.completedAt) return "Pausada";
   if (run.completedAt) {
-    return activeMinutes(run) > run.slaMinutes ? "Completada con retraso" : "Completada";
+    return run.cleaningDeadlineMissed || activeMinutes(run) > run.slaMinutes ? "Completada con retraso" : "Completada";
   }
   if (!run.startedAt) return "Pendiente";
   const elapsed = activeMinutes(run);
@@ -3124,19 +3126,24 @@ export function AttendanceView({
   const canRegisterLateAttendance = LATE_ATTENDANCE_OVERRIDE_IDS.includes(user.id);
   const [lateEmployeeId, setLateEmployeeId] = useState("");
   const today = todayKey();
+  const cleaningControl = useCleaningDeadline(today,user.id);
   const slots = buildRoutine(user, activitySchedules, cleaningRows, workLocation, today);
   const ownRuns = activityRuns.filter(run => run.employeeId === user.id && run.date === today);
   const [cleaningEvidenceSlot, setCleaningEvidenceSlot] = useState<string>();
+  const isControlledCleaning = (slot: (typeof slots)[number]) => slot.kind === "Aseo" || activitySchedules.some(item=>item.id===slot.itemId&&item.area.toLowerCase().includes("aseo"));
   const startSlot = (slot: (typeof slots)[number]) => {
+    if(isControlledCleaning(slot)){void cleaningControl.action(slot.key,"start");return;}
     const run = findSlotRun(slot, ownRuns);
     startActivityRun({ itemType: run?.itemType ?? (slot.kind === "Aseo" ? "Aseo" : "Actividad"), itemId: run?.itemId ?? slot.itemId, title: slot.title, scheduledStart: slot.start, scheduledEnd: slot.end, slaMinutes: slot.slaMinutes, evidence: slot.evidence });
   };
   const renderSlot = (slot: (typeof slots)[number]) => {
-    const run = findSlotRun(slot, ownRuns);
-    return <LiveActivityCard title={slot.title} scheduledStart={slot.start} scheduledEnd={slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
-      onStart={() => startSlot(slot)} onComplete={completeActivityRun}
+    const controlled=isControlledCleaning(slot);const gate=cleaningControl.gates.find(g=>g.key===slot.key);
+    const run = controlled ? gate?.run : findSlotRun(slot, ownRuns);
+    return <LiveActivityCard title={slot.title} scheduledStart={gate?.start??slot.start} scheduledEnd={gate?.end??slot.end} slaMinutes={slot.slaMinutes} evidence={slot.evidence} run={run}
+      blockedReason={controlled?(cleaningControl.error||gate?.reason||(!gate?"Verificando horario de aseo en el servidor…":"")):undefined} actionBusy={controlled&&cleaningControl.busy} recovery={controlled&&gate?.recovery} isCleaning={controlled}
+      onStart={() => startSlot(slot)} onComplete={id=>controlled?void cleaningControl.action(slot.key,"complete"):completeActivityRun(id)}
       onCaptureEvidence={value => { if (run) setActivityEvidence(run.id, value); }} onClearEvidence={() => { if (run) setActivityEvidence(run.id, undefined); }}
-      onCapturePhoto={(phase, value) => { if (run) setActivityPhoto(run.id, phase, value); }} onClearPhoto={phase => { if (run) setActivityPhoto(run.id, phase, undefined); }} />;
+      onCapturePhoto={(phase, value) => { if(controlled){void cleaningControl.action(slot.key,"photo",phase,value);return;}if (run) setActivityPhoto(run.id, phase, value); }} onClearPhoto={phase => { if(controlled){void cleaningControl.action(slot.key,"photo",phase);return;}if (run) setActivityPhoto(run.id, phase, undefined); }} />;
   };
   const attendanceLog = attendance
     .flatMap((entry) => ([
@@ -3184,10 +3191,12 @@ export function AttendanceView({
         </div>
         {slots.filter(slot => slot.kind === "Aseo").map(slot => {
           const run = findSlotRun(slot, ownRuns);
+          const deadlineGate=cleaningControl.gates.find(g=>g.key===slot.key);
           const expanded = cleaningEvidenceSlot === slot.key;
           return <div className="cleaningQuickEvidence" key={slot.key}>
+            {deadlineGate?.expired&&<p className="calendarWarning" role="status">{deadlineGate.blocked?deadlineGate.reason:`Recuperación disponible desde las ${deadlineGate.exitTime}; la entrega conservará el retraso.`}</p>}
             <button type="button" className="primary compact" aria-expanded={expanded} aria-controls={`cleaning-evidence-${slot.key}`} onClick={() => {
-              if (!expanded && !run?.startedAt) startSlot(slot);
+              if (!expanded && !run?.startedAt && !isControlledCleaning(slot)) startSlot(slot);
               setCleaningEvidenceSlot(expanded ? undefined : slot.key);
             }}><Camera size={16} /> {expanded ? "Ocultar evidencia" : run?.beforeEvidenceCapture && run?.afterEvidenceCapture ? "Ver evidencia" : "Tomar o subir evidencia"}{slots.filter(item => item.kind === "Aseo").length > 1 ? ` · ${slot.title}` : ""}</button>
             {expanded && <div id={`cleaning-evidence-${slot.key}`}>
@@ -3769,8 +3778,9 @@ function LiveActivityCard({
   onCaptureEvidence,
   onClearEvidence,
   onCapturePhoto,
-  onClearPhoto,
+  onClearPhoto, blockedReason, actionBusy, recovery, isCleaning,
 }: {
+  blockedReason?:string; actionBusy?:boolean; recovery?:boolean; isCleaning?:boolean;
   title: string;
   scheduledStart: string;
   scheduledEnd: string;
@@ -3796,8 +3806,9 @@ function LiveActivityCard({
         <small>
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
+        {blockedReason&&<p className="calendarWarning" role="status">{blockedReason}</p>}{recovery&&!blockedReason&&<p className="warn">Recuperación habilitada desde tu salida programada. Conserva el incumplimiento del horario original; registra la salida real al terminar.</p>}
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
-        {(inProgress || needsRepair || run?.completedAt) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} readOnly={Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} readOnly={Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
+        {(inProgress || needsRepair || run?.completedAt) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} readOnly={!!blockedReason||!!actionBusy||Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} readOnly={!!blockedReason||!!actionBusy||Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
         {(inProgress || needsRepair) && needsEvidence && evidence !== "photo" && (
           <EvidenceField
             evidence={evidence}
@@ -3809,13 +3820,13 @@ function LiveActivityCard({
       </span>
       <div className="liveActivityActions">
         <span className={`statusPill ${slaClassName(status)}`}>{status}</span>
-        {(!run?.startedAt || !!run?.pausedAt) && (
-          <button className="ghost compact" onClick={onStart}>
-            {run?.pausedAt ? "Retomar" : "Iniciar"}
+        {(!run?.startedAt || !!run?.pausedAt || isCleaning&&needsRepair) && (
+          <button className="ghost compact" disabled={!!blockedReason||actionBusy} onClick={onStart}>
+            {actionBusy?"Confirmando…":recovery?"Retomar aseo fuera de horario":run?.pausedAt?"Retomar":isCleaning?"Iniciar aseo":"Iniciar"}
           </button>
         )}
         {inProgress && (
-          <button className="primary compact" disabled={!evidenceReady || !!run?.pausedAt} onClick={() => onComplete(run!.id)}>
+          <button className="primary compact" disabled={!!blockedReason||actionBusy||!evidenceReady || !!run?.pausedAt} onClick={() => onComplete(run!.id)}>
             Completar
           </button>
         )}

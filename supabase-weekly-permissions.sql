@@ -80,7 +80,7 @@ begin
   -- La validación nativa de Centro se controla en su RPC; no se confía en marcas del cliente.
   if s->>'source'='Centro' and p->>'status'='Validada' then validated:=true;end if;
   elapsed:=case when coalesce(p->>'startedAt','')<>'' and coalesce(p->>'completedAt','')<>'' then greatest(0,extract(epoch from ((p->>'completedAt')::timestamptz-(p->>'startedAt')::timestamptz))/60-coalesce((p->>'pausedMinutes')::numeric,0)) else null end;
-  points:=case when not completed or not proof then 0 when p->>'onTime'='false' or elapsed>coalesce((p->>'slaMinutes')::numeric,99999) then 1 else 2 end;
+  points:=case when not completed or not proof then 0 when p->>'cleaningDeadlineMissed'='true' or p->>'cleaningOnTime'='false' or p->>'onTime'='false' or elapsed>coalesce((p->>'slaMinutes')::numeric,99999) then 1 else 2 end;
   entry:=entry||jsonb_build_array((s-'raw')||jsonb_build_object('title',coalesce(p->>'title',p->>'phase','Actividad'),'start',coalesce(p->>'start',p->>'scheduledStart'),'end',coalesce(p->>'end',p->>'scheduledEnd'),'cleaning',cleaning,'completed',completed,'evidenceComplete',proof,'validated',completed and proof and validated,'due',due,'fingerprint',finger,'autoPoints',case when cleaning then points else 0 end));
  end loop;
  return entry;

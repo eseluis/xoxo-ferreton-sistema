@@ -18,7 +18,7 @@ const roster=[ruben,daniel].map(p=>({...p,start:'00:00',end:'23:59',present:true
 const calls=[];
 const api={fetchCentroContext:async()=>{},assignCentroDay:async()=>{},saveCentroRecord:async(d,id,version,action,data)=>{calls.push({d,id,version,action,data});return {day:d,task_id:id,version:version+1,owner_id:'011',status:action==='submit'?'Por validar':'En curso',data,history:[]};}};
 function nodes(root){if(!root||typeof root!=='object')return [];return [root,...React.Children.toArray(root.props?.children).flatMap(nodes)];}
-function render(user,records=[],present=true){stateIndex=0;seeds=[day,{roster:roster.map(p=>({...p,present:p.id===user.id?present:p.present})),records,previous:[],assignments:[{taskId:'aseo-1',ownerId:'011'},{taskId:'aseo-2',ownerId:'005'},{taskId:'inventario-1',ownerId:'005'}]},'','',true,false,'all','09:10',0,''];
+function render(user,records=[],present=true,cleaningGates=[]){stateIndex=0;seeds=[day,{roster:roster.map(p=>({...p,present:p.id===user.id?present:p.present})),records,previous:[],cleaningGates,assignments:[{taskId:'aseo-1',ownerId:'011'},{taskId:'aseo-2',ownerId:'005'},{taskId:'inventario-1',ownerId:'005'}]},'','',true,false,'all','09:10',0,''];
  return CentroOperationView({user,collaborators:[ruben,daniel],today:day,openingChecks:[],onNavigate:()=>{},onAssignmentsChanged:()=>{},onPriorityPause:()=>{},api,cleaningOnly:true});
 }
 function taskTree(card){stateIndex=0;seeds=[];return card.type(card.props);}
@@ -33,6 +33,9 @@ function taskTree(card){stateIndex=0;seeds=[];return card.type(card.props);}
  assert.equal(calls[1].action,'submit');assert.equal(calls[1].version,1);assert.equal(calls[1].data.fotoAntes,data.fotoAntes);assert.equal(calls[1].data.fotoDespues,data.fotoDespues);
  screen=render(daniel);cards=nodes(screen).filter(n=>n.type?.name==='TaskCard');assert.equal(cards.length,1);assert.equal(cards[0].props.item.id,'aseo-2','El gerente también ve sólo su propio aseo en el registro diario');
  screen=render(ruben,[],false);cards=nodes(screen).filter(n=>n.type?.name==='TaskCard');assert.equal(cards[0].props.editable,false);assert.ok(!nodes(taskTree(cards[0])).some(n=>n.type==='button'&&n.props.children==='Iniciar'));
+ const paused={day,task_id:'aseo-1',owner_id:'011',status:'Pausada',version:2,data,history:[]};
+ screen=render(ruben,[paused],false,[{taskId:'aseo-1',ownerId:'011',expired:true,recovery:true,blocked:false,exitTime:'19:00'}]);cards=nodes(screen).filter(n=>n.type?.name==='TaskCard');assert.equal(cards[0].props.editable,true);assert.ok(nodes(taskTree(cards[0])).some(n=>n.type==='button'&&n.props.children==='Retomar aseo fuera de horario'));
+ screen=render(ruben,[paused],true,[{taskId:'aseo-1',ownerId:'011',expired:true,recovery:false,blocked:true,reason:'Hasta las 19:00',exitTime:'19:00'}]);cards=nodes(screen).filter(n=>n.type?.name==='TaskCard');assert.equal(cards[0].props.editable,false);
  const app=fs.readFileSync('src/App.tsx','utf8');assert.ok(app.includes('centroCleaningBoard={currentWorkLocation === "Sucursal Centro"'));
  console.log('Registro diario Centro: aseo propio, inicio y entrega con fotos usan el registro canónico, sin otra actividad ni permisos de validación.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

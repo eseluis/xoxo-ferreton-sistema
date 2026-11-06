@@ -1,7 +1,8 @@
+import type { CleaningGate } from "./cleaningDeadline";
 import { supabase } from "./cloudStore";
 import type { CentroPerson, CentroRecord, CentroAssignment } from "./centroOperation";
 
-export type CentroContext = { roster: CentroPerson[]; records: CentroRecord[]; previous: CentroRecord[]; assignments?: CentroAssignment[]; outsideBusy?: boolean };
+export type CentroContext = { roster: CentroPerson[]; records: CentroRecord[]; previous: CentroRecord[]; assignments?: CentroAssignment[]; outsideBusy?: boolean; cleaningGates?: CleaningGate[] };
 function message(error: { message: string; code?: string }) {
   if (error.code === "PGRST202" || error.message.includes("centro_context")) return "Falta activar la base de datos de Operación Centro: aplicar supabase-centro-operation.sql. No se ha confirmado ningún guardado.";
   return error.message;

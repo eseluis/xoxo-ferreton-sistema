@@ -1,3 +1,4 @@
+import type { CleaningGate } from "./cleaningDeadline";
 import { CleaningPhotoInput } from "./CleaningPhotoInput";
 import { saveDayPlan } from "./calendarStore";
 import { useEffect, useRef, useState } from "react";
@@ -44,7 +45,8 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
   }, [day, revision, api]);
   const agenda = visibleCentroAgenda(user, buildCentroAgenda(day, context.roster, context.records, now), context.assignments)
     .map(item => item.outdoor && !item.digital && context.outsideBusy && item.record?.data.mode !== "Exterior"
-      ? { ...item, blocked: "Hay otra persona en prospección exterior; esperar su regreso" } : item);
+      ? { ...item, blocked: "Hay otra persona en prospección exterior; esperar su regreso" } : item)
+    .map(item=>{const gate=context.cleaningGates?.find(g=>g.taskId===item.id);return gate?{...item,blocked:gate.blocked?gate.reason:gate.recovery?undefined:item.blocked}:item;});
   const me = context.roster.find(p => p.id === user.id);
   const present = context.roster.filter(p => p.present);
   const summary = centroSummary(context.records);
@@ -113,8 +115,8 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
     {notice && <p role="status">{notice}</p>}
     {calendarError && <p className="calendarWarning" role="alert">Calendario: {calendarError}</p>}
     {!ready && !error && <p>Cargando tu aseo de Centro…</p>}
-    {ready && !me?.present && <p className="centroAlert">Registra tu entrada y revisa tu horario. Debes estar disponible en Centro para iniciar o retomar el aseo.</p>}
-    {ready && mine.filter(item => item.category === "Aseo").map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={user.name} supervisor={false} editable={day === today && !!me?.present && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={[]} />)}
+    {ready && !me?.present && !context.cleaningGates?.some(g=>g.recovery&&!g.blocked)&&<p className="centroAlert">Registra tu entrada y revisa tu horario. Debes estar disponible en Centro para iniciar o retomar el aseo.</p>}
+    {ready && mine.filter(item => item.category === "Aseo").map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={user.name} supervisor={false} gate={context.cleaningGates?.find(g=>g.taskId===item.id)} editable={day === today && (!!me?.present||!!context.cleaningGates?.some(g=>g.taskId===item.id&&g.recovery&&!g.blocked)) && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={[]} />)}
     {ready && !mine.some(item => item.category === "Aseo") && <p>No tienes un bloque de aseo asignado en la agenda actual de Centro. Actualiza o solicita a gerencia revisar la cobertura.</p>}
     <button type="button" className="ghost" onClick={() => onNavigate("operacion-centro")}>Ver mi operación completa de Centro</button>
   </section>;
@@ -139,7 +141,7 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
       {supervisor && <AssignmentForm globalAccess={canGovern(user)} collaborators={canGovern(user) ? collaborators : collaborators.filter(person => person.branch === user.branch)} today={today} assign={api.assignCentroDay} onSaved={() => { onAssignmentsChanged(); setRevision(v => v + 1); }} />}
       <div className="centroToolbar"><h3>{supervisor ? "Agenda" : "Mis actividades"} {day === today ? "de hoy" : day}</h3><label>Mostrar <select value={filter} onChange={e => setFilter(e.target.value)}><option value="mine">Mis actividades</option>{supervisor && <option value="all">Operación de sucursal</option>}{supervisor && <option value="review">Validaciones y correcciones</option>}</select></label></div>
       {!visible.length && <p>No hay actividades asignadas en este filtro.</p>}
-      <div className="centroAgenda">{visible.map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={collaborators.find(p => p.id === item.ownerId)?.name ?? item.ownerId ?? "Sin responsable disponible"} supervisor={supervisor} editable={ready && day === today && !!me?.present && item.ownerId === user.id && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={CENTRO_PROJECTS.filter(project => ![...context.previous, ...context.records].some(r => r.task_id === "exhibicion" && r.status === "Validada" && r.data.proyecto === project && Number(r.data.avance) === 100))} />)}</div>
+      <div className="centroAgenda">{visible.map(item => <TaskCard key={`${day}-${item.id}`} item={item} user={user} ownerName={collaborators.find(p => p.id === item.ownerId)?.name ?? item.ownerId ?? "Sin responsable disponible"} supervisor={supervisor} gate={context.cleaningGates?.find(g=>g.taskId===item.id)} editable={ready && day === today && (!!me?.present||!!context.cleaningGates?.some(g=>g.taskId===item.id&&g.recovery&&!g.blocked)) && item.ownerId === user.id && !item.blocked} busy={busy} onAction={mutate} onOpening={() => onNavigate("panel")} projects={CENTRO_PROJECTS.filter(project => ![...context.previous, ...context.records].some(r => r.task_id === "exhibicion" && r.status === "Validada" && r.data.proyecto === project && Number(r.data.avance) === 100))} />)}</div>
       <article className="panelCard centroReport"><h3>{supervisor ? "Reporte diario Centro" : "Reporte de mis actividades"}</h3><p>Resultados capturados; las actividades solo cuentan como validadas después de revisión.</p>{supervisor && <div className="centroMetrics"><div><small>Conversión</small><strong>{summary.conversion === null ? "No calculable" : `${summary.conversion.toFixed(1)}%`}</strong></div><div><small>Ventas</small><strong>{summary.sales === null ? "Sin captura" : `${summary.sales.toFixed(2)}`}</strong></div><div><small>Tickets</small><strong>{summary.tickets ?? "Sin captura"}</strong></div><div><small>Ticket promedio</small><strong>{summary.averageTicket === null ? "No calculable" : `${summary.averageTicket.toFixed(2)}`}</strong></div></div>}{agenda.map(item => <details key={item.id}><summary>{item.title} · {item.record?.status ?? "Pendiente"}</summary>{item.fields.map(f => <p key={f.key}><strong>{f.label}:</strong> {f.type === "photo" && String(item.record?.data[f.key] ?? "").startsWith("data:image/") ? <img className="calendarEvidence" src={String(item.record?.data[f.key])} alt={f.label} /> : String(item.record?.data[f.key] ?? "Sin registro")}</p>)}</details>)}<h4>Pendientes y continuidad</h4>{pending.map(item => <p key={item.id}>{item.title} · {item.record?.status ?? "Pendiente"} · {item.reason}</p>)}<h4>Seguimiento de días anteriores</h4>{context.previous.filter(r => r.status !== "Validada" && (supervisor || r.owner_id === user.id)).map(r => <p key={`${r.day}-${r.task_id}`}>{r.day}: {CENTRO_TASKS.find(t => t.id === r.task_id)?.title} · {r.status} · {String(r.data.pendientes ?? r.data.problemas ?? "Revisar seguimiento")}</p>)}<p>Los pendientes anteriores conservan su fecha y resultado; no se declaran cumplidos al iniciar un día nuevo.</p></article>
     </>}
   </section>;
@@ -174,12 +176,16 @@ function AssignmentForm({ globalAccess, collaborators, today, onSaved, assign }:
   }}><label>Colaborador<select name="employee">{collaborators.filter(p => p.name !== "Vacante").map(p => <option key={p.id} value={p.id}>{p.name} · {p.roleLabel}</option>)}</select></label><label>Día<input name="date" type="date" min={today} defaultValue={today} required /></label><label>Sucursal<select name="location"><option>Sucursal Centro</option>{globalAccess && <option>Matriz</option>}</select></label><label>Entrada<input name="start" type="time" defaultValue="08:45" required /></label><label>Salida<input name="end" type="time" defaultValue="18:00" required /></label><button className="primary" disabled={busy}>Guardar asignación</button><p role="status">{error}</p></form></details>;
 }
 
-function TaskCard({ item, user, ownerName, supervisor, editable, busy, onAction, onOpening, projects }: { item: CentroAgendaItem; user: Employee; ownerName: string; supervisor: boolean; editable: boolean; busy: boolean; onAction: (item: CentroAgendaItem, action: CentroAction, data: CentroRecord["data"], note?: string) => Promise<boolean>; onOpening: () => void; projects: string[] }) {
+function TaskCard({ item, user, gate, ownerName, supervisor, editable, busy, onAction, onOpening, projects }: { item: CentroAgendaItem; user: Employee; gate?:CleaningGate; ownerName: string; supervisor: boolean; editable: boolean; busy: boolean; onAction: (item: CentroAgendaItem, action: CentroAction, data: CentroRecord["data"], note?: string) => Promise<boolean>; onOpening: () => void; projects: string[] }) {
   const [draft, setDraft] = useState<CentroRecord["data"]>(item.record?.data ?? {});
   const [dirty, setDirty] = useState(false);
   const [note, setNote] = useState("");
   const baseVersion = useRef(item.record?.version ?? 0);
-  useEffect(() => { if (!dirty) { setDraft(item.record?.data ?? {}); baseVersion.current = item.record?.version ?? 0; } }, [item.record?.version, dirty]);
+  const lastServerData=useRef(item.record?.data??{});
+  useEffect(() => {const latest=item.record?.data??{};const content=(data:CentroRecord["data"])=>JSON.stringify(Object.fromEntries(Object.entries(data).filter(([key])=>!key.startsWith("cleaning")).sort(([a],[b])=>a.localeCompare(b))));
+    if(!dirty){setDraft(latest);baseVersion.current=item.record?.version??0;lastServerData.current=latest;}
+    else if(item.category==="Aseo"&&content(latest)===content(lastServerData.current)){baseVersion.current=item.record?.version??0;lastServerData.current=latest;setDraft(old=>({...old}));}
+  },[item.record?.version,dirty]);
   const setValue = (key: string, value: CentroRecord["data"][string]) => { setDraft(prev => ({ ...prev, [key]: value })); setDirty(true); };
   const stale = dirty && baseVersion.current !== (item.record?.version ?? 0);
   const status = item.record?.status ?? "Pendiente";
@@ -187,6 +193,7 @@ function TaskCard({ item, user, ownerName, supervisor, editable, busy, onAction,
   const submitAction = async (action: CentroAction, reason = "") => { if (await onAction(item, action, draft, reason)) setDirty(false); };
   return <article className={`panelCard centroTask ${status === "Validada" ? "centroValidated" : ""}`}>
     <div className="sectionHead"><div><small>{item.start}–{item.end} · {item.category}</small><h3>{item.title}</h3><span>{ownerName}</span></div><span className="statusPill">{status}</span></div>
+    {gate?.expired&&<p className="calendarWarning">{gate.blocked?gate.reason:`Recuperación de aseo habilitada desde las ${gate.exitTime}. La entrega conserva el retraso; registra tu salida real al terminar.`}</p>}
     <p>{item.reason}</p><p>{item.instructions}</p>{item.outdoor && <p><strong>{item.digital ? "Modo digital dentro de tienda" : "Prospección exterior permitida solo con cobertura"}</strong></p>}
     {item.blocked && <p className="centroAlert">{item.blocked}</p>}
     {stale && <div className="centroAlert">Hay una versión más reciente. Tu borrador sigue aquí; copia lo necesario antes de cargarla. <button className="ghost" onClick={() => { setDirty(false); setDraft(item.record?.data ?? {}); baseVersion.current = item.record?.version ?? 0; }}>Cargar versión guardada</button></div>}
@@ -203,7 +210,7 @@ function TaskCard({ item, user, ownerName, supervisor, editable, busy, onAction,
     </details>
     {item.id === "apertura" || item.id === "cierre" ? <button className="ghost" onClick={onOpening}>Ir al control de apertura / cierre</button> : null}
     <div className="centroActions">
-      {canEdit && <><button className="ghost" onClick={() => void submitAction("save")}>Guardar avance</button>{status === "En curso" ? <><button className="ghost" onClick={() => void submitAction("pause", "Cliente")}>Atender cliente</button><button className="ghost" onClick={() => void submitAction("pause", "Seguridad")}>Pausar por seguridad</button></> : <button className="primary" onClick={() => void submitAction(status === "Pausada" ? "resume" : "start")}>{status === "Pausada" ? "Retomar" : "Iniciar"}</button>}<button className="primary" onClick={() => void submitAction("submit")}>Terminar y enviar a validación</button></>}
+      {canEdit && <><button className="ghost" onClick={() => void submitAction("save")}>Guardar avance</button>{status === "En curso" ? <><button className="ghost" onClick={() => void submitAction("pause", "Cliente")}>Atender cliente</button><button className="ghost" onClick={() => void submitAction("pause", "Seguridad")}>Pausar por seguridad</button></> : <button className="primary" onClick={() => void submitAction(status === "Pausada" ? "resume" : "start")}>{gate?.recovery?"Retomar aseo fuera de horario":status === "Pausada" ? "Retomar" : "Iniciar"}</button>}<button className="primary" onClick={() => void submitAction("submit")}>Terminar y enviar a validación</button></>}
       {supervisor && status === "Por validar" && <><label>Motivo de corrección<input value={note} onChange={e => setNote(e.target.value)} /></label><button className="primary" disabled={busy || item.record?.owner_id === user.id} onClick={() => void onAction(item, "approve", item.record!.data)}>Validar</button><button className="ghost" disabled={busy || !note.trim()} onClick={() => void onAction(item, "reject", item.record!.data, note)}>Rechazar evidencia / corregir</button>{item.record?.owner_id === user.id && <small>Otro supervisor debe validar tu actividad.</small>}</>}
     </div>
     {dirty && !stale && <small>Borrador local: guarda el avance antes de cambiar de pantalla.</small>}
