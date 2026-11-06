@@ -1,3 +1,4 @@
+import {StaffPermissions,CleaningExpectedPoints} from "./StaffPermissions";
 import { MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
 import { attendanceReader, readAttendanceDay, confirmAttendancePunch, isConfirmedPunch } from "./attendanceSync";
 import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparation";
@@ -767,6 +768,7 @@ function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [view, setView] = useState("panel");
+  useEffect(()=>{const navigate=(e:Event)=>setView((e as CustomEvent<string>).detail);window.addEventListener("staff-navigate",navigate);return()=>window.removeEventListener("staff-navigate",navigate);},[]);
   const [collaborators, setCollaborators] = useState<Employee[]>(() => load("xoxo.collaborators", defaultEmployees));
   const [attendance, setAttendance] = useState<Attendance[]>(() => load("xoxo.attendance", []));
   const [attendanceSyncState, setAttendanceSyncState] = useState({ checkedAt: "", error: "" });
@@ -2709,6 +2711,7 @@ function Dashboard({
     const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
       {myWorkFocus}
@@ -2735,6 +2738,7 @@ function Dashboard({
   return (
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
       {myWorkFocus}
@@ -4891,12 +4895,14 @@ function CleaningScoreboardView(props: {
       <article className="panelCard">
         <div className="sectionHead">
           <h2>Marcador de aseo</h2>
-          <span>Acumulado permanente · visible solo para 001, 002, 003 y Julio</span>
+          <span>Ciclo semanal por descanso · histórico conservado</span>
         </div>
         <p className="muted">
           Puntos automaticos por bloque de aseo con evidencia fotografica: 2 a tiempo, 1 con retraso, 0 sin completar.
           Cada ~3 dias un superior agrega puntos de calidad (10/8/6/4) por colaborador y periodo.
         </p>
+        <CleaningExpectedPoints from={props.cleaningPeriodStart} to={props.cleaningPeriodEnd}/>
+        <h3>Acumulado histórico conservado</h3>
         <div className="taskList">
           {rows.map((row, index) => (
             <div className="taskRow" key={row.employee.id}>
@@ -6002,6 +6008,7 @@ export function RequestsView({
 
   return (
     <section className="grid two">
+      {!reports && <StaffPermissions user={user} collaborators={collaborators} onNavigate={view=>window.dispatchEvent(new CustomEvent("staff-navigate",{detail:view}))}/>}
       <form className="panelCard form" onSubmit={addInternalRequest}>
         <div className="sectionHead">
           <div>

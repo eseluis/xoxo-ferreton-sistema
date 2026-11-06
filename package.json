@@ -16,7 +16,8 @@
     "test:work-preparation": "node tests/work-preparation.cjs && node tests/work-preparation-database.cjs",
     "test:centro-cleaning": "node tests/centro-cleaning-daily.cjs",
     "test:attendance": "node tests/attendance-sync.cjs && node tests/work-preparation-database.cjs",
-    "test:opening-team": "node tests/matriz-opening-team-database.cjs"
+    "test:opening-team": "node tests/matriz-opening-team-database.cjs",
+    "test:permissions": "node tests/staff-permissions-ui.cjs && node tests/staff-permissions-database.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

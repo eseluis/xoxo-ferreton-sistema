@@ -1,0 +1,19 @@
+# Permisos y ciclos por descanso
+
+El nuevo apartado en Solicitudes (y acceso en Panel) acepta permiso, cambio de descanso, falta por urgencia y no regresar de comida. Las decisiones no registran checadas ni simulan actividades realizadas.
+
+La solicitud conserva el conteo de envío y el de la decisión. El superior asignado responde; dirección puede resolver excepciones, sin autovalidarse ni autoautorizarse. Auxiliares reportan al jefe activo configurado; personal de Centro al gerente activo de Centro; los demás siguen su superior configurado, con respaldo de 003. Las solicitudes y ciclos tienen políticas de lectura propias.
+
+Mínimo orientativo: 80% de obligaciones exigibles terminadas, con evidencia requerida y validadas. Un porcentaje menor avisa riesgo alto, jamás rechaza automáticamente. Cero obligaciones y días laborables sin plan son datos insuficientes. El porcentaje se trunca para no convertir 79.99% en 80%. El superior debe revisar la evidencia original y registrar observación para validar. La validación se invalida si cambia el contenido. La validación nativa de Centro se conserva. No se confía en una aprobación escrita por el propio colaborador en un payload.
+
+Fuentes actuales: agenda diaria guardada (incluye no iniciadas), actividades adicionales, tareas, procesos excepto apertura duplicada, Centro, pasos de pedidos, apertura de Matriz, uniforme y herramientas. Agenda y sus ejecuciones/alias cuentan una vez. Las fechas futuras sin terminar no afectan el porcentaje. Registros sin efecto de evaluación se excluyen. Cada fuente nueva necesita adaptador de obligaciones antes de sumarse al mínimo; no se convierte dinero o volumen de registros en actividades.
+
+Descansos: Sabina sábado; Celina jueves; Jan, Julio, Daniel y Citlali domingo; Rubén miércoles; Anubis viernes. El ciclo comienza después del descanso y termina con el siguiente. Los cambios autorizados crean excepciones de fechas; una solicitud pendiente o rechazada no cambia el calendario. Se impiden cambios retroactivos y conflictos entre excepciones. Otros colaboradores conservan su descanso sin definir y pueden solicitar permisos sin porcentaje evaluable.
+
+El primer ciclo es parcial desde la activación. La captura de planes de hoy usa las rutinas y aseos guardados para todos, también ausentes; no reconstruye días históricos usando configuración nueva. No sobrescribe planes diarios existentes. Un día pasado sin plan se informa como cobertura incompleta, sin presumir cumplimiento. Los cierres se guardan al primer acceso posterior o antes de modificar un registro fuente tras el descanso. Son inmutables para los clientes. Se conservan todos en la base y los últimos 26 se muestran en el apartado. Se registra el detalle por actividad, sin copiar fotografías al indicador. Los triggers conservan el estado anterior antes de inserciones/cambios tardíos de evidencia.
+
+El marcador muestra por colaborador los puntos automáticos obtenidos/esperados del ciclo, y del periodo seleccionado. Se esperan 2 puntos por aseo asignado y exigible; 1 si excedió su duración; 0 sin completar o sin fotos requeridas. La calidad y el acumulado histórico siguen separados. El ciclo se reinicia al siguiente día del descanso sin borrar historial.
+
+Activación: aplicar supabase-weekly-permissions.sql después de los módulos base, calendario, Centro, pedidos/uniforme y apertura Matriz; luego publicar cliente. La migración es repetible. KPIs reciben solicitudes con decisión y cumplimiento ponderado de cierres completos, sin motivos privados.
+
+Pruebas: npm run test:permissions; npm run test:system-kpis; npm run check. Se cubren roles, permisos de tabla, idempotencia, respuesta simultánea, excepciones debajo de 80%, plan ausente, alias, fotos, reinicio, cambio de descanso e inmutabilidad del cierre.
