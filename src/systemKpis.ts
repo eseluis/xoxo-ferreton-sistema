@@ -6,6 +6,7 @@ export type SystemMetric = { id: string; name: string; value: number|null; unit:
 export const sourceInfo: Record<string,{name:string;destination:string;done?:string[];completionName?:string}> = {
  attendance_exit_requests:{name:"Solicitudes de salida visibles",destination:"asistencia",completionName:"Solicitudes de salida respondidas",done:["Autorizada","Rechazada","Cerrada"]},
  attendance_exit_authorizations:{name:"Salidas excepcionales autorizadas",destination:"asistencia"},
+ matriz_opening_step_records:{name:"Equipo de apertura Matriz",destination:"procesos",done:["Completada"]},
  matriz_order_records:{name:"Pasos de pedidos Matriz",destination:"panel",done:["Completada"]},
  work_readiness_records:{name:"Herramientas y uniforme",destination:"asistencia"},
  attendance_records:{name:"Asistencia registrada",destination:"asistencia"},
@@ -54,7 +55,7 @@ export function systemMetrics(sources:MetricSources, now=new Date()): SystemMetr
  if(orders?.available){const rows=orders.rows;const late=rows.filter(r=>evidenceAssessment(metricFacts(r),now).onTime===false);add("matriz_order_records","orders-overdue","Pasos de pedidos fuera de horario",late.length,"pasos","Incluye pasos no iniciados desde la activación del rol y entregas posteriores a las 11:00. Cada paso corresponde a su responsable.",late.length>0);}
  const tasks=sources.daily_task_records;
  const runs=sources.planned_activity_records?.available?sources.planned_activity_records:sources.activity_run_records;
- for(const [key,entry] of [["daily_task_records",tasks],["activity_run_records",runs],["centro_records",sources.centro_records]] as const) {
+ for(const [key,entry] of [["daily_task_records",tasks],["activity_run_records",runs],["centro_records",sources.centro_records],["matriz_opening_step_records",sources.matriz_opening_step_records]] as const) {
   if(!entry?.available) continue;
   const rows=entry.rows.filter(r=>!r.removedAt && r.affectsEvaluation!==false);
   const assessments=rows.map(row=>evidenceAssessment(metricFacts({...row,validationRequired:key==="centro_records"}),now));

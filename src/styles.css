@@ -2487,3 +2487,13 @@ textarea {
 .attendanceReceipt { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:16px; margin-bottom:14px; border:1px solid var(--accent2); border-radius:12px; background:var(--surface); color:var(--text); overflow-wrap:anywhere; }
 .attendanceReceipt.attendanceError { border-color:var(--danger); }
 .attendanceSyncStatus { padding:12px; margin:12px 0; border:1px solid var(--border); border-radius:10px; }
+
+.matrizOpeningTeam { margin:16px 0; padding:14px; border:1px solid var(--border-strong); border-radius:12px; min-width:0; }
+.matrizOpeningTeam .sectionHead { flex-wrap:wrap; gap:10px; align-items:flex-start; }
+.matrizOpeningTeam .statusPill { white-space:normal; max-width:100%; box-sizing:border-box; }
+.matrizOpeningSteps { display:grid; gap:12px; margin:14px 0; min-width:0; }
+.matrizOpeningStep { display:grid; gap:7px; padding:14px; background:var(--surface-alt); border:1px solid var(--border); border-radius:10px; min-width:0; overflow-wrap:anywhere; }
+.matrizOpeningStep p { margin:3px 0; line-height:1.5; }
+.matrizOpeningStep select { width:100%; min-width:0; }
+.matrizOpeningSettings { grid-column:1 / -1; }
+.matrizOpeningSettings .matrizOpeningSteps { grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); }

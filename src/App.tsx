@@ -1,3 +1,4 @@
+import { MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
 import { attendanceReader, readAttendanceDay, confirmAttendancePunch, isConfirmedPunch } from "./attendanceSync";
 import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparation";
 import { SystemKpis } from "./AutomaticKpiPanel";
@@ -1444,10 +1445,15 @@ function App() {
     const existing = latest.find((item)=>item.id===id) ?? { id, branch, date: today, minimumStaff:false, systemsReady:false, processComplete:false };
     const updated = { ...existing, ...patch, managerId: user.id };
     const next = [...latest.filter((item)=>item.id!==id), updated];
-    setStoreOpeningChecks(next);
     // Conservar también los borrados explícitos (undefined se pierde en JSON).
     const fields = Object.fromEntries(Object.entries(patch).map(([field, value]) => [field, value ?? null]));
-    save("xoxo.storeOpeningChecks", next, [{ ...fields, id, branch, date: today, managerId: user.id }]);
+    try {
+      await cloudSave("xoxo.storeOpeningChecks", next, [{ ...fields, id, branch, date: today, managerId: user.id }]);
+      const confirmed = await cloudRefresh<StoreOpeningCheck[]>("xoxo.storeOpeningChecks");
+      setStoreOpeningChecks(confirmed ?? next);
+      if ("openedAt" in patch && confirmed) patch = { ...patch, openedAt: confirmed.find(row => row.id === id)?.openedAt };
+      window.dispatchEvent(new Event("matriz-opening-refresh"));
+    } catch (error) { window.alert(`No se confirmó el cambio de apertura: ${error instanceof Error ? error.message : "Sin conexión"}`); return; }
 
     // El gerente autoriza la apertura final (openedAt) sólo cuando ya se hizo el checklist
     // completo (puertas, personal, cajera + ERP Visorus, sistemas). Si eso ocurre entre 8:00
@@ -2367,6 +2373,8 @@ function App() {
           />
         )}
         {view === "configuracion" && canManageStore(user) && (
+          <>
+          <MatrizOpeningSettings user={user} />
           <GovernanceView
             user={user}
             shiftConfigs={shiftConfigs}
@@ -2376,6 +2384,7 @@ function App() {
             cleaningRole={cleaningRole}
             setCleaningRole={setCleaningRole}
           />
+          </>
         )}
         {view === "reportes" && (
           <ReportsView
@@ -6411,15 +6420,16 @@ function EvidenceGalleryView({
     const read = async () => {
       try {
         if (!supabase) throw new Error("Sin conexión para consultar el historial.");
-        const [snapshots, centro, preparation] = await Promise.all([
+        const [snapshots, centro, preparation, openingTeamEvidence] = await Promise.all([
           supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
           supabase.rpc("system_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("work_preparation_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+          supabase.rpc("matriz_opening_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
         ]);
         if (!alive) return;
         if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
-        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
-        if (snapshots.error || centro.error || preparation.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message));
+        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : []), ...(!openingTeamEvidence.error ? openingTeamEvidence.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
+        if (snapshots.error || centro.error || preparation.error || openingTeamEvidence.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message ?? openingTeamEvidence.error?.message));
       } catch (failure) { if (alive) setHistoryError(failure instanceof Error ? failure.message : "No se pudo leer el historial."); }
       finally { if (alive) setHistoryLoading(false); }
     };
@@ -6778,6 +6788,7 @@ function StoreOpeningReport({user,checks,attendance,collaborators}:{user:Employe
   </article>;
 }
 export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,attendance,collaborators,onUpdate,onOpenCash}:{user:Employee;today:string;cashSessions:CashSession[];cashCuts:CashCut[];checks:StoreOpeningCheck[];attendance:Attendance[];collaborators:Employee[];onUpdate:(branch:StoreOpeningCheck["branch"],patch:Partial<StoreOpeningCheck>)=>void;onOpenCash:()=>void}) {
+  const openingTeam = useMatrizOpening(today);
   const branches: StoreOpeningCheck["branch"][] = ["Matriz", "Sucursal Centro"];
 
   // Autorreparación: si una caja se abrió antes de que existiera cashOpenConfirmedAt (o el
@@ -6827,12 +6838,17 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
           // una tienda que ya quedó abierta hoy no debe "recerrarse" sola en las pantallas de
           // quienes no vuelvan a pasar por ese paso. readyToOpenDoors sólo gatea el botón
           // mientras la tienda sigue sin abrir.
-          const managerAuthorized = Boolean(check.managerAuthorizedAt);
-          const cashierAuthorized = cashOpen && Boolean(check.erpReady);
-          const readyToOpenDoors = managerAuthorized && cashierAuthorized && check.minimumStaff && check.systemsReady && check.processComplete;
+          const opened = Boolean(check.openedAt || branch === "Matriz" && openingTeam.context?.opening?.openedAt);
+          const teamRequired = branch === "Matriz" && !openingTeam.context?.legacyOpened && (openingTeam.context?.required ?? !opened);
+          const authorizationStep = openingTeam.context?.steps.find(step => step.step === "authorization");
+          const computersStep = openingTeam.context?.steps.find(step => step.step === "computers");
+          const managerAuthorized = teamRequired ? authorizationStep?.status === "Completada" : Boolean(check.managerAuthorizedAt);
+          const erpReady = teamRequired ? computersStep?.status === "Completada" : Boolean(check.erpReady);
+          const systemsReady = teamRequired ? erpReady : check.systemsReady;
+          const cashierAuthorized = (cashOpen || branch === "Matriz" && Boolean(openingTeam.context?.opening?.cashOpenConfirmedAt)) && erpReady;
+          const readyToOpenDoors = managerAuthorized && cashierAuthorized && check.minimumStaff && systemsReady && check.processComplete && (!teamRequired || openingTeamReady(openingTeam.context));
           const doorsOpen = Boolean(check.doorsOpenedAt);
-          const opened = Boolean(check.openedAt);
-          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt!); return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 45 && minutes <= 9 * 60 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
+          const onTime = opened ? (() => { const minutes = minutesOfDayMx(check.openedAt ?? String(openingTeam.context?.opening?.openedAt)); return branch === "Sucursal Centro" ? minutes >= 8 * 60 + 45 && minutes <= 9 * 60 : minutes >= OPENING_WINDOW_START && minutes <= OPENING_WINDOW_END; })() : false;
 
           // ---- Cierre ----
           const managerClosingAuthorized = Boolean(check.managerClosingAuthorizedAt);
@@ -6848,16 +6864,20 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
               <div className="sectionHead">
                 <div>
                   <h3>{branch}</h3>
-                  <span>{closed ? `Cerrada ${new Date(check.closedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : opened ? `Abierta ${new Date(check.openedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : "Pendiente de validación"}</span>
+                  <span>{closed ? `Cerrada ${new Date(check.closedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : opened ? `Abierta ${new Date(check.openedAt ?? String(openingTeam.context?.opening?.openedAt)).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })}` : "Pendiente de validación"}</span>
                 </div>
                 <strong className={`statusPill ${closed ? "muted" : opened ? "ok" : "warn"}`}>{closed ? "TIENDA CERRADA · FIN DEL DÍA" : opened ? "TIENDA ABIERTA" : "TIENDA CERRADA"}</strong>
               </div>
 
               <strong className="openingSectionLabel">Apertura</strong>
+              {branch === "Matriz" && <MatrizOpeningTeam user={user} control={openingTeam} />}
+              {teamRequired ? <div className="openingStep"><label><input type="checkbox" checked={managerAuthorized} readOnly /> Autorización de cortinas y portón: {authorizationStep?.ownerName ?? "Cargando encargado"}{!managerAuthorized && " · Pendiente"}</label></div> : <>
               <div className="openingStep">
                 <label><input type="checkbox" checked={managerAuthorized} readOnly /> 1. Gerente de tienda autoriza apertura {managerAuthorized && <small>{new Date(check.managerAuthorizedAt!).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.managerAuthorizedById)?.name ?? check.managerAuthorizedById}</small>}</label>
                 {!managerAuthorized && canManage && !opened && <button className="ghost compact" onClick={() => onUpdate(branch, { managerAuthorizedAt: new Date().toISOString(), managerAuthorizedById: user.id })}>Autorizar apertura</button>}
               </div>
+
+              </>}
 
               <div className="openingStep">
                 <label><input type="checkbox" checked={check.minimumStaff} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, ...resetOpening })} /> Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
@@ -6872,18 +6892,18 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
               <div className="openingStep">
                 <label><input type="checkbox" checked={cashOpen} readOnly /> Caja abierta por cajero/encargado</label>
                 {!cashOpen && canCashier && <button className="ghost compact" onClick={onOpenCash}>Ir a abrir caja</button>}
-                <label><input type="checkbox" checked={Boolean(check.erpReady)} disabled={!canCashier || !cashOpen || !managerAuthorized || opened} onChange={(event) => onUpdate(branch, { erpReady: event.target.checked, cashierAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierAuthorizedById: event.target.checked ? user.id : undefined, openedAt: undefined, openedById: undefined, doorsOpenedAt: undefined, doorsOpenedById: undefined })} /> 2. Cajero autoriza apertura (caja + sistema ERP Visorus) {check.erpReady && check.cashierAuthorizedAt && <small>{new Date(check.cashierAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierAuthorizedById)?.name ?? check.cashierAuthorizedById}</small>}</label>
+                <label><input type="checkbox" checked={erpReady} disabled={teamRequired || !canCashier || !cashOpen || !managerAuthorized || opened} onChange={(event) => onUpdate(branch, { erpReady: event.target.checked, cashierAuthorizedAt: event.target.checked ? new Date().toISOString() : undefined, cashierAuthorizedById: event.target.checked ? user.id : undefined, openedAt: undefined, openedById: undefined, doorsOpenedAt: undefined, doorsOpenedById: undefined })} /> {teamRequired ? "ERP Visorus preparado por el encargado de equipos" : "2. Cajero autoriza apertura (caja + sistema ERP Visorus)"} {check.erpReady && check.cashierAuthorizedAt && <small>{new Date(check.cashierAuthorizedAt).toLocaleTimeString("es-MX", { timeZone: "America/Mexico_City" })} · {collaborators.find((employee) => employee.id === check.cashierAuthorizedById)?.name ?? check.cashierAuthorizedById}</small>}</label>
               </div>
 
               <div className="openingStep">
-                <label><input type="checkbox" checked={check.systemsReady} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, ...resetOpening })} /> Sistema, POS, impresora e internet funcionales</label>
+                <label><input type="checkbox" checked={systemsReady} disabled={teamRequired || !canManage || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, ...resetOpening })} /> Sistema, POS, impresora e internet funcionales</label>
                 <label><input type="checkbox" checked={check.processComplete} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, ...resetOpening })} /> Proceso completo de seguridad y apertura</label>
               </div>
 
-              {managerAuthorized && cashierAuthorized && !doorsOpen && (
+              {branch !== "Matriz" && managerAuthorized && cashierAuthorized && !doorsOpen && (
                 <p className="ok">🔓 Indicación para todo el personal: abrir cortinas y puertas.</p>
               )}
-              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={async () => { const openingLocation = await checkStoreLocation(branch); const openedAt = new Date().toISOString(); onUpdate(branch, { doorsOpenedAt: openedAt, doorsOpenedById: user.id, openedAt, openedById: user.id, openingLocation }); }}>3. Confirmar cortinas y puertas abiertas</button>}
+              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={async () => { const openingLocation = await checkStoreLocation(branch); const openedAt = new Date().toISOString(); onUpdate(branch, { doorsOpenedAt: openedAt, doorsOpenedById: user.id, openedAt, openedById: user.id, openingLocation }); }}>{teamRequired ? "Confirmar apertura al público de Matriz" : "3. Confirmar cortinas y puertas abiertas"}</button>}
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
                   Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
