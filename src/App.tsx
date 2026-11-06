@@ -3189,6 +3189,7 @@ export function AttendanceView({
             <strong>{cleaningAssignment}</strong>
           </div>
         </div>
+        <p className="calendarWarning" role="status">Regla de aseo: si vence el horario configurado y sigue pendiente, se detiene. Sólo se habilita automáticamente desde la hora de salida asignada; conserva el avance y el incumplimiento del horario original.</p>
         {slots.filter(slot => slot.kind === "Aseo").map(slot => {
           const run = findSlotRun(slot, ownRuns);
           const deadlineGate=cleaningControl.gates.find(g=>g.key===slot.key);

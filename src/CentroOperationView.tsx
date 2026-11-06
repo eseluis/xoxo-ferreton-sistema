@@ -111,6 +111,7 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
   };
   if (cleaningOnly) return <section className="centroOperation centroDailyCleaning" aria-label="Mi aseo asignado de Centro">
     <div className="sectionHead"><div><h3>Mi aseo asignado · Sucursal Centro</h3><p>Inicia aquí, registra las fotos de antes y después y entrega tu aseo. El avance se comparte con Operación Centro.</p></div><button type="button" className="ghost" disabled={busy} onClick={() => setRevision(v => v + 1)}>Actualizar mi aseo</button></div>
+    <p className="calendarWarning" role="status">Regla de aseo: si vence el horario configurado y sigue pendiente, se detiene. Sólo se habilita automáticamente desde la hora de salida asignada; conserva el avance y el incumplimiento del horario original.</p>
     {error && <p className="centroAlert" role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {calendarError && <p className="calendarWarning" role="alert">Calendario: {calendarError}</p>}
@@ -126,6 +127,7 @@ export function CentroOperationView({ user, collaborators, today, openingChecks,
       <div><strong>{day !== today ? "CONSULTA HISTÓRICA" : present.length === 1 ? "MODO PERSONAL REDUCIDO" : present.length === 0 ? "SIN PERSONAL PRESENTE" : "OPERACIÓN CON EQUIPO"}</strong><p>{day === today ? `${present.length} persona(s) disponibles · ` : ""}{day}</p><small>Actualización automática cada 15 segundos</small></div>
     </div>
     <div className="centroToolbar"><label>Consultar día <input aria-label="Consultar día" type="date" value={day} max={today} onChange={e => setDay(e.target.value || today)} /></label><button className="ghost" onClick={() => setRevision(v => v + 1)} disabled={busy}>Actualizar</button><button className="ghost" onClick={printReport}>Imprimir reporte</button></div>
+    <p className="calendarWarning" role="status">Regla de aseo: si vence el horario configurado y sigue pendiente, se detiene. Sólo se habilita automáticamente desde la hora de salida asignada; conserva el avance y el incumplimiento del horario original.</p>
     {supervisor && <CentroOrderSchedule collaborators={collaborators} />}
     {calendarError && <p className="calendarWarning" role="alert">Calendario: {calendarError}</p>}
     {error && <div className="centroAlert" role="alert">{error}</div>}
