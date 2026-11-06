@@ -151,6 +151,34 @@ begin
  select coalesce(jsonb_agg(jsonb_build_object('id',p.employee_number,'name',p.display_name,'restDay',s.weekday) order by p.display_name),'[]') into people from profiles p left join staff_rest_settings s using(employee_number) where p.active and (p.employee_number=actor or staff_can_review(p.employee_number));
  return jsonb_build_object('employeeId',person,'cycle',info,'report',report,'history',history,'requests',requests,'people',people,'supervisorId',staff_supervisor(actor,today),'canReview',staff_can_review(person),'canConfigure',can_manage_all(),'clock',to_char(now() at time zone 'America/Mexico_City','HH24:MI'));
 end $$;
+create or replace function staff_activity_proof(person text,item_key text,expected_fingerprint text)
+returns jsonb language plpgsql security definer set search_path=public as $$
+declare info jsonb;item jsonb;p jsonb;slot jsonb;record_day date;table_name text;source_id text;pictures jsonb;links jsonb;
+begin
+ if (current_profile()).employee_number is null or not ((current_profile()).employee_number=person or staff_can_review(person)) then raise exception 'Sin permiso para esta evidencia';end if;
+ info:=staff_cycle(person,(now() at time zone 'America/Mexico_City')::date);
+ select i into item from jsonb_array_elements(staff_week_items(person,(info->>'start')::date,(info->>'end')::date,now() at time zone 'America/Mexico_City'))i where i->>'key'=item_key;
+ if item is null or item->>'fingerprint' is distinct from expected_fingerprint then raise exception 'La actividad cambió. Actualiza antes de revisar su evidencia';end if;
+ source_id:=substring(item_key from position(':' in item_key)+1);
+ case split_part(item_key,':',1)
+ when 'task' then select payload into p from daily_task_records where record_id=source_id and employee_number=person;
+ when 'run' then select payload into p from activity_run_records where record_id=source_id and employee_number=person;
+ when 'process' then select payload into p from process_instance_records where record_id=source_id and employee_number=person;
+ when 'centro' then select data into p from centro_operation_records where day=split_part(item_key,':',2)::date and task_id=substring(item_key from 19) and owner_id=person;
+ when 'plan' then
+  record_day:=split_part(item_key,':',2)::date;
+  select a into slot from operation_day_plans d cross join lateral jsonb_array_elements(d.slots)a where d.employee_number=person and d.day=record_day and a->>'key'=substring(item_key from 17);
+  select r.payload into p from activity_run_records r where employee_number=person and record_date=record_day and ((r.payload->>'itemType')||'-'||(r.payload->>'itemId')=slot->>'key' or coalesce(slot->'aliases','[]') ? ((r.payload->>'itemType')||'-'||(r.payload->>'itemId'))) and coalesce(r.payload->>'removedAt','')='' order by coalesce(r.payload->>'completedAt','') desc limit 1;
+ else
+  table_name:=split_part(item_key,':',1);
+  if table_name not in('matriz_order_records','matriz_opening_step_records','work_readiness_records') then raise exception 'Fuente no disponible';end if;
+  execute format('select payload from %I where record_id=$1 and employee_number=$2',table_name) into p using source_id,person;
+ end case;
+ select coalesce(jsonb_agg(jsonb_build_object('label',label,'dataUrl',data_url)),'[]') into pictures from (values('Antes',coalesce(p#>>'{beforeEvidenceCapture,dataUrl}',p->>'fotoAntes')),('Después',coalesce(p#>>'{afterEvidenceCapture,dataUrl}',p->>'fotoDespues')),('Evidencia',p#>>'{evidenceCapture,dataUrl}'),('Uniforme y herramientas',p->>'photo'))v(label,data_url) where data_url~'^data:image/(jpeg|png|webp);base64,';
+ select coalesce(jsonb_agg(jsonb_build_object('label',key,'url',value)),'[]') into links from jsonb_each_text(coalesce(p,'{}')) where value~'^https?://';
+ return jsonb_build_object('key',item_key,'fingerprint',expected_fingerprint,'title',item->>'title','pictures',pictures,'links',links,'notes',coalesce(p->>'deliveryNote',p->>'employeeComment',p->>'pendientes',p->>'notes',p->>'note',p->>'description',p->>'comment',''),'status',p->>'status','completedAt',p->>'completedAt');
+end $$;
+revoke all on function staff_activity_proof(text,text,text) from public,anon;grant execute on function staff_activity_proof(text,text,text) to authenticated;
 create or replace function staff_review_activity(person text,item_key text,expected_fingerprint text,review_note text)
 returns void language plpgsql security definer set search_path=public as $$
 declare info jsonb;item jsonb;today date:=(now() at time zone 'America/Mexico_City')::date;
