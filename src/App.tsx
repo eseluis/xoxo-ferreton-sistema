@@ -4892,7 +4892,7 @@ function CleaningScoreboardView(props: {
 
   return (
     <section className="grid two">
-      <article className="panelCard">
+      <article className="wide panelCard">
         <div className="sectionHead">
           <h2>Marcador de aseo</h2>
           <span>Ciclo semanal por descanso · histórico conservado</span>
