@@ -1,3 +1,4 @@
+import {PriorityTasksCard} from "./PriorityTasksCard";
 import {confirmRequestDelivery} from "./requestDelivery";
 import {DailyAgendaCard} from "./DailyAgendaCard";
 import {WeeklyReports} from "./WeeklyReports";
@@ -49,7 +50,7 @@ import { taskScheduleError } from "./taskSchedule";
 import { OperationCalendarView, DailyPlanCapture } from "./OperationCalendarView";
 import { buildRoutine, cleaningRowsFor, findSlotRun } from "./operationalAgenda";
 import { CentroOperationView } from "./CentroOperationView";
-import { CENTRO_PRIORITY, isCentroSupervisor } from "./centroOperation";
+import { CENTRO_PRIORITY, canShowCentroOperation, isCentroSupervisor } from "./centroOperation";
 import { activeMinutes, resumePriority, type PriorityClock } from "./priorityPause";
 import { fetchCentroContext, saveCentroRecord } from "./centroStore";
 import { aseoRunCountsInRange, autoPointsInRange, qualityPointsInRange, shiftDateKey } from "./cleaningScoreboard";
@@ -843,6 +844,7 @@ function App() {
   }, []);
 
   const navigate = (targetView: string) => {
+    if (targetView === "operacion-centro" && !canShowCentroOperation(user,workLocations.find(item=>item.employeeId===user.id&&item.date===todayKey())?.location??user.branch)) return;
     if (canAccessView(user, targetView)) setView(targetView);
   };
 
@@ -1117,7 +1119,8 @@ function App() {
   }, [evaluations, today, user.id]);
   const shiftMap = Object.fromEntries(shiftConfigs.map((shift) => [shift.key, shift])) as Record<string, ShiftConfig>;
   const currentWorkLocation = workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch;
-  const canSeeCentro = currentWorkLocation === "Sucursal Centro" || isCentroSupervisor(user);
+  const canSeeCentro = canShowCentroOperation(user,currentWorkLocation);
+  useEffect(()=>{if(view === "operacion-centro" && !canSeeCentro)setView("panel");},[view,canSeeCentro]);
   const scopeRows = <T extends object,>(rows: T[]): T[] => canViewAll(user) ? rows : rows.filter(row => recordInBranch(row, currentWorkLocation, collaborators, workLocations));
   useEffect(() => {
     if (!isAuthenticated || canViewAll(user)) return;
@@ -2269,6 +2272,7 @@ function App() {
         {view === "expansion" && <ExpansionDashboard user={user} collaborators={collaborators} openings={scopeRows(branchOpenings)} startOpening={startBranchOpening} updateOpening={updateBranchOpening} />}
         {view === "procesos" && (
           <ProcessesView
+            canSeeCentro={canSeeCentro}
             orderBoard={<MatrizOrders user={user} location={currentWorkLocation} collaborators={collaborators} />}
             openingBoard={<><StoreOpeningBoard user={{ ...user, branch: currentWorkLocation }} today={today} cashSessions={scopeRows(cashSessions)} cashCuts={scopeRows(cashCuts)} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators.map(employee => ({ ...employee, branch: workLocations.find(item => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch }))} onUpdate={updateStoreOpening} onOpenCash={() => navigate("caja")} /><StoreOpeningReport user={user} checks={storeOpeningChecks} attendance={scopeRows(attendance)} collaborators={collaborators} /></>}
             onNavigate={navigate}
@@ -2720,6 +2724,7 @@ function Dashboard({
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <PriorityTasksCard user={user} location={locationFor(user)} tasks={dailyTasks} day={today} onNavigate={onNavigate}/>
       <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
       <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
       <InvewinProject user={user} location={locationFor(user)}/>
@@ -2750,6 +2755,7 @@ function Dashboard({
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <PriorityTasksCard user={user} location={locationFor(user)} tasks={dailyTasks} day={today} onNavigate={onNavigate}/>
       <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
       <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
       <InvewinProject user={user} location={locationFor(user)}/>
@@ -4234,6 +4240,7 @@ function OrgView({ collaborators }: { collaborators: Employee[] }) {
 }
 
 export function ProcessesView({
+  canSeeCentro = false,
   orderBoard,
   openingBoard,
   onNavigate,
@@ -4243,6 +4250,7 @@ export function ProcessesView({
   setProcessInstances,
   notify,
 }: {
+  canSeeCentro?: boolean;
   openingBoard: React.ReactNode;
   orderBoard: React.ReactNode;
   onNavigate: (view: string) => void;
@@ -4254,7 +4262,7 @@ export function ProcessesView({
 }) {
   const startProcess = (processId: string, ownerId: string, notes: string) => {
     if (processId === "apertura") { onNavigate("panel"); return; }
-    if (processId === "apertura-centro") { onNavigate("operacion-centro"); return; }
+    if (processId === "apertura-centro") { if(canSeeCentro)onNavigate("operacion-centro"); return; }
     const process = processes.find((item) => item.id === processId);
     if (!process) return;
     const next: ProcessInstance = {
@@ -4299,7 +4307,7 @@ export function ProcessesView({
       <article className="panelCard">
         <div className="sectionHead">
           <div>
-            <h2>Procesos activos</h2><p>La rutina diaria de Centro se captura una sola vez en Operación Centro. Los registros anteriores se conservan.</p><button className="ghost" onClick={() => onNavigate("operacion-centro")}>Abrir Operación Centro</button>
+            <h2>Procesos activos</h2>{canSeeCentro&&<><p>La rutina diaria de Centro se captura una sola vez en Operación Centro. Los registros anteriores se conservan.</p><button className="ghost" onClick={() => onNavigate("operacion-centro")}>Abrir Operación Centro</button></>}
             <span>Se abren al momento de ejecutar la actividad</span>
           </div>
           <strong>{activeInstances.length}</strong>
