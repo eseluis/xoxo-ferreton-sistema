@@ -8,20 +8,23 @@ export type AgendaSlot = {
 const weekdays = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"];
 export const isCleaningSchedule = (item: Pick<ActivitySchedule, "area">) => item.area.toLowerCase().includes("aseo");
 export function cleaningRowsFor(employee: Employee, rows: CleaningRole[], branch: string, day: string) {
-  const weekday = weekdays[new Date(`${day}T12:00:00Z`).getUTCDay()];
+  const dayIndex=new Date(`${day}T12:00:00Z`).getUTCDay();
+  if(employee.workdays&&!employee.workdays.includes(dayIndex))return [];
+  const weekday = weekdays[dayIndex];
   return rows.filter(row => row.branch === branch && (row.assignments[weekday] ?? "").split("/").some(name => name.trim().toLowerCase() === employee.name.toLowerCase()));
 }
 export function routineFor(employee: Employee, schedules: ActivitySchedule[], branch: string, day?: string) {
   const weekday = day ? new Date(`${day}T12:00:00Z`).getUTCDay() : undefined;
-  const eligible = schedules.filter(item => (!item.branch || item.branch === branch) &&
+  if(weekday!==undefined&&employee.workdays&&!employee.workdays.includes(weekday))return [];
+  const eligible = schedules.filter(item => !item.excludeEmployeeIds?.includes(employee.id) && (!item.branch || item.branch === branch) &&
     (!item.weekdays || (weekday !== undefined && item.weekdays.includes(weekday))) && (!item.activeFrom||!!day&&day>=item.activeFrom) && (!item.activeUntil||!!day&&day<=item.activeUntil));
   const shared = eligible.filter(item => item.sharedRoutine && (item.employeeIds?.length ? item.employeeIds.includes(employee.id) : item.ownerRoles.includes(employee.role)));
-  if (branch === "Sucursal Centro") return shared;
+  if (branch === "Sucursal Centro") return resolveRoutine(shared);
   const base = eligible.filter(item => !item.sharedRoutine);
   const targeted = base.filter(item => item.employeeIds?.includes(employee.id));
   const result=[...(targeted.length ? targeted : base.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role))), ...shared];
   const project=shared.find(item=>item.id==="matriz-invewin-configuracion");
-  return project?result.map(item=>item.id==="matriz-operacion-programada"?{...item,start:project.end,durationMinutes:(Number(item.end.slice(0,2))*60+Number(item.end.slice(3)))-(Number(project.end.slice(0,2))*60+Number(project.end.slice(3)))}:item):result;
+  return resolveRoutine(project?result.map(item=>item.id==="matriz-operacion-programada"?{...item,start:project.end,durationMinutes:(Number(item.end.slice(0,2))*60+Number(item.end.slice(3)))-(Number(project.end.slice(0,2))*60+Number(project.end.slice(3)))}:item):result);
 }
 // Only explicit references to the daily cleaning role, or matching generic blocks,
 // are aliases. Mixed display/merchandising activities remain separate obligations.
@@ -53,4 +56,13 @@ export function findSlotRun<T extends { itemType: string; itemId: string; comple
   const keys = [slot.key, ...(slot.aliases ?? [])];
   return runs.filter(run => keys.includes(`${run.itemType}-${run.itemId}`))
     .sort((a, b) => Number(Boolean(b.completedAt)) - Number(Boolean(a.completedAt)) || Number(Boolean(b.startedAt)) - Number(Boolean(a.startedAt)) || keys.indexOf(`${a.itemType}-${a.itemId}`) - keys.indexOf(`${b.itemType}-${b.itemId}`))[0];
+}
+
+export function resolveRoutine(rows:ActivitySchedule[]):ActivitySchedule[]{
+ const minutes=(t:string)=>Number(t.slice(0,2))*60+Number(t.slice(3));const time=(m:number)=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+ const rank=(r:ActivitySchedule)=>r.agendaPriority??(r.id==='matriz-invewin-configuracion'?90:0);
+ return rows.flatMap(row=>{if(isCleaningSchedule(row))return [row];let parts=[[minutes(row.start),minutes(row.end)]];
+ for(const block of rows.filter(b=>b.id!==row.id&&!isCleaningSchedule(b)&&rank(b)>rank(row))){const a=minutes(block.start),z=minutes(block.end);parts=parts.flatMap(([s,e])=>z<=s||a>=e?[[s,e]]:[[s,Math.min(e,a)],[Math.max(s,z),e]].filter(([x,y])=>y>x));}
+ return parts.map(([s,e])=>({...row,id:s===minutes(row.start)&&e===minutes(row.end)?row.id:`${row.id}~${time(s).replace(':','')}-${time(e).replace(':','')}`,start:time(s),end:time(e),durationMinutes:e-s}));
+ }).sort((a,b)=>a.start.localeCompare(b.start)||a.id.localeCompare(b.id));
 }

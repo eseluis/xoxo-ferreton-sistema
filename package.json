@@ -19,7 +19,8 @@
     "test:opening-team": "node tests/matriz-opening-team-database.cjs",
     "test:permissions": "node tests/staff-permissions-ui.cjs && node tests/staff-permissions-database.cjs",
     "test:cleaning-deadline": "node tests/cleaning-deadline-database.cjs && node tests/cleaning-scoreboard.cjs && node tests/centro-cleaning-daily.cjs",
-    "test:invewin": "node tests/invewin-ui.cjs && node tests/invewin-database.cjs"
+    "test:invewin": "node tests/invewin-ui.cjs && node tests/invewin-database.cjs",
+    "test:daily-operations": "node tests/daily-agenda-policy.cjs && node tests/weekly-reports-database.cjs && node tests/opening-coverage-database.cjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.107.0",

@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from "react";
 import {supabase} from "./cloudStore";
 import {canGovern,type Employee} from "./data";
 export type OpeningStep={id:string;step:string;title:string;description:string;start:string;end:string;employeeId:string;ownerName:string;status:string;version:number;preview?:boolean;ownerAvailable?:boolean;completedAt?:string;completedByName?:string;onTime?:boolean};
-export type OpeningTeamContext={applicable:boolean;required:boolean;legacyOpened:boolean;steps:OpeningStep[];owners:Record<string,string>;configVersion:number;canConfigure:boolean;candidates:{id:string;name:string}[];clock:string;opening?:Record<string,unknown>};
+export type OpeningTeamContext={applicable:boolean;required:boolean;legacyOpened:boolean;steps:OpeningStep[];owners:Record<string,string>;configVersion:number;canConfigure:boolean;canCover?:boolean;candidates:{id:string;name:string}[];clock:string;opening?:Record<string,unknown>};
 export function useMatrizOpening(day:string) {
  const [context,setContext]=useState<OpeningTeamContext>();const [error,setError]=useState("");const [busy,setBusy]=useState(false);const [revision,setRevision]=useState(0);const mutation=useRef(0);
  useEffect(()=>{let alive=true,reading=false;const read=async()=>{if(reading||!supabase||document.visibilityState==="hidden")return;reading=true;const version=mutation.current;
@@ -13,12 +13,13 @@ export function useMatrizOpening(day:string) {
  const apply=async(rpc:string,args:Record<string,unknown>)=>{if(!supabase)throw Error("Sin conexión para confirmar el paso");mutation.current++;setBusy(true);setError("");try{const r=await supabase.rpc(rpc,args);if(r.error)throw r.error;setContext(r.data);window.dispatchEvent(new Event("matriz-opening-refresh"));window.dispatchEvent(new CustomEvent("xoxo-sync",{detail:{key:"xoxo.storeOpeningChecks",error:""}}));return true;}catch(e){setError((e as Error).message);return false;}finally{setBusy(false);}};
  return {context,error,busy,refresh:()=>setRevision(n=>n+1),mark:(step:OpeningStep)=>apply("mark_matriz_opening_step",{step_id:step.step,expected_version:step.version}),save:(owners:Record<string,string>,version:number)=>apply("save_matriz_opening_owners",{owners,expected_version:version})};
 }
+export function canCoverOpening(user:Employee){return ["001","002","003","009"].includes(user.id)||["ADMIN_GENERAL","ADMIN_TIENDA"].includes(user.role);}
 export function openingTeamReady(context?:OpeningTeamContext) {return !!context&&(!context.required||context.steps.length===4&&context.steps.every(s=>s.status==="Completada"));}
 export function stepBlockReason(step:OpeningStep,context:OpeningTeamContext,user:Employee) {
  if(step.status==="Completada")return "";
  if(step.preview||!context.required)return "El nuevo rol se aplicará en la próxima apertura.";
- if(step.employeeId!==user.id)return "Debe marcarlo la persona encargada.";
- if(step.ownerAvailable===false)return "El encargado no está asignado a Matriz hoy. Gerencia debe revisar la asignación.";
+ if(step.employeeId!==user.id&&!context.canCover)return "Debe marcarlo la persona encargada.";
+ if(step.ownerAvailable===false&&!context.canCover)return "El encargado no está asignado a Matriz hoy. Gerencia debe revisar la asignación.";
  if(context.clock<step.start)return `Se habilita a las ${step.start}.`;
  if(step.step==="shutters"&&!context.steps.some(s=>s.step==="authorization"&&s.status==="Completada"))return "Pendiente de autorización para abrir cortinas y portón.";
  return "";
@@ -31,13 +32,14 @@ export function MatrizOpeningTeam({user,control}:{user:Employee;control:ReturnTy
   {!context&&!error&&<p>Cargando encargados y autorizaciones…</p>}
   {context?.legacyOpened&&<p className="calendarWarning">La apertura de hoy ya estaba registrada. Se conserva su historial; el nuevo rol se aplicará en la próxima apertura.</p>}
   <div className="matrizOpeningSteps">{context?.steps.map(step=>{const reason=stepBlockReason(step,context,user);const done=step.status==="Completada";return <article className="matrizOpeningStep" key={step.id}><div className="sectionHead"><strong>{step.title}</strong><span className={`statusPill ${done?"ok":"warn"}`}>{done?"Realizado":step.step==="shutters"?(context.steps.some(s=>s.step==="authorization"&&s.status==="Completada")?"Autorizado · pendiente de apertura":"Pendiente de autorización"):"Pendiente"}</span></div><p><strong>{step.ownerName||step.employeeId}</strong> · {step.start}–{step.end}</p><p>{step.description}</p>
-   {done?<p className={step.onTime?"ok":"warn"}>{step.completedByName||step.ownerName} · {new Date(step.completedAt!).toLocaleString("es-MX",{timeZone:"America/Mexico_City"})} · {step.onTime?"En tiempo":"Fuera de horario"}</p>:<><p className="muted">{reason||"Confirma sólo cuando hayas realizado tu parte."}</p>{step.employeeId===user.id&&<button type="button" className="primary" disabled={busy||!!reason} onClick={()=>void control.mark(step)}>{busy?"Confirmando…":step.step==="authorization"?"Autorizar cortinas y portón":"Marcar mi parte realizada"}</button>}</>}
+   {done?<p className={step.onTime?"ok":"warn"}>{step.completedByName||step.ownerName} · {new Date(step.completedAt!).toLocaleString("es-MX",{timeZone:"America/Mexico_City"})} · {step.onTime?"En tiempo":"Fuera de horario"}</p>:<><p className="muted">{reason||"Confirma sólo cuando hayas realizado tu parte."}</p>{(step.employeeId===user.id||context.canCover)&&<button type="button" className="primary" disabled={busy||!!reason} onClick={()=>void control.mark(step)}>{busy?"Confirmando…":step.step==="authorization"?"Autorizar cortinas y portón":step.employeeId===user.id?"Marcar mi parte realizada":"Realizar paso por suplencia"}</button>}</>}
   </article>;})}</div>
+  {context?.canCover&&<details><summary>Cambio de último momento: reasignar encargados</summary><OpeningSettingsForm/></details>}
   {context?.canConfigure&&<p className="muted">Los encargados se cambian en Configuración → Responsables de apertura de Matriz.</p>}
  </section>;
 }
 export function MatrizOpeningSettings({user}:{user:Employee}) {
- if(!canGovern(user)&&!(user.branch==="Matriz"&&["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)))return null;
+ if(!canCoverOpening(user)&&!canGovern(user)&&!(user.branch==="Matriz"&&["GERENTE_TIENDA","ADMIN_TIENDA"].includes(user.role)))return null;
  return <OpeningSettingsForm/>;
 }
 function OpeningSettingsForm() {

@@ -4,6 +4,7 @@ export type MetricSource = { available: boolean; rows: MetricRow[]; error?: stri
 export type MetricSources = Record<string, MetricSource>;
 export type SystemMetric = { id: string; name: string; value: number|null; unit: string; source: string; detail: string; destination: string; problem?: boolean };
 export const sourceInfo: Record<string,{name:string;destination:string;done?:string[];completionName?:string}> = {
+ staff_weekly_reports:{name:"Reportes semanales antes del descanso",destination:"panel",done:["Entregado","Revisado"]},
  staff_permission_records:{name:"Permisos y descansos",destination:"solicitudes",completionName:"Solicitudes con decisión",done:["Autorizada","Rechazada"]},
  staff_cycle_records:{name:"Cierres por descanso",destination:"solicitudes"},
  invewin_daily_records:{name:"Configuración Invewin Matriz",destination:"panel",done:["Validada"]},
@@ -52,6 +53,8 @@ export function systemMetrics(sources:MetricSources, now=new Date()): SystemMetr
    add(source,source+"-complete",rule.completionName??("Cumplimiento · "+rule.name),rows.length?completed/rows.length*100:null,"%",`${completed} terminados / ${rows.length} registros. ${source==="centro_records"?"Sólo Validada cuenta como cumplimiento; Por validar sigue pendiente.":"Los pendientes futuros no se consideran vencidos."}`);
   }
  }
+ const weekly=sources.staff_weekly_reports;
+ if(weekly?.available){const late=weekly.rows.filter(r=>r.completedAt&&r.onTime===false).length,missing=weekly.rows.filter(r=>r.status==='Pendiente').length;add('staff_weekly_reports','weekly-reports-missing','Reportes semanales exigibles sin entregar',missing,'reportes','Cada última jornada antes del descanso cuenta una vez. La entrega habilita la salida; la revisión es posterior.',missing>0);add('staff_weekly_reports','weekly-reports-late','Reportes semanales entregados con retraso',late,'reportes','Se compara la fecha real de entrega con la última jornada antes del descanso.',late>0);}
  const cycles=sources.staff_cycle_records;
  if(cycles?.available){const rows=cycles.rows.filter(r=>!r.missingPlanDays);const total=rows.reduce((s,r)=>s+Number(r.total??0),0),validated=rows.reduce((s,r)=>s+Number(r.validated??0),0);add("staff_cycle_records","weekly-validated","Actividades hechas y validadas en ciclos cerrados",total?validated/total*100:null,"%",`${validated}/${total} obligaciones exigibles. ${cycles.rows.length-rows.length} cierres parciales excluidos por días sin plan. El mínimo de 80% orienta la decisión humana.`);}
  const invewin=sources.invewin_daily_records;

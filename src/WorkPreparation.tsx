@@ -3,12 +3,12 @@ import { supabase } from "./cloudStore";
 import { canManageStore, type Employee } from "./data";
 
 type Capture = {dataUrl:string;capturedAt:string};
-type OrderStep = {id:string;employeeId:string;area:string;title:string;step:number;status:string;date:string;available:boolean;ownerAvailable:boolean;note?:string;reference?:string;startedAt?:string;completedAt?:string;followup:boolean};
+type OrderStep = {id:string;employeeId:string;area:string;title:string;step:number;status:string;date:string;available:boolean;ownerAvailable:boolean;note?:string;reference?:string;startedAt?:string;completedAt?:string;followup:boolean;start?:string;end?:string};
 type OrderContext = {rows:OrderStep[];week:{date:string;area:string;title:string;status:string;note?:string;reference?:string}[];clock:string;today:string};
 type ReadinessRecord = {id:string;phase:string;checks:Record<string,boolean>;note:string;photo:string;status:string;completedAt:string;photoSubmittedAt?:string;color:string;tomorrowColor:string};
 type ReadyContext = {today:string;variant:string;color:string;tomorrowColor:string;toolsRequired:boolean;applicable:boolean;entryPhotoRequired:boolean;exitPhotoRequired:boolean;weeklyEvidenceCount:number;weeklyEvidenceMet:boolean;rows:ReadinessRecord[];team:{employeeId:string;name:string;variant:string;branch:string}[]};
 const DAYS=["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
-export const ORDER_WEEK=[['Lunes','Electrodomésticos','Celina'],['Martes','Electricidad','Sabina'],['Miércoles','Plomería','Citlali'],['Jueves','Herramientas','Anubis'],['Viernes','Tornillería','Julio'],['Sábado','Seguimiento de todos los pedidos','Responsables de cada área']];
+export const ORDER_WEEK=[['Lunes','Electrodomésticos','Celina'],['Martes','Electricidad','Sabina'],['Miércoles · 09:00–09:30','Plomería','Citlali'],['Jueves','Herramientas','Anubis'],['Viernes','Tornillería','Julio'],['Sábado','Seguimiento de todos los pedidos','Responsables de cada área']];
 export function uniformWeek(variant:string) { return variant==='Hombres'?['Negro','Azul','Rojo','Verde','Negro','Azul','Rojo']:['Negro','Azul','Rojo','Negro','Azul','Rojo','Negro']; }
 function dayKey(){return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());}
 function useWorkContext<T>(rpc:string,args:Record<string,unknown>={}) {
@@ -30,15 +30,16 @@ export function MatrizOrders({user,location,collaborators}:{user:Employee;locati
 }
 function MatrizOrderContent({user,collaborators}:{user:Employee;collaborators:Employee[]}) {
  const today=dayKey();const {data,error,refresh}=useWorkContext<OrderContext>('matriz_orders_context',{day:today});
+ const start=data?.rows[0]?.start??'10:00',end=data?.rows[0]?.end??'11:00';
  const supervisor=canManageStore(user);const [showWeek,setShowWeek]=useState(false);
  return <article className="wide panelCard preparationCard" aria-label="Pedidos programados de Matriz">
-  <div className="sectionHead"><div><h2>Pedidos de Matriz · 10:00–11:00</h2><span>Proceso obligatorio por área · {today} · hora de Ciudad de México</span></div><button type="button" onClick={refresh}>Actualizar</button></div>
+  <div className="sectionHead"><div><h2>Pedidos de Matriz</h2><span>Miércoles plomería 09:00–09:30 · demás pedidos 10:00–11:00 · {today} · hora de Ciudad de México</span></div><button type="button" onClick={refresh}>Actualizar</button></div>
   {error&&<p className="loginError" role="alert">No se pudo cargar el rol: {error}</p>}
   {!data&&!error&&<p>Cargando tus pasos…</p>}
   {supervisor&&<><button type="button" onClick={()=>setShowWeek(!showWeek)} aria-expanded={showWeek}>Ver rol semanal</button>{showWeek&&<div className="tableWrap"><table><thead><tr><th>Día</th><th>Área</th><th>Responsable</th></tr></thead><tbody>{ORDER_WEEK.map(r=><tr key={r[0]}>{r.map(c=><td key={c}>{c}</td>)}</tr>)}</tbody></table></div>}</>}
   <p className="muted">El auxiliar presente del área detecta faltantes; si no hay auxiliar disponible, lo hace el responsable del pedido. El jefe revisa y prepara el pedido. Gerencia valida y autoriza antes del envío.</p>
   {data?.rows.length===0&&<p>Hoy no tienes pasos de pedidos asignados. El sábado se revisan los pedidos de toda la semana.</p>}
-  {data&&data.rows.length>0&&<p className={`statusPill ${data.clock>'11:00'?'warn':'ok'}`}>{data.clock<'10:00'?'Programado: el botón para empezar se habilita a las 10:00.':data.clock>'11:00'?'La ventana terminó. Los pasos pendientes siguen obligatorios y se registran con retraso.':'Es hora de realizar el pedido de tu área.'}</p>}
+  {data&&data.rows.length>0&&<p className={`statusPill ${data.clock>end?'warn':'ok'}`}>{data.clock<start?`Programado: el botón para empezar se habilita a las ${start}.`:data.clock>end?'La ventana terminó. Los pasos pendientes siguen obligatorios y se registran con retraso.':'Es hora de realizar el pedido de tu área.'}</p>}
   <div className="orderSteps">{data?.rows.map(step=><OrderStepCard key={step.id} step={step} own={step.employeeId===user.id} clock={data.clock} owner={collaborators.find(p=>p.id===step.employeeId)?.name??step.employeeId} onSaved={()=>{sync();refresh();}}/>)}</div>
   {data?.week.length!==0&&data?.week&&<details><summary>Pedidos y avances de esta semana a los que tienes acceso</summary><div className="taskList">{data.week.map((r,i)=><div key={i}><strong>{r.area} · {r.date} · {r.status}</strong><p>{r.title}: {r.note||'Sin resultado registrado'} {r.reference}</p></div>)}</div></details>}
  </article>;
@@ -48,11 +49,11 @@ function OrderStepCard({step,own,clock,owner,onSaved}:{step:OrderStep;own:boolea
  const done=step.status==='Completada';
  const act=async(action:string)=>{if(!supabase)return;setBusy(true);setError('');try{const r=await supabase.rpc('matriz_order_action',{id:step.id,action,note,reference});if(r.error)throw r.error;onSaved();}catch(e){setError((e as Error).message);}finally{setBusy(false);}};
  return <section className="preparationStep"><div className="sectionHead"><strong>{step.area} · Paso {step.step}: {step.title}</strong><span className={`statusPill ${done?'ok':clock>'11:00'?'danger':'warn'}`}>{step.status}</span></div>
-  <p>Responsable: {owner} · Matriz · 10:00–11:00</p>
+  <p>Responsable: {owner} · Matriz · {step.start??'10:00'}–{step.end??'11:00'}</p>
   {!step.ownerAvailable&&!done&&<p className="loginError">El responsable no está asignado a Matriz hoy o su acceso está inactivo. Gerencia debe revisar la cobertura.</p>}
   {!step.available&&!done&&<p className="muted">En espera de que termine el paso anterior. Sólo ves los pasos que te corresponden.</p>}
   {done?<><p>{step.note}</p>{step.reference&&<p>Folio / enlace: {step.reference}</p>}<small>Entrega: {new Date(step.completedAt!).toLocaleString('es-MX',{timeZone:'America/Mexico_City'})}</small></>:own&&step.available&&step.ownerAvailable&&<>
-   {!step.startedAt?<button type="button" className="primary" disabled={busy||clock<'10:00'} onClick={()=>void act('start')}>Empezar {step.step===1?'pedido':'paso'}</button>:<>
+   {!step.startedAt?<button type="button" className="primary" disabled={busy||clock<(step.start??'10:00')} onClick={()=>void act('start')}>Empezar {step.step===1?'pedido':'paso'}</button>:<>
     <label>Resultado del paso<textarea value={note} onChange={e=>setNote(e.target.value)} placeholder="Productos, cantidades, revisión o resultado. Si no hay faltantes, indícalo." maxLength={4000}/></label>
     <label>Folio o enlace de Alegra POS / pedido{!step.followup&&step.step===3?' (obligatorio; Sin pedido si no hay faltantes)':' (opcional)'}<input value={reference} onChange={e=>setReference(e.target.value)} maxLength={2000}/></label>
     <button type="button" className="primary" disabled={busy||note.trim().length<10||!step.followup&&step.step===3&&reference.trim().length<3} onClick={()=>void act('complete')}>{busy?'Guardando…':'Entregar paso y continuar'}</button>

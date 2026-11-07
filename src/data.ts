@@ -22,6 +22,8 @@ export type Employee = {
   salaryMax?: number;
   commissionBase: string;
   phone?: string;
+  workdays?: number[];
+  weekdayShiftEnds?: Record<string,string>;
 };
 
 export type RoleProfile = {
@@ -88,6 +90,8 @@ export type ActivitySchedule = {
   objective?: string;
   weekdays?: number[]; // Domingo = 0, lunes = 1, ... sábado = 6; omitido = diario.
   sharedRoutine?: boolean;
+  agendaPriority?: number;
+  excludeEmployeeIds?: string[];
   activeFrom?: string;
   activeUntil?: string;
 };
@@ -659,7 +663,330 @@ export const defaultCleaningRole: CleaningRole[] = [
   { branch:"Sucursal Centro",activity:"Basura, plantas y orden exterior",start:"17:00",end:"18:00",details:"Jan ordena basura y plantas y deja limpia la zona exterior.",assignments:{Lunes:"Jan",Martes:"Jan",Miercoles:"Jan",Jueves:"Jan",Viernes:"Jan",Sabado:"Jan",Domingo:"Jan"} },
 ];
 
+const dailyAgendaPolicy: ActivitySchedule[] = [
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "photo",
+    "id": "exhibicion-manana-general",
+    "name": "Rellenar exhibidores: sin espacios vacíos",
+    "start": "09:30",
+    "end": "10:00",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA",
+      "AUXILIAR"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Revisar toda la exhibición de tu área, reponer productos y registrar faltantes reales. Si no hay existencias, documentarlo y avisar al superior; no ocultar espacios sin resolver.",
+    "excludeEmployeeIds": [
+      "006",
+      "008",
+      "010"
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "photo",
+    "id": "exhibicion-manana-sabina-jan",
+    "name": "Sabina y Jan: rellenar exhibidores",
+    "start": "09:00",
+    "end": "09:30",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Rellenar exhibidores y muestrarios de tu área; no dejar huecos. Documentar faltantes sin existencia y avisar al superior.",
+    "employeeIds": [
+      "006",
+      "008"
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "photo",
+    "id": "exhibicion-manana-celina",
+    "name": "Celina: rellenar exhibición",
+    "start": "10:30",
+    "end": "11:00",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Reponer la exhibición de electrodomésticos completa y reportar cualquier espacio sin producto o falta de existencias.",
+    "employeeIds": [
+      "010"
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "photo",
+    "id": "exhibicion-tarde-general",
+    "name": "Segunda reposición de exhibidores",
+    "start": "16:00",
+    "end": "17:00",
+    "durationMinutes": 60,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA",
+      "AUXILIAR"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Recorrer de nuevo el área, rellenar cada hueco, mantener precios visibles y reportar faltantes sin existencia. Dejar evidencia del resultado."
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "signature",
+    "id": "citlali-redes-diarias",
+    "name": "Citlali: publicar y planear redes sociales",
+    "start": "10:00",
+    "end": "11:00",
+    "durationMinutes": 60,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. 10:00–10:30 publicar diariamente el material aprobado en las redes sociales. Dentro del mismo bloque, hasta las 11:00, planear el material del día siguiente: productos, mensaje, precio vigente, tomas, guion y pendientes. Registrar enlaces a publicaciones y referencia del plan. Miércoles: pedido de plomería 09:00–09:30 antes de este bloque.",
+    "employeeIds": [
+      "015"
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 100,
+    "evidence": "signature",
+    "id": "citlali-audiovisual",
+    "name": "Citlali: realizar material audiovisual",
+    "start": "17:00",
+    "end": "18:00",
+    "durationMinutes": 60,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Martes, miércoles y viernes: realizar fotografías, tomas, grabación o edición conforme al plan y guardar referencia del material para publicación. Salida programada 19:00 estos días. Siempre atender primero al cliente.",
+    "employeeIds": [
+      "015"
+    ],
+    "weekdays": [
+      2,
+      3,
+      5
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 20,
+    "evidence": "signature",
+    "id": "matriz-jefes-operacion-diaria",
+    "name": "Atención inmediata, mercancía e inventario del área",
+    "start": "12:30",
+    "end": "16:00",
+    "durationMinutes": 210,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Atender primero al cliente; usar los intervalos disponibles para revisar mercancía, precios, inventario, exhibición y pendientes del área. Respetar tu comida y turno configurados; no dejar un cliente esperando por una actividad programada. Mantener mostradores limpios, libres de mercancía; sólo promociones o muestrarios autorizados.",
+    "branch": "Matriz"
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 50,
+    "evidence": "signature",
+    "id": "matriz-jefes-cierre-a",
+    "name": "Cerrar pendientes, mostradores y reporte antes de salir",
+    "start": "17:00",
+    "end": "17:30",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Dejar mostradores limpios y listos, cerrar actividades con evidencias y registrar pendientes. En la última jornada antes de descansar, entregar el reporte semanal con evidencias antes de marcar salida.",
+    "employeeIds": [
+      "008",
+      "009",
+      "010"
+    ],
+    "branch": "Matriz"
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 50,
+    "evidence": "signature",
+    "id": "matriz-citlali-cierre-a",
+    "name": "Citlali: cerrar actividades y reporte",
+    "start": "17:00",
+    "end": "17:30",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Cerrar actividades y documentar pendientes; antes del descanso entregar el reporte semanal con evidencias.",
+    "employeeIds": [
+      "015"
+    ],
+    "branch": "Matriz",
+    "weekdays": [
+      1,
+      4,
+      6,
+      0
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 50,
+    "evidence": "signature",
+    "id": "matriz-jefes-cierre-b",
+    "name": "Orden de área y cierre de actividades",
+    "start": "18:00",
+    "end": "19:00",
+    "durationMinutes": 60,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Atender de inmediato a cada cliente; pausar y retomar esta actividad. Dejar mostradores listos, documentación y material en orden, entregar pendientes y completar el reporte semanal cuando corresponda. Citlali: este bloque largo aplica sólo martes, miércoles y viernes; los demás días rige su salida habitual.",
+    "employeeIds": [
+      "006",
+      "012",
+      "015"
+    ],
+    "branch": "Matriz",
+    "weekdays": [
+      2,
+      3,
+      5
+    ]
+  },
+  {
+    "sharedRoutine": true,
+    "activeFrom": "2026-11-07",
+    "assignedBy": "Dirección",
+    "editableBy": [
+      "APODERADA_LEGAL",
+      "DIRECTOR",
+      "GERENTE_GENERAL",
+      "GERENTE_TIENDA"
+    ],
+    "agendaPriority": 75,
+    "evidence": "signature",
+    "id": "sabina-cierre-redes",
+    "name": "Sabina: cerrar mensajes de redes y pendientes del día",
+    "start": "17:00",
+    "end": "17:30",
+    "durationMinutes": 30,
+    "area": "Operación y clientes",
+    "ownerRoles": [
+      "JEFE_AREA"
+    ],
+    "instructions": "Durante todo el turno responder mensajes de todas las redes sociales, atendiendo primero al cliente presente. Al cierre registrar las redes revisadas, lo respondido y los mensajes pendientes con motivo, sin copiar datos privados de clientes. Dejar mostradores limpios, cerrar actividades y entregar el reporte semanal cuando corresponda.",
+    "employeeIds": [
+      "008"
+    ],
+    "branch": "Matriz",
+    "weekdays": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  }
+];
+
 export const defaultActivitySchedules: ActivitySchedule[] = [
+  ...dailyAgendaPolicy,
   {id:"matriz-invewin-configuracion",name:"Configuración del nuevo sistema Invewin · mínimo 50 códigos",area:"Catálogo Invewin",branch:"Matriz",ownerRoles:["JEFE_AREA"],sharedRoutine:true,activeFrom:"2026-11-06",activeUntil:"2026-12-01",start:"11:00",end:"12:30",durationMinutes:90,evidence:"none",assignedBy:"Dirección",editableBy:["APODERADA_LEGAL","DIRECTOR","GERENTE_GENERAL","GERENTE_TIENDA"],objective:"Tener en Invewin la totalidad de productos de Matriz dados de alta y verificados antes del 2 de diciembre de 2026.",instructions:"Registrar al menos 50 códigos diferentes por jefe y día laborable, con descripción, código, precio y cantidad de venta. Trabajar por zonas: terminar un anaquel o muestrario antes de empezar otro. Dar de alta y comprobar los datos en Invewin, registrar los códigos y referencia de comprobación en el proceso Invewin del Panel, y enviar a validación del superior. No volver a contar códigos ya validados. Fecha límite: 1 de diciembre de 2026; la atención al cliente conserva prioridad."},
 
   {
@@ -1089,6 +1416,9 @@ export const processes: Process[] = [
 ];
 
 export const internalRules: InternalRule[] = [
+ {id:'atencion-inmediata-piso',title:'Atención inmediata al cliente',appliesTo:'Todo el personal',policy:'El equipo de piso debe atender de inmediato al cliente antes de canalizarlo a caja. Pausar y retomar las actividades programadas. Mantener los mostradores limpios, listos y libres; sólo promociones o muestrarios autorizados.',escalation:'Todo incumplimiento se registra para revisión del superior; las consecuencias requieren decisión y motivo.'},
+ {id:'sabina-respuestas-redes',title:'Mensajes de redes sociales',appliesTo:'Sabina',policy:'Revisar y contestar los mensajes de todas las redes durante el turno, sin descuidar al cliente presente. Registrar al cierre lo atendido y los pendientes.',escalation:'Superior inmediato'},
+ {id:'reporte-antes-descanso',title:'Reporte semanal antes del descanso',appliesTo:'Todos los colaboradores',policy:'Entregar resumen, pendientes y evidencias en la última jornada antes de descansar. Se adjuntan cumplimiento y apertura de la sucursal donde se laboró. Sin entrega no se registra salida; la revisión posterior no la bloquea.',escalation:'Superior inmediato'},
   {
     id: "retardos",
     title: "Retardos y asistencia",

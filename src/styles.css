@@ -2505,3 +2505,7 @@ textarea {
 .permissionProof img { max-width:100%; max-height:380px; object-fit:contain; }.permissionProof figure { margin:12px 0; }.permissionProof a { overflow-wrap:anywhere; }
 
 .invewinProject {min-width:0;grid-column:1 / -1}.invewinRows {display:grid;gap:14px}.invewinEditor {border:1px solid var(--line);border-radius:12px;padding:16px;margin:16px 0}.invewinProject label {display:grid;gap:6px;margin:10px 0}.invewinProject textarea {width:100%;min-height:90px}.invewinProject .invewinCheck {display:flex;align-items:flex-start;gap:10px}.invewinCheck input {width:auto}.invewinBatchPicker {display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.invewinSubmit {border-top:1px solid var(--line);padding-top:12px;margin-top:14px}.invewinProject td {overflow-wrap:anywhere}.invewinProject fieldset {min-width:0;border:0;padding:0}
+
+.weeklyReports {grid-column:1 / -1;min-width:0}.weeklyReports label {display:grid;gap:6px;margin:12px 0}.weeklyReports textarea {width:100%;min-height:90px}.weeklyReports img {max-width:100%;max-height:460px;object-fit:contain}.weeklyReports .weeklyReportCheck {display:flex;gap:10px;align-items:flex-start}.weeklyReportCheck input {width:auto}
+
+.dailyAgendaCard {grid-column:1 / -1;min-width:0}.dailyAgendaCard td {vertical-align:top}.dailyAgendaCard td:first-child {white-space:nowrap}

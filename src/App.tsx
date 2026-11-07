@@ -1,7 +1,9 @@
+import {DailyAgendaCard} from "./DailyAgendaCard";
+import {WeeklyReports} from "./WeeklyReports";
 import {InvewinProject,INVEWIN_ID} from "./InvewinProject";
 import {useCleaningDeadline} from "./cleaningDeadline";
 import {StaffPermissions,CleaningExpectedPoints} from "./StaffPermissions";
-import { MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
+import { canCoverOpening, MatrizOpeningTeam, MatrizOpeningSettings, useMatrizOpening, openingTeamReady } from "./MatrizOpeningTeam";
 import { attendanceReader, readAttendanceDay, confirmAttendancePunch, isConfirmedPunch } from "./attendanceSync";
 import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparation";
 import { SystemKpis } from "./AutomaticKpiPanel";
@@ -2169,7 +2171,7 @@ function App() {
 
       <main>
         {attendanceReceipt.message && <div className={`attendanceReceipt ${attendanceReceipt.error?"attendanceError":""}`} role={attendanceReceipt.error?"alert":"status"} aria-live="polite"><strong>{attendanceReceipt.message}</strong>{!attendanceReceipt.busy&&<button type="button" className="ghost" onClick={()=>void attendanceReaderRef.current?.refresh()}>Verificar recepción</button>}</div>}
-        <div className="globalPriority"><strong>{CENTRO_PRIORITY}</strong><span>Atiende, conserva el avance y retoma. Una condición de seguridad bloquea la actividad.</span><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Cliente")}>Atender cliente</button><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Seguridad")}>Pausar por seguridad</button>{canSeeCentro && <button className="primary" onClick={() => navigate("operacion-centro")}>Operación Centro</button>}</div>
+        <div className="globalPriority"><strong>{CENTRO_PRIORITY}</strong><span>Atiende de inmediato al cliente, conserva el avance y retoma. El equipo de piso atiende antes de canalizar a caja. Una condición de seguridad bloquea la actividad.</span><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Cliente")}>Atender cliente</button><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Seguridad")}>Pausar por seguridad</button>{canSeeCentro && <button className="primary" onClick={() => navigate("operacion-centro")}>Operación Centro</button>}</div>
         {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert"><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" onClick={() => window.location.reload()}>Reintentar y recargar</button></div>}
         <header className="topbar">
           <div>
@@ -2715,6 +2717,8 @@ function Dashboard({
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
+      <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
       <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
@@ -2743,6 +2747,8 @@ function Dashboard({
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
+      <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
+      <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
       <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
@@ -3218,7 +3224,8 @@ export function AttendanceView({
           const punctuality = arrivalPunctuality(myAttendance?.in ? timeToMinutes(myAttendance.in) : nowMinutes);
           return (
             <>
-              <AttendanceReadiness user={user} hasEntry={Boolean(myAttendance?.in)} hasExit={Boolean(myAttendance?.out)} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
+              <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
+                  <AttendanceReadiness user={user} hasEntry={Boolean(myAttendance?.in)} hasExit={Boolean(myAttendance?.out)} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Uniforme y herramientas" value={value} onCapture={onCapture} onClear={onClear}/>} />
               {attendanceSync&&<div className="attendanceSyncStatus"><p>{attendanceSync.checkedAt?`Asistencias verificadas en el servidor: ${new Date(attendanceSync.checkedAt).toLocaleTimeString("es-MX",{timeZone:"America/Mexico_City"})}. Actualización cada 15 segundos.`:"Verificando asistencias con el servidor…"}</p>{attendanceSync.error&&<p className="loginError">No se pudo actualizar: {attendanceSync.error}. Se conserva la última consulta; no se supone una checada nueva.</p>}<button type="button" className="ghost" onClick={attendanceSync.refresh}>Actualizar asistencias</button></div>}
               <div className="punchGrid">
                 <button disabled={attendanceBusy || arrivalBlocked || Boolean(myAttendance?.in)} onClick={() => updateAttendance("in")}>
@@ -6443,17 +6450,18 @@ function EvidenceGalleryView({
     const read = async () => {
       try {
         if (!supabase) throw new Error("Sin conexión para consultar el historial.");
-        const [snapshots, centro, preparation, openingTeamEvidence, invewinEvidence] = await Promise.all([
+        const [snapshots, centro, preparation, openingTeamEvidence, invewinEvidence, weeklyEvidence] = await Promise.all([
           supabase.from("operation_day_plans").select("*").gte("day", evidenceDate).lte("day", evidenceEnd),
           supabase.rpc("system_centro_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("work_preparation_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("matriz_opening_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
           supabase.rpc("invewin_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
+          supabase.rpc("weekly_report_evidence", { from_day: evidenceDate, to_day: evidenceEnd }),
         ]);
         if (!alive) return;
         if (!snapshots.error) setPlans(snapshots.data as DayPlan[]);
-        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : []), ...(!openingTeamEvidence.error ? openingTeamEvidence.data ?? [] : []), ...(!invewinEvidence.error ? invewinEvidence.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
-        if (snapshots.error || centro.error || preparation.error || openingTeamEvidence.error || invewinEvidence.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message ?? openingTeamEvidence.error?.message ?? invewinEvidence.error?.message));
+        setCentroEvidence(([...(!centro.error ? centro.data ?? [] : []), ...(!preparation.error ? preparation.data ?? [] : []), ...(!openingTeamEvidence.error ? openingTeamEvidence.data ?? [] : []), ...(!invewinEvidence.error ? invewinEvidence.data ?? [] : []), ...(!weeklyEvidence.error ? weeklyEvidence.data ?? [] : [])] as EvidenceGalleryItem[]).map(item => ({ ...item, link: item.link && /^https?:\/\//i.test(item.link) ? item.link : undefined, links: item.links?.filter(link => /^https?:\/\//i.test(link.url)) })));
+        if (snapshots.error || centro.error || preparation.error || openingTeamEvidence.error || invewinEvidence.error || weeklyEvidence.error) throw new Error("Historial parcial: " + (snapshots.error?.message ?? centro.error?.message ?? preparation.error?.message ?? openingTeamEvidence.error?.message ?? invewinEvidence.error?.message ?? weeklyEvidence.error?.message));
       } catch (failure) { if (alive) setHistoryError(failure instanceof Error ? failure.message : "No se pudo leer el historial."); }
       finally { if (alive) setHistoryLoading(false); }
     };
@@ -6846,6 +6854,8 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
         {branches.map((branch) => {
           const check = checks.find((item) => item.id === `${today}-${branch}`) ?? { id: `${today}-${branch}`, branch, date: today, minimumStaff: false, systemsReady: false, processComplete: false };
           const canManage = canAuthorizeAsManager(user, branch);
+          const canOpen = canManage || branch==="Matriz"&&canCoverOpening(user);
+          const canPrepare = canAuthorizeAsCashier(user,branch)||branch==="Matriz"&&canCoverOpening(user);
           const canCashier = canAuthorizeAsCashier(user, branch);
           // cashSessions viene de una tabla con permisos por sucursal/dueño: un auxiliar o
           // una cajera de la otra caja puede no tener acceso a esa fila aunque la tienda ya
@@ -6904,7 +6914,7 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
               </>}
 
               <div className="openingStep">
-                <label><input type="checkbox" checked={check.minimumStaff} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, ...resetOpening })} /> Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
+                <label><input type="checkbox" checked={check.minimumStaff} disabled={!canOpen || opened} onChange={(event) => onUpdate(branch, { minimumStaff: event.target.checked, ...resetOpening })} /> Colaboradores registrados en el sistema <small>({staffPresent}/{branchStaff.length} entradas registradas)</small></label>
                 <div className="openingStaffList">
                   {branchStaff.map((employee) => {
                     const entry = branchAttendance.find((item) => item.employeeId === employee.id);
@@ -6921,13 +6931,13 @@ export function StoreOpeningBoard({user,today,cashSessions,cashCuts,checks,atten
 
               <div className="openingStep">
                 <label><input type="checkbox" checked={systemsReady} disabled={teamRequired || !canManage || opened} onChange={(event) => onUpdate(branch, { systemsReady: event.target.checked, ...resetOpening })} /> Sistema, POS, impresora e internet funcionales</label>
-                <label><input type="checkbox" checked={check.processComplete} disabled={!canManage || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, ...resetOpening })} /> Proceso completo de seguridad y apertura</label>
+                <label><input type="checkbox" checked={check.processComplete} disabled={!canOpen || opened} onChange={(event) => onUpdate(branch, { processComplete: event.target.checked, ...resetOpening })} /> Proceso completo de seguridad y apertura</label>
               </div>
 
               {branch !== "Matriz" && managerAuthorized && cashierAuthorized && !doorsOpen && (
                 <p className="ok">🔓 Indicación para todo el personal: abrir cortinas y puertas.</p>
               )}
-              {!opened && canManage && <button className="primary" disabled={!readyToOpenDoors} onClick={async () => { const openingLocation = await checkStoreLocation(branch); const openedAt = new Date().toISOString(); onUpdate(branch, { doorsOpenedAt: openedAt, doorsOpenedById: user.id, openedAt, openedById: user.id, openingLocation }); }}>{teamRequired ? "Confirmar apertura al público de Matriz" : "3. Confirmar cortinas y puertas abiertas"}</button>}
+              {!opened && canOpen && <button className="primary" disabled={!readyToOpenDoors} onClick={async () => { const openingLocation = await checkStoreLocation(branch); const openedAt = new Date().toISOString(); onUpdate(branch, { doorsOpenedAt: openedAt, doorsOpenedById: user.id, openedAt, openedById: user.id, openingLocation }); }}>{teamRequired ? "Confirmar apertura al público de Matriz" : "3. Confirmar cortinas y puertas abiertas"}</button>}
               {opened && (
                 <p className={onTime ? "ok" : "warn"}>
                   Abrió {collaborators.find((employee) => employee.id === check.doorsOpenedById)?.name ?? check.doorsOpenedById}
