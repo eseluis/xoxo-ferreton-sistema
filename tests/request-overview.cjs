@@ -26,3 +26,7 @@ assert.equal(requestPending({...petition,status:'En revision'}),true);
 assert.equal(requestPending({...petition,status:'Atendida'}),false);
 assert.equal(requestPending({...petition,status:'Cerrada'}),false);
 console.log('PASS: Jan to Luis, separate reports and petitions, old pending requests and confidentiality');
+
+for(const id of ['001','002','003'])assert.equal(requestVisible({...automatic,confidentiality:'Confidencial'}, {id,role:'JEFE_AREA'}),true);
+for(const id of ['004','005'])assert.equal(requestVisible({...automatic,recipientId:id}, {id,role:'ADMIN_GENERAL'}),false);
+assert.equal(requestVisible({...automatic,requestedById:'006'},jan),true);

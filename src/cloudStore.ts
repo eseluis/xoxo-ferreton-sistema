@@ -309,6 +309,13 @@ async function performCloudSave(key: string, value: unknown, changes?: unknown[]
     if (error) throw error;
     return;
   }
+  if (key === "xoxo.internalRequests") {
+    const rows = changes ?? value;
+    if (Array.isArray(rows) && !rows.length) return;
+    const {error} = await supabase.rpc("sync_internal_request_records",{records:rows});
+    if(error) throw new Error(error.code === "PGRST202" ? "Falta activar la actualización de recepción de solicitudes. El envío sigue sin confirmar." : error.message);
+    return;
+  }
   const moduleTable = moduleTables[key];
   if (moduleTable) {
     const rows = changes ?? value;

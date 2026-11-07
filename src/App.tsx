@@ -1,3 +1,4 @@
+import {confirmRequestDelivery} from "./requestDelivery";
 import {DailyAgendaCard} from "./DailyAgendaCard";
 import {WeeklyReports} from "./WeeklyReports";
 import {InvewinProject,INVEWIN_ID} from "./InvewinProject";
@@ -9,7 +10,7 @@ import { MatrizOrders, UniformRole, AttendanceReadiness } from "./WorkPreparatio
 import { SystemKpis } from "./AutomaticKpiPanel";
 import { evidenceAssessment, type EvidenceFacts } from "./evidenceMetrics";
 import { RequestsPanel } from "./RequestsPanel";
-import { requestPending, requestsInSection, type InternalRequest } from "./requestOverview";
+import { isReportDirector, requestPending, requestsInSection, type InternalRequest } from "./requestOverview";
 import { kpiCompliance, kpiPeriod } from "./kpiMetrics";
 import { TodayAssignedActivities } from "./TodayAssignedActivities";
 import { WeeklyManagementAgenda } from "./WeeklyManagementAgenda";
@@ -1821,14 +1822,16 @@ function App() {
     const next=warranties.map((item)=>item.id===updated.id?updated:item);setWarranties(next);save("xoxo.warranties",next);
   };
 
-  const addInternalRequest = (event: React.FormEvent<HTMLFormElement>) => {
+  const addInternalRequest = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const element=event.currentTarget;
+    const form = new FormData(element);
+    const requestId=element.dataset.requestId??crypto.randomUUID();element.dataset.requestId=requestId;
     if (!collaborators.some((person) => person.id === String(form.get("recipientId")))) return;
     if (!String(form.get("title")).trim() || !String(form.get("message")).trim()) return;
     const next: InternalRequest[] = [
       {
-        id: crypto.randomUUID(),
+        id: requestId,
         type: String(form.get("type")) as InternalRequest["type"],
         title: String(form.get("title")),
         message: String(form.get("message")),
@@ -1842,9 +1845,9 @@ function App() {
       },
       ...internalRequests,
     ];
-    setInternalRequests(next);
-    save("xoxo.internalRequests", next);
-    event.currentTarget.reset();
+    const received=await confirmRequestDelivery(next[0],internalRequests);
+    setInternalRequests(previous=>[received,...previous.filter(r=>r.id!==received.id)]);
+    element.reset();delete element.dataset.requestId;return received;
   };
 
   const updateInternalRequests = (next: InternalRequest[]) => {
@@ -2152,7 +2155,7 @@ function App() {
             <ClipboardList size={18} /> Tareas
           </button>
           <button className={view === "solicitudes" ? "active" : ""} onClick={() => navigate("solicitudes")}>
-            <MessageSquare size={18} /> Solicitudes ({requestsInSection(internalRequests, user, false).filter(request => request.recipientId === user.id && requestPending(request)).length})
+            <MessageSquare size={18} /> Solicitudes ({requestsInSection(internalRequests, user, false).filter(request => (isReportDirector(user)||request.recipientId === user.id) && requestPending(request)).length})
           </button>
           <button className={view === "reportes-internos" ? "active" : ""} onClick={() => navigate("reportes-internos")}><FileText size={18} /> Reportes internos</button>
           {canAccessView(user, "reportes") && <button className={view === "reportes" ? "active" : ""} onClick={() => navigate("reportes")}>
@@ -6009,10 +6012,12 @@ export function RequestsView({
   user: Employee;
   collaborators: Employee[];
   internalRequests: InternalRequest[];
-  addInternalRequest: (event: React.FormEvent<HTMLFormElement>) => void;
+  addInternalRequest: (event: React.FormEvent<HTMLFormElement>) => Promise<InternalRequest|undefined>;
   setInternalRequests: (value: InternalRequest[]) => void;
 }) {
-  const recipients = collaborators;
+  const recipients = reports?collaborators.filter(isReportDirector):collaborators;
+  const [sending,setSending]=useState(false);const submissionLock=useRef(false);
+  const [deliveryMessage,setDeliveryMessage]=useState("");const [deliveryError,setDeliveryError]=useState(false);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [employeeFilter, setEmployeeFilter] = useState("Todos");
@@ -6020,7 +6025,7 @@ export function RequestsView({
   const visibleRequests = requestsInSection(internalRequests, user, reports);
   const updateRequest = (id: string, patch: Partial<InternalRequest>) => {
     const target = visibleRequests.find((request) => request.id === id);
-    if (!target || !(target.recipientId === user.id || (canManageStore(user) && (canGovern(user) || target.branch === user.branch) && target.confidentiality !== "Confidencial"))) return;
+    if (!target || !(target.type==="Reporte"?isReportDirector(user):target.recipientId === user.id || (canManageStore(user) && (canGovern(user) || target.branch === user.branch) && target.confidentiality !== "Confidencial"))) return;
     setInternalRequests(internalRequests.map((request) => (request.id === id ? { ...request, ...patch } : request)));
   };
   const filteredRequests = visibleRequests
@@ -6032,7 +6037,7 @@ export function RequestsView({
   return (
     <section className="grid two">
       {!reports && <StaffPermissions user={user} collaborators={collaborators} onNavigate={view=>window.dispatchEvent(new CustomEvent("staff-navigate",{detail:view}))}/>}
-      <form className="panelCard form" onSubmit={addInternalRequest}>
+      <form className="panelCard form" onSubmit={async event=>{event.preventDefault();if(submissionLock.current)return;submissionLock.current=true;setSending(true);setDeliveryMessage('Enviando y confirmando recepción en el servidor…');setDeliveryError(false);try{const received=await addInternalRequest(event);if(received)setDeliveryMessage(`Recibida en el servidor para ${received.type==='Reporte'?'001, 002 y 003':collaborators.find(p=>p.id===received.recipientId)?.name??received.recipientId}. Folio: ${received.id}`);}catch(e){setDeliveryError(true);setDeliveryMessage((e as Error).message);}finally{submissionLock.current=false;setSending(false);}}}>
         <div className="sectionHead">
           <div>
             <h2>{reports ? "Nuevo reporte interno" : "Nueva solicitud"}</h2>
@@ -6055,7 +6060,7 @@ export function RequestsView({
             </select>
           </label>
         </div>
-        <select name="recipientId" required>
+        <select name="recipientId" required defaultValue="003">
           <option value="">Selecciona al responsable de atenderla</option>
           {recipients.map((recipient) => (
             <option key={recipient.id} value={recipient.id}>
@@ -6063,13 +6068,15 @@ export function RequestsView({
             </option>
           ))}
         </select>
-        <input name="title" placeholder="Asunto" required />
-        <textarea name="message" placeholder="Explica que necesitas, que falta, que ocurrio o que debe revisarse" required />
+        <input name="title" placeholder="Asunto" maxLength={300} required />
+        <textarea name="message" placeholder="Explica que necesitas, que falta, que ocurrio o que debe revisarse" maxLength={10000} required />
         <select name="confidentiality">
           <option>Normal</option>
           <option>Confidencial</option>
         </select>
-        <button className="primary">{reports ? "Enviar reporte interno" : "Enviar solicitud"}</button>
+        <button className="primary" disabled={sending}>{sending?'Confirmando envío…':reports ? "Enviar reporte interno" : "Enviar solicitud"}</button>
+        {deliveryMessage&&<p role={deliveryError?'alert':'status'} className={deliveryError?'loginError':'ok'}>{deliveryMessage}</p>}
+        {reports&&<p>Entrega exclusiva a los usuarios 001, 002 y 003. El autor conserva su propia copia.</p>}
         <p className="muted">
           Queda registrado quien envia, a quien va dirigido y el seguimiento. Esto evita que cualquier puesto se vuelva intocable.
         </p>
@@ -6090,7 +6097,7 @@ export function RequestsView({
             const author = collaborators.find((employee) => employee.id === request.requestedById);
             const authorName = request.requestedById === "sistema" ? "Sistema (SLA automatico)" : author?.name ?? "Sin autor";
             const recipient = collaborators.find((employee) => employee.id === request.recipientId);
-            const canAnswer = request.recipientId === user.id || (canManageStore(user) && (canGovern(user) || request.branch === user.branch) && request.confidentiality !== "Confidencial");
+            const canAnswer = request.type==="Reporte"?isReportDirector(user):request.recipientId === user.id || (canManageStore(user) && (canGovern(user) || request.branch === user.branch) && request.confidentiality !== "Confidencial");
             const isMine = request.requestedById === user.id;
             const hasResponse = request.response.trim().length > 0;
             const responder = collaborators.find((employee) => employee.id === request.respondedById);
@@ -6110,6 +6117,8 @@ export function RequestsView({
                   <span className={`status ${request.priority === "Critica" ? "dangerText" : ""}`}>{request.priority}</span>
                 </div>
                 <p>{request.message}</p>
+                <p className={request.receivedAt?'ok':'warn'}>{request.receivedAt?`Recepción confirmada por el servidor: ${new Date(request.receivedAt).toLocaleString('es-MX',{timeZone:'America/Mexico_City'})}`:'Guardada en este dispositivo; falta confirmación del servidor.'}</p>
+                {!request.receivedAt&&isMine&&<button className="primary" disabled={sending} onClick={async()=>{setSending(true);try{const received=await confirmRequestDelivery(request,internalRequests);setInternalRequests([received,...internalRequests.filter(r=>r.id!==received.id)]);setDeliveryError(false);setDeliveryMessage(`Recepción confirmada. Folio: ${received.id}`);}catch(e){setDeliveryError(true);setDeliveryMessage((e as Error).message);}finally{setSending(false);}}}>Reintentar envío y confirmar recepción</button>}
                 <small>
                   Estado: {request.status} · {request.confidentiality}
                   {isMine && !canAnswer && (
