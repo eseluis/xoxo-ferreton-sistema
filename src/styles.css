@@ -294,7 +294,7 @@ button:focus-visible {
 
 main {
   padding: 26px;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 .topbar {
@@ -2512,4 +2512,4 @@ textarea {
 
 .storeOpeningBoard {grid-column:1 / -1;min-width:0}.storeOpeningBoard > .openingCards {grid-template-columns:minmax(0,1fr)}.storeOpeningBoard .matrizOpeningSteps {grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
 
-.globalPriority > strong {flex-basis:100%;font-size:16px}.globalPriority > span {font-size:14px;line-height:1.5}
+.globalPriority > strong {flex-basis:100%;font-size:16px}.globalPriority > span {flex-basis:100%;min-width:0;font-size:14px;line-height:1.5}
