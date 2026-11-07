@@ -1,3 +1,4 @@
+import {AreaHandoverReminder} from "./AreaHandoverReminder";
 import {PriorityTasksCard} from "./PriorityTasksCard";
 import {confirmRequestDelivery} from "./requestDelivery";
 import {DailyAgendaCard} from "./DailyAgendaCard";
@@ -1987,6 +1988,7 @@ function App() {
   };
 
   const startDailyTask = (task: DailyTask) => {
+    if(task.systemKind === "area-handover" && (task.date!==todayKey() || workTimeAt()<task.start))return;
     if (task.startedAt && !task.pausedAt) return;
     if (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) return;
     persistDailyTasks(
@@ -2195,6 +2197,7 @@ function App() {
           </div>
         </header>
 
+        <AreaHandoverReminder user={user} onNavigate={navigate} onTasks={tasks=>setDailyTasks(previous=>[...previous.filter(t=>!tasks.some(next=>next.id===t.id)),...tasks])}/>
         <StoreOverview day={today} />
         <DailyPlanCapture user={user} day={today} branch={currentWorkLocation} schedules={activitySchedules} cleaning={cleaningRole} enabled={dataHydrated && Boolean(myAttendance?.in)} />
         {view === "calendario" && <OperationCalendarView user={user} collaborators={collaborators} today={today} runs={scopeRows(activityRuns)} tasks={scopeRows(dailyTasks)} schedules={activitySchedules} cleaning={cleaningRole} locations={workLocations} onNavigate={navigate} />}
@@ -3297,6 +3300,7 @@ export function AttendanceView({
         <div className="taskList">
           {dailyTasks.length ? (
             dailyTasks.map((task) => {
+              const handoverEarly = task.systemKind === "area-handover" && workTimeAt()<task.start;
               const sla = task.slaMinutes ?? Math.max(15, timeToMinutes(task.end) - timeToMinutes(task.start));
               const status = task.completedAt
                 ? task.status
@@ -3337,10 +3341,11 @@ export function AttendanceView({
                   </div>
                   {task.processId && <label className="taskDelivery">Resultado para entregar<textarea value={task.deliveryNote ?? ""} disabled={task.paused} onChange={(event) => updateTask(task.id, { deliveryNote: event.target.value })} placeholder="Resume lo realizado, el resultado y la evidencia entregada (mínimo 10 caracteres)." /></label>}
                   {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
+                  {handoverEarly&&<p className="muted">Esta entrega se habilita a las {task.start}, cinco minutos antes de tu salida.</p>}
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
                     {(!task.startedAt || !!task.pausedAt) && (
-                      <button className="ghost compact" disabled={(task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
+                      <button className="ghost compact" disabled={handoverEarly || (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
                         {task.pausedAt ? "Retomar tarea" : "Iniciar tarea"}
                       </button>
                     )}

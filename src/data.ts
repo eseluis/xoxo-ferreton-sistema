@@ -106,6 +106,7 @@ export type CleaningRole = {
 };
 
 export type DailyTask = {
+  systemKind?: "area-handover";
   id: string;
   title: string;
   employeeId: string;
