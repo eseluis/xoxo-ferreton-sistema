@@ -49,7 +49,7 @@ end $$;
 revoke all on function area_handover_write_guard() from public,anon,authenticated;
 drop trigger if exists area_handover_evidence_guard on daily_task_records;create trigger area_handover_evidence_guard before insert or update on daily_task_records for each row execute function area_handover_write_guard();
 create or replace function public.validate_assigned_task_schedule()
-returns trigger language plpgsql security definer set search_path=public as $
+returns trigger language plpgsql security definer set search_path=public as $$
 begin
   if new.payload->>'removedAt' is not null or new.payload->>'completedAt' is not null
     or new.payload->>'status'='Completada' then return new; end if;
@@ -59,40 +59,8 @@ begin
         is not distinct from (new.payload->>'employeeId',new.payload->>'date',new.payload->>'start',new.payload->>'end')
     then return new; end if;
   end if;
-  if coalesce(new.payload->>'start','') !~ '^([01][0-9]|2[0-3]):[0-5][0-9] y agrega la obligación diaria a su reconciliación normal.
-do $$begin if to_regprocedure('area_handover_base_capture()') is null then alter function staff_capture_today_plans() rename to area_handover_base_capture;end if;end $$;
-revoke all on function area_handover_base_capture() from public,anon,authenticated;
-create or replace function staff_capture_today_plans() returns void language plpgsql security definer set search_path=public as $$begin perform area_handover_base_capture();perform area_handover_reconcile();end $$;
-revoke all on function staff_capture_today_plans() from public,anon,authenticated;
-create or replace function area_handover_context() returns jsonb language plpgsql security definer set search_path=public as $$
-declare actor profiles:=current_profile();day date:=(now() at time zone 'America/Mexico_City')::date;result jsonb;
-begin
- if actor.employee_number is null then raise exception 'Sesión requerida';end if;
- perform area_handover_reconcile();
- select coalesce(jsonb_agg(payload order by employee_number),'[]') into result from daily_task_records where record_date=day and record_id like 'area-handover-%' and (employee_number=actor.employee_number or actor.employee_number in('001','002','003'));
- return jsonb_build_object('day',day,'clock',to_char(now() at time zone 'America/Mexico_City','HH24:MI'),'tasks',result);
-end $$;
-revoke all on function area_handover_context() from public,anon;grant execute on function area_handover_context() to authenticated;
-select area_handover_reconcile();
-notify pgrst,'reload schema';commit;
-
-    or coalesce(new.payload->>'end','') !~ '^([01][0-9]|2[0-3]):[0-5][0-9] y agrega la obligación diaria a su reconciliación normal.
-do $$begin if to_regprocedure('area_handover_base_capture()') is null then alter function staff_capture_today_plans() rename to area_handover_base_capture;end if;end $$;
-revoke all on function area_handover_base_capture() from public,anon,authenticated;
-create or replace function staff_capture_today_plans() returns void language plpgsql security definer set search_path=public as $$begin perform area_handover_base_capture();perform area_handover_reconcile();end $$;
-revoke all on function staff_capture_today_plans() from public,anon,authenticated;
-create or replace function area_handover_context() returns jsonb language plpgsql security definer set search_path=public as $$
-declare actor profiles:=current_profile();day date:=(now() at time zone 'America/Mexico_City')::date;result jsonb;
-begin
- if actor.employee_number is null then raise exception 'Sesión requerida';end if;
- perform area_handover_reconcile();
- select coalesce(jsonb_agg(payload order by employee_number),'[]') into result from daily_task_records where record_date=day and record_id like 'area-handover-%' and (employee_number=actor.employee_number or actor.employee_number in('001','002','003'));
- return jsonb_build_object('day',day,'clock',to_char(now() at time zone 'America/Mexico_City','HH24:MI'),'tasks',result);
-end $$;
-revoke all on function area_handover_context() from public,anon;grant execute on function area_handover_context() to authenticated;
-select area_handover_reconcile();
-notify pgrst,'reload schema';commit;
-
+  if coalesce(new.payload->>'start','') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+    or coalesce(new.payload->>'end','') !~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'
     or (new.payload->>'end') <= (new.payload->>'start') then
     raise exception 'Indica un horario válido: la hora final debe ser posterior a la inicial.';
   end if;
@@ -112,7 +80,7 @@ notify pgrst,'reload schema';commit;
     raise exception 'El colaborador ya tiene una tarea asignada en ese horario. Solo se permite una tarea adicional; cambia el horario o retira la anterior.';
   end if;
   return new;
-end $;
+end $$;
 -- Mantiene el capturador existente y agrega la obligación diaria a su reconciliación normal.
 do $$begin if to_regprocedure('area_handover_base_capture()') is null then alter function staff_capture_today_plans() rename to area_handover_base_capture;end if;end $$;
 revoke all on function area_handover_base_capture() from public,anon,authenticated;
