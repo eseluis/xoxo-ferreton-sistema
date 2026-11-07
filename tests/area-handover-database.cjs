@@ -35,7 +35,7 @@ const {PGlite}=require('@electric-sql/pglite');
   const context=async()=> (await db.query("select cleaning_deadline_context('2026-11-06') c")).rows[0].c;
   const action=async(a,phase=null,photo=null)=>(await db.query('select cleaning_run_action($1,$2,$3,$4) c',['Aseo-Barrer atrás',a,phase,photo===null?null:JSON.stringify(photo)])).rows[0].c;
 
-  await db.exec('reset role');await db.exec(fs.readFileSync('supabase-daily-agenda-policy.sql','utf8').match(/create or replace function cleaning_exit_time[\s\S]*?\$\$;/)[0]);const freeze=s=>s.replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");
+  await db.exec('reset role');await db.exec(fs.readFileSync('supabase-daily-agenda-policy.sql','utf8').match(/create or replace function cleaning_exit_time[\s\S]*?\$\$;/)[0]);await db.exec(fs.readFileSync('supabase-fix-task-schedule.sql','utf8'));await db.exec("insert into daily_task_records(record_id,employee_number,branch,record_date,payload) values('existing-final-block','015','Matriz','2026-11-06','{\"employeeId\":\"015\",\"date\":\"2026-11-06\",\"start\":\"17:00\",\"end\":\"19:00\",\"status\":\"Pendiente\"}')");const freeze=s=>s.replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");
   await db.exec(freeze(fs.readFileSync('supabase-area-handover.sql','utf8')));await db.exec(freeze(fs.readFileSync('supabase-area-handover.sql','utf8')));
   const handover=async()=>(await db.query('select area_handover_context() c')).rows[0].c;
   await who(15);let ctx=await handover();let task=ctx.tasks.find(t=>t.employeeId==='015');assert.equal(task.start,'18:55');assert.equal(task.end,'19:00');assert.equal(task.requiresPhoto,true);assert.equal(ctx.tasks.length,1);
@@ -51,7 +51,7 @@ const {PGlite}=require('@electric-sql/pglite');
   await who(3);ctx=await handover();assert.ok(ctx.tasks.every(t=>!['003','005','007','013','014'].includes(t.employeeId)));assert.ok(ctx.tasks.some(t=>t.employeeId==='011'));assert.equal(ctx.tasks.find(t=>t.employeeId==='015').status,'Completada');
   await db.exec('reset role');await clock('2026-11-07 10:00:00');await db.exec(`update app_state set value='[{"id":"015","shift":"A","weekdayShiftEnds":{"6":"18:00"}},{"id":"008","shift":"A"},{"id":"011","shift":"B"}]' where key='xoxo.collaborators'`);await who(15);task=(await handover()).tasks[0];assert.equal(task.date,'2026-11-07');assert.equal(task.start,'17:55');assert.equal(task.status,'Pendiente');assert.equal(task.beforeEvidenceCapture,undefined);
   await who(8);assert.equal((await handover()).tasks.length,0,'Sabina rests Saturday');
-  await db.exec('reset role');assert.equal((await db.query("select count(*) n from daily_task_records where record_date='2026-11-06' and employee_number='015'")).rows[0].n,1);
+  await db.exec('reset role');assert.equal((await db.query("select count(*) n from daily_task_records where record_date='2026-11-06' and employee_number='015' and record_id like 'area-handover-%'")).rows[0].n,1);
   console.log('PASS: daily per-head handover, stores, configured/day exit changes, five-minute gate, photo enforcement, previous day evidence denied, validation pending, idempotence, rest days and preserved history');
  }finally{await db.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

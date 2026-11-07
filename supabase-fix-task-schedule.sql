@@ -16,10 +16,12 @@ begin
     or (new.payload->>'end') <= (new.payload->>'start') then
     raise exception 'Indica un horario válido: la hora final debe ser posterior a la inicial.';
   end if;
+  if new.payload->>'systemKind'='area-handover' and new.record_id='area-handover-'||new.record_date||'-'||new.employee_number then return new;end if;
   perform pg_advisory_xact_lock(hashtextextended('xoxo.assigned-task-schedule',0));
   if exists (
     select 1 from public.daily_task_records other
     where other.record_id<>new.record_id
+      and not (coalesce(other.payload->>'systemKind','')='area-handover' and other.record_id='area-handover-'||other.record_date||'-'||other.employee_number)
       and other.payload->>'employeeId'=new.payload->>'employeeId'
       and other.payload->>'date'=new.payload->>'date'
       and other.payload->>'removedAt' is null and other.payload->>'completedAt' is null
