@@ -60,7 +60,7 @@ export function findSlotRun<T extends { itemType: string; itemId: string; comple
 
 export function resolveRoutine(rows:ActivitySchedule[]):ActivitySchedule[]{
  const minutes=(t:string)=>Number(t.slice(0,2))*60+Number(t.slice(3));const time=(m:number)=>`${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
- const rank=(r:ActivitySchedule)=>r.agendaPriority??(r.id==='matriz-invewin-configuracion'?90:0);
+ const rank=(r:ActivitySchedule)=>r.agendaPriority??(r.id==='matriz-invewin-configuracion'?90:r.sharedRoutine?30:0);
  return rows.flatMap(row=>{if(isCleaningSchedule(row))return [row];let parts=[[minutes(row.start),minutes(row.end)]];
  for(const block of rows.filter(b=>b.id!==row.id&&!isCleaningSchedule(b)&&rank(b)>rank(row))){const a=minutes(block.start),z=minutes(block.end);parts=parts.flatMap(([s,e])=>z<=s||a>=e?[[s,e]]:[[s,Math.min(e,a)],[Math.max(s,z),e]].filter(([x,y])=>y>x));}
  return parts.map(([s,e])=>({...row,id:s===minutes(row.start)&&e===minutes(row.end)?row.id:`${row.id}~${time(s).replace(':','')}-${time(e).replace(':','')}`,start:time(s),end:time(e),durationMinutes:e-s}));

@@ -26,7 +26,7 @@ begin
  perform staff_capture_today_plans();dates:=weekly_report_dates(person,today);
  select coalesce(due_day,(select (v->>'due')::date from jsonb_array_elements(dates)v where v->>'submitted'='false' order by v->>'due' limit 1),today) into due;
  if not exists(select 1 from jsonb_array_elements(dates)v where v->>'due'=due::text) then return jsonb_build_object('today',today,'employeeId',person,'dates',dates,'people','[]'::jsonb,'rows','[]'::jsonb);end if;
- info:=staff_cycle(person,due);first_day:=greatest((info->>'start')::date,(select activated_on from weekly_report_settings where id));
+ info:=staff_cycle(person,due);first_day:=(info->>'start')::date;
  report:=staff_cycle_report(person,first_day,least(due,today),now() at time zone 'America/Mexico_City');
  select coalesce(jsonb_agg(jsonb_build_object('record_id',record_id,'employee_number',employee_number,'branch',branch,'record_date',record_date,'cycle_start',cycle_start,'rest_date',rest_date,'submitted_at',submitted_at,'status',payload->>'status','version',version,'reviewNote',payload->>'reviewNote') order by submitted_at desc),'[]') into rows from (select * from staff_weekly_reports where employee_number=person order by submitted_at desc limit 52)r;
  select coalesce(jsonb_agg(jsonb_build_object('id',employee_number,'name',display_name) order by display_name),'[]') into people from profiles where active and display_name<>'Vacante' and (employee_number=actor or staff_can_review(employee_number));

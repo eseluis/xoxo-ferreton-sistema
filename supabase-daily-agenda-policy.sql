@@ -8,9 +8,9 @@ declare row jsonb;block jsonb;part jsonb;parts jsonb;next_parts jsonb;result jso
 begin
  for row in select value from jsonb_array_elements(rows) loop
   if lower(row->>'area') like '%aseo%' then result:=result||jsonb_build_array(row);continue;end if;
-  own_rank:=coalesce((row->>'agendaPriority')::integer,case when row->>'id'='matriz-invewin-configuracion' then 90 else 0 end);parts:=jsonb_build_array(jsonb_build_array(row->>'start',row->>'end'));
+  own_rank:=coalesce((row->>'agendaPriority')::integer,case when row->>'id'='matriz-invewin-configuracion' then 90 when row->>'sharedRoutine'='true' then 30 else 0 end);parts:=jsonb_build_array(jsonb_build_array(row->>'start',row->>'end'));
   for block in select value from jsonb_array_elements(rows) where value->>'id'<>row->>'id' and lower(value->>'area') not like '%aseo%' loop
-   other_rank:=coalesce((block->>'agendaPriority')::integer,case when block->>'id'='matriz-invewin-configuracion' then 90 else 0 end);if other_rank<=own_rank then continue;end if;
+   other_rank:=coalesce((block->>'agendaPriority')::integer,case when block->>'id'='matriz-invewin-configuracion' then 90 when block->>'sharedRoutine'='true' then 30 else 0 end);if other_rank<=own_rank then continue;end if;
    a:=block->>'start';z:=block->>'end';next_parts:='[]';
    for part in select value from jsonb_array_elements(parts) loop s:=part->>0;e:=part->>1;
     if z<=s or a>=e then next_parts:=next_parts||jsonb_build_array(part);else
