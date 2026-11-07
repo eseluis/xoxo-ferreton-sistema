@@ -106,6 +106,9 @@ export type CleaningRole = {
 };
 
 export type DailyTask = {
+  workflowKind?: "lummi-review"|"lummi-entry"|"lummi-display"|"lummi-demo";
+  dependsOnTaskIds?: string[];
+  reviewConfirmed?: boolean; invoiceReference?: string; pricesConfirmed?: boolean; exhibitedQuantity?: string; storedQuantity?: string; demoProduct1?: string; demoProduct2?: string;
   systemKind?: "area-handover";
   id: string;
   title: string;

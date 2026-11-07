@@ -1,3 +1,5 @@
+import {TeamTaskNotifications,TeamTaskFields,TeamTaskSummary,canCompleteLummi,type DependencyState} from "./TeamTaskWorkflow";
+import {effectiveWorkShift} from "./effectiveWorkShift";
 import {AreaHandoverReminder} from "./AreaHandoverReminder";
 import {PriorityTasksCard} from "./PriorityTasksCard";
 import {confirmRequestDelivery} from "./requestDelivery";
@@ -800,6 +802,7 @@ function App() {
   const [processAudits, setProcessAudits] = useState<ProcessAudit[]>(() => load("xoxo.processAudits", []));
   const [branchOpenings, setBranchOpenings] = useState<BranchOpening[]>(() => load("xoxo.branchOpenings", []));
   const [warranties, setWarranties] = useState<Warranty[]>(() => load("xoxo.warranties", []));
+  const [dependencyStatus,setDependencyStatus]=useState<Record<string,DependencyState>>({});
   const [dailyTasks, setDailyTasks] = useState<DailyTask[]>(() => load("xoxo.dailyTasks", []));
   const [processInstances, setProcessInstances] = useState<ProcessInstance[]>(() => load("xoxo.processInstances", []));
   const [internalRequests, setInternalRequests] = useState<InternalRequest[]>(() => load("xoxo.internalRequests", []));
@@ -1988,6 +1991,7 @@ function App() {
   };
 
   const startDailyTask = (task: DailyTask) => {
+    if(task.dependsOnTaskIds?.length && dependencyStatus[task.id]?.ready!==true)return;
     if(task.systemKind === "area-handover" && (task.date!==todayKey() || workTimeAt()<task.start))return;
     if (task.startedAt && !task.pausedAt) return;
     if (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) return;
@@ -2197,6 +2201,7 @@ function App() {
           </div>
         </header>
 
+        <TeamTaskNotifications onStatus={setDependencyStatus}/>
         <AreaHandoverReminder user={user} onNavigate={navigate} onTasks={tasks=>setDailyTasks(previous=>[...previous.filter(t=>!tasks.some(next=>next.id===t.id)),...tasks])}/>
         <StoreOverview day={today} />
         <DailyPlanCapture user={user} day={today} branch={currentWorkLocation} schedules={activitySchedules} cleaning={cleaningRole} enabled={dataHydrated && Boolean(myAttendance?.in)} />
@@ -2245,7 +2250,7 @@ function App() {
             updateAttendance={updateAttendance}
             registerAttendanceFor={registerAttendanceFor}
             myEval={myEval}
-            shift={{ ...shiftMap[user.shift], ...workLocations.find(item => item.employeeId === user.id && item.date === today) }}
+            shift={effectiveWorkShift(user,shiftMap[user.shift],currentWorkLocation,today,workLocations.find(item=>item.employeeId===user.id&&item.date===today))}
             activitySchedules={activitySchedules}
             workLocation={workLocations.find((item) => item.employeeId === user.id && item.date === today)?.location ?? user.branch}
             cleaningAssignment={currentWorkLocation === "Sucursal Centro" ? "Consulta tu agenda dinámica en Operación Centro" : currentCleaningAssignment}
@@ -2255,6 +2260,7 @@ function App() {
             allDailyTasks={scopeRows(dailyTasks)}
             setDailyTasks={persistDailyTasks}
             startDailyTask={startDailyTask}
+            dependencyStatus={dependencyStatus}
             activityRuns={scopeRows(activityRuns)}
             startActivityRun={startActivityRun}
             completeActivityRun={completeActivityRun}
@@ -2582,11 +2588,11 @@ function profileFor(role: Role) {
   return roleProfiles.find((profile) => profile.role === role);
 }
 
-export function TaskDescription({ task, onNavigate }: { task: Pick<DailyTask, "notes" | "requiresPhoto" | "processId">; onNavigate?: (view: string) => void }) {
+export function TaskDescription({ task, onNavigate }: { task: Pick<DailyTask, "notes" | "requiresPhoto" | "processId"> & Partial<DailyTask>; onNavigate?: (view: string) => void }) {
   const process = processes.find((item) => item.id === task.processId);
   const evidenceNames: Record<string, string> = { none: "Sin evidencia especial", photo: "Foto", signature: "Registro de confirmación", ticket: "Ticket o folio" };
   const targetView = task.processId === "apertura" ? "panel" : task.processId === "apertura-centro" ? "operacion-centro" : undefined;
-  return <div className="taskDescription"><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}{process && <div className="taskProcessGuide"><h3>Proceso: {process.name}</h3><p>{process.area} · Si hay un problema: {process.notifyOnFailure}. Riesgo: {process.risk}</p><ol>{process.steps.map((step, index) => <li key={`${step.title}-${index}`}><strong>{step.title}</strong><small>{step.owner} · {step.time} · {evidenceNames[step.evidence] ?? step.evidence}</small></li>)}</ol>{targetView && onNavigate && <button type="button" className="ghost compact" onClick={() => onNavigate(targetView)}>{task.processId === "apertura" ? "Abrir checklist de apertura" : "Abrir Operación Centro"}</button>}</div>}</div>;
+  return <div className="taskDescription"><TeamTaskSummary task={task}/><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}{process && <div className="taskProcessGuide"><h3>Proceso: {process.name}</h3><p>{process.area} · Si hay un problema: {process.notifyOnFailure}. Riesgo: {process.risk}</p><ol>{process.steps.map((step, index) => <li key={`${step.title}-${index}`}><strong>{step.title}</strong><small>{step.owner} · {step.time} · {evidenceNames[step.evidence] ?? step.evidence}</small></li>)}</ol>{targetView && onNavigate && <button type="button" className="ghost compact" onClick={() => onNavigate(targetView)}>{task.processId === "apertura" ? "Abrir checklist de apertura" : "Abrir Operación Centro"}</button>}</div>}</div>;
 }
 
 export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, cleaningRows, shift, onNavigate }: {
@@ -2709,7 +2715,7 @@ function Dashboard({
   const breachedNow = breachedTasks.length + breachedRuns.length;
   const locationFor = (employee: Employee) => workLocations.find((item) => item.employeeId === employee.id && item.date === today)?.location ?? employee.branch;
   const ownSequence = workSequenceFor(user, today, locationFor(user), activitySchedules, dailyTasks, cleaningRole);
-  const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} cleaningRows={cleaningRole} shift={shiftMap[user.shift]} onNavigate={onNavigate} />;
+  const myWorkFocus = <MyWorkFocus user={user} date={oaxacaDateKey()} location={locationFor(user)} schedules={activitySchedules} tasks={dailyTasks} runs={activityRuns} cleaning={getEditableCleaningRow(user, cleaningRole, locationFor(user))} cleaningRows={cleaningRole} shift={effectiveWorkShift(user,shiftMap[user.shift],locationFor(user),today)} onNavigate={onNavigate} />;
   const openingBoard = <StoreOpeningBoard user={{...user, branch:locationFor(user)}} today={today} cashSessions={cashSessions} cashCuts={cashCuts} checks={storeOpeningChecks} attendance={attendance} collaborators={collaborators.map(employee => ({...employee, branch:locationFor(employee)}))} onUpdate={updateStoreOpening} onOpenCash={()=>onNavigate("caja")}/>;
   if (user.role === "AUXILIAR") {
     const myTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
@@ -2717,7 +2723,8 @@ function Dashboard({
     const myEvaluation = todaysEvaluations.find((entry) => entry.employeeId === user.id);
     const myAverage = myEvaluation ? myEvaluation.scores.reduce((sum, score) => sum + score, 0) / myEvaluation.scores.length : 0;
     const myCleaning = getEditableCleaningAssignment(user, cleaningRole, locationFor(user));
-    const myShift = shiftConfigs.find((shift) => shift.key === user.shift);
+    const baseShift = shiftConfigs.find((shift) => shift.key === user.shift);
+    const myShift = baseShift?effectiveWorkShift(user,baseShift,locationFor(user),today):undefined;
     // Un auxiliar no veía cuántos compañeros de su misma sucursal ya estaban trabajando hoy;
     // esta cuenta no depende de permisos especiales, sólo de asistencia y colaboradores, que
     // ya llegan a todos los roles.
@@ -3095,6 +3102,7 @@ export function AttendanceView({
   allDailyTasks,
   setDailyTasks,
   startDailyTask,
+  dependencyStatus = {},
   activityRuns,
   startActivityRun,
   completeActivityRun,
@@ -3122,6 +3130,7 @@ export function AttendanceView({
   dailyTasks: DailyTask[];
   allDailyTasks: DailyTask[];
   setDailyTasks: (value: DailyTask[]) => void;
+  dependencyStatus?: Record<string,DependencyState>;
   startDailyTask: (task: DailyTask) => void;
   activityRuns: ActivityRun[];
   startActivityRun: (item: {
@@ -3341,11 +3350,13 @@ export function AttendanceView({
                   </div>
                   {task.processId && <label className="taskDelivery">Resultado para entregar<textarea value={task.deliveryNote ?? ""} disabled={task.paused} onChange={(event) => updateTask(task.id, { deliveryNote: event.target.value })} placeholder="Resume lo realizado, el resultado y la evidencia entregada (mínimo 10 caracteres)." /></label>}
                   {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
+                  {task.workflowKind&&<TeamTaskFields task={task} onUpdate={patch=>updateTask(task.id,patch)}/>}
+                  {task.dependsOnTaskIds?.length&&<p>{dependencyStatus[task.id]?.ready?"Notificación recibida: etapa anterior terminada.":"En espera de la etapa anterior del equipo; no iniciar todavía."}</p>}
                   {handoverEarly&&<p className="muted">Esta entrega se habilita a las {task.start}, cinco minutos antes de tu salida.</p>}
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
                     {(!task.startedAt || !!task.pausedAt) && (
-                      <button className="ghost compact" disabled={handoverEarly || (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
+                      <button className="ghost compact" disabled={Boolean(task.dependsOnTaskIds?.length && dependencyStatus[task.id]?.ready!==true) || handoverEarly || (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
                         {task.pausedAt ? "Retomar tarea" : "Iniciar tarea"}
                       </button>
                     )}
@@ -3356,7 +3367,7 @@ export function AttendanceView({
                     >
                       Reportar incidencia y pausar
                     </button>
-                    <button className="primary compact" disabled={task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) || Boolean(task.processId && (task.deliveryNote ?? "").trim().length < 10)} onClick={() => completeTask(task)}>
+                    <button className="primary compact" disabled={!canCompleteLummi(task) || task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) || Boolean(task.processId && (task.deliveryNote ?? "").trim().length < 10)} onClick={() => completeTask(task)}>
                       Marcar completada
                     </button>
                   </div>

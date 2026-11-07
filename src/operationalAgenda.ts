@@ -24,7 +24,9 @@ export function routineFor(employee: Employee, schedules: ActivitySchedule[], br
   const targeted = base.filter(item => item.employeeIds?.includes(employee.id));
   const result=[...(targeted.length ? targeted : base.filter(item => !item.employeeIds?.length && item.ownerRoles.includes(employee.role))), ...shared];
   const project=shared.find(item=>item.id==="matriz-invewin-configuracion");
-  return resolveRoutine(project?result.map(item=>item.id==="matriz-operacion-programada"?{...item,start:project.end,durationMinutes:(Number(item.end.slice(0,2))*60+Number(item.end.slice(3)))-(Number(project.end.slice(0,2))*60+Number(project.end.slice(3)))}:item):result);
+  const resolved=resolveRoutine(project?result.map(item=>item.id==="matriz-operacion-programada"?{...item,start:project.end,durationMinutes:(Number(item.end.slice(0,2))*60+Number(item.end.slice(3)))-(Number(project.end.slice(0,2))*60+Number(project.end.slice(3)))}:item):result);
+  if(branch!=="Matriz"||!day||day<"2026-11-08"||weekday!==0)return resolved;
+  return resolved.flatMap(item=>{if(isCleaningSchedule(item))return [item];const start=item.start<"09:00"?"09:00":item.start,end=item.end>"15:00"?"15:00":item.end;if(start>=end)return [];return [{...item,start,end,durationMinutes:(Number(end.slice(0,2))*60+Number(end.slice(3)))-(Number(start.slice(0,2))*60+Number(start.slice(3)))}];});
 }
 // Only explicit references to the daily cleaning role, or matching generic blocks,
 // are aliases. Mixed display/merchandising activities remain separate obligations.
