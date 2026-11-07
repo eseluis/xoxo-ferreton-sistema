@@ -2337,7 +2337,7 @@ textarea {
 .taskDelivery { display: block; margin: 12px 0; }
 .taskDelivery textarea { width: 100%; min-height: 90px; margin-top: 6px; }
 /* Daily branch operations share the existing panel's colors and controls. */
-.globalPriority { display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; margin-bottom:16px; border:1px solid #f4c766; border-radius:14px; background:#fff7e6; color:#513809; }
+.globalPriority { position:sticky; top:8px; z-index:30; display:flex; align-items:center; gap:12px; flex-wrap:wrap; padding:14px 18px; margin-bottom:16px; border:1px solid #f4c766; border-radius:14px; background:#fff7e6; color:#513809; }
 .globalPriority span { font-size:12px; flex:1; min-width:180px; }
 .centroOperation { display:grid; gap:18px; min-width:0; }
 .centroHero { display:flex; justify-content:space-between; gap:24px; align-items:center; border-left:5px solid #ef9b18; }
@@ -2511,3 +2511,5 @@ textarea {
 .dailyAgendaCard {grid-column:1 / -1;min-width:0}.dailyAgendaCard td {vertical-align:top}.dailyAgendaCard td:first-child {white-space:nowrap}
 
 .storeOpeningBoard {grid-column:1 / -1;min-width:0}.storeOpeningBoard > .openingCards {grid-template-columns:minmax(0,1fr)}.storeOpeningBoard .matrizOpeningSteps {grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+
+.globalPriority > strong {flex-basis:100%;font-size:16px}.globalPriority > span {font-size:14px;line-height:1.5}
