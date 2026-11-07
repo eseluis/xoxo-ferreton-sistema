@@ -14,6 +14,6 @@ Administradores, 001/002/003 y Julio (009) pueden ejecutar los cuatro pasos y re
 
 ## Instalación y verificación
 
-Después de las migraciones existentes: `supabase-weekly-reports.sql`, `supabase-daily-agenda-policy.sql`, `supabase-opening-coverage.sql`. Para ejecutarlas desde SQL Editor con el guard de configuración, establecer dentro de la transacción la identidad del usuario autorizado de Dirección antes de las actualizaciones de app_state; no se incluyen credenciales en los archivos. Son idempotentes. No se borra información operacional.
+Después de las migraciones existentes: `supabase-weekly-reports.sql`, `supabase-daily-agenda-policy.sql`, `supabase-opening-coverage.sql`, y `supabase-daily-agenda-reconcile.sql`. El último ajusta sólo bloques futuros sin iniciar de hoy, conserva aseos y trabajo iniciado, y guarda el plan anterior en `daily_agenda_revisions`. Para ejecutarlas desde SQL Editor con el guard de configuración, establecer dentro de la transacción la identidad del usuario autorizado de Dirección antes de las actualizaciones de app_state; no se incluyen credenciales en los archivos. Son idempotentes. No se borra información operacional.
 
 `npm run check`, `npm run test:daily-operations`, `npm run test:permissions`, `npm run test:opening`, `npm run test:system-kpis`, `npm run test:invewin`. Las pruebas usan PGlite y datos ficticios, nunca checadas, reportes ni aperturas reales en producción.
