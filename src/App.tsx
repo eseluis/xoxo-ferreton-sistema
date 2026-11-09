@@ -1,3 +1,7 @@
+import {CleaningRecoveryReview} from "./CleaningRecoveryReview";
+import {ActionFeedback,showActionError} from "./ActionFeedback";
+import {ClosingRecovery} from "./ClosingRecovery";
+import {taskCompletionProblems} from "./completionProblems";
 import {TeamTaskNotifications,TeamTaskFields,TeamTaskSummary,canCompleteLummi,type DependencyState} from "./TeamTaskWorkflow";
 import {effectiveWorkShift} from "./effectiveWorkShift";
 import {AreaHandoverReminder} from "./AreaHandoverReminder";
@@ -764,6 +768,7 @@ function App() {
     const listener = (event: Event) => {
       const { key, error } = (event as CustomEvent<{ key: string; error: string }>).detail;
       setSyncErrors((previous) => ({ ...previous, [key]: error }));
+      if(error)showActionError(error,"No se confirmó el guardado");
     };
     window.addEventListener("xoxo-sync", listener);
     return () => window.removeEventListener("xoxo-sync", listener);
@@ -2201,6 +2206,8 @@ function App() {
           </div>
         </header>
 
+        <ActionFeedback/>
+        <ClosingRecovery onNavigate={navigate}/><CleaningRecoveryReview/>
         <TeamTaskNotifications onStatus={setDependencyStatus}/>
         <AreaHandoverReminder user={user} onNavigate={navigate} onTasks={tasks=>setDailyTasks(previous=>[...previous.filter(t=>!tasks.some(next=>next.id===t.id)),...tasks])}/>
         <StoreOverview day={today} />
@@ -3197,8 +3204,7 @@ export function AttendanceView({
     });
   };
   const completeTask = (task: DailyTask) => {
-    if (task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) return;
-    if (task.processId && (task.deliveryNote ?? "").trim().length < 10) return;
+    const problems=taskCompletionProblems(task);if(task.dependsOnTaskIds?.length&&dependencyStatus[task.id]?.ready!==true)problems.push("Espera la notificación: la etapa anterior del equipo aún no termina.");if(problems.length){showActionError(problems);return;}
     updateTask(task.id, { status: "Completada", completedAt: new Date().toISOString() });
   };
 
@@ -3356,7 +3362,7 @@ export function AttendanceView({
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
                     {(!task.startedAt || !!task.pausedAt) && (
-                      <button className="ghost compact" disabled={Boolean(task.dependsOnTaskIds?.length && dependencyStatus[task.id]?.ready!==true) || handoverEarly || (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) || Boolean(task.requiresPhoto && !task.beforeEvidenceCapture)} onClick={() => startDailyTask(task)}>
+                      <button className="ghost compact" onClick={()=>{const problems:string[]=[];if(handoverEarly)problems.push(`La entrega se libera a las ${task.start}, cinco minutos antes de tu salida.`);if(task.dependsOnTaskIds?.length&&dependencyStatus[task.id]?.ready!==true)problems.push("Espera la notificación de la etapa anterior del equipo.");if(task.requiresPhoto&&!task.beforeEvidenceCapture)problems.push("Falta la foto de antes de realizar la tarea.");if(task.paused&&!["Cliente","Seguridad"].includes(task.pauseReason??""))problems.push("La tarea requiere autorización de tu superior para reanudarse.");if(problems.length){showActionError(problems,"No se puede iniciar todavía");return;}startDailyTask(task);}}>
                         {task.pausedAt ? "Retomar tarea" : "Iniciar tarea"}
                       </button>
                     )}
@@ -3367,7 +3373,7 @@ export function AttendanceView({
                     >
                       Reportar incidencia y pausar
                     </button>
-                    <button className="primary compact" disabled={!canCompleteLummi(task) || task.paused || !task.startedAt || Boolean(task.requiresPhoto && (!task.beforeEvidenceCapture || !task.afterEvidenceCapture)) || Boolean(task.processId && (task.deliveryNote ?? "").trim().length < 10)} onClick={() => completeTask(task)}>
+                    <button className="primary compact" disabled={task.status==="Completada"} onClick={() => completeTask(task)}>
                       Marcar completada
                     </button>
                   </div>
@@ -3843,7 +3849,7 @@ function LiveActivityCard({
         <small>
           Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
-        {blockedReason&&<p className="calendarWarning" role="status">{blockedReason}</p>}{recovery&&!blockedReason&&<p className="warn">Recuperación habilitada desde tu salida programada. Conserva el incumplimiento del horario original; registra la salida real al terminar.</p>}
+        {blockedReason&&<p className="calendarWarning" role="status">{blockedReason}</p>}{recovery&&!blockedReason&&<p className="warn">Recuperación habilitada desde tu salida programada. Debes realizar nuevamente el aseo y tomar fotos nuevas de antes y después. El retraso se conserva; registra tu salida real al terminar.</p>}
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
         {(inProgress || needsRepair || run?.completedAt) && evidence === "photo" && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de iniciar el trabajo</strong><PhotoCapture label="Antes de la actividad" value={run?.beforeEvidenceCapture} readOnly={!!blockedReason||!!actionBusy||Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("before",value)} onClear={()=>onClearPhoto?.("before")}/></div><div><strong>2. Foto de cómo quedó</strong><PhotoCapture label="Después de la actividad" value={run?.afterEvidenceCapture} readOnly={!!blockedReason||!!actionBusy||Boolean(run?.completedAt && !needsRepair)} onCapture={(value)=>onCapturePhoto?.("after",value)} onClear={()=>onClearPhoto?.("after")}/></div></div>}
         {(inProgress || needsRepair) && needsEvidence && evidence !== "photo" && (
@@ -3858,12 +3864,12 @@ function LiveActivityCard({
       <div className="liveActivityActions">
         <span className={`statusPill ${slaClassName(status)}`}>{status}</span>
         {(!run?.startedAt || !!run?.pausedAt || isCleaning&&needsRepair) && (
-          <button className="ghost compact" disabled={!!blockedReason||actionBusy} onClick={onStart}>
+          <button className="ghost compact" disabled={actionBusy} onClick={()=>{if(blockedReason){showActionError(blockedReason);return;}onStart();}}>
             {actionBusy?"Confirmando…":recovery?"Retomar aseo fuera de horario":run?.pausedAt?"Retomar":isCleaning?"Iniciar aseo":"Iniciar"}
           </button>
         )}
         {inProgress && (
-          <button className="primary compact" disabled={!!blockedReason||actionBusy||!evidenceReady || !!run?.pausedAt} onClick={() => onComplete(run!.id)}>
+          <button className="primary compact" disabled={actionBusy} onClick={()=>{const problems:string[]=[];if(blockedReason)problems.push(blockedReason);if(run?.pausedAt)problems.push("Retoma la actividad antes de entregarla.");if(evidence==="photo"){if(!run?.beforeEvidenceCapture)problems.push("Falta la foto de antes de la actividad.");if(!run?.afterEvidenceCapture)problems.push("Falta la foto del resultado final.");}else if(!evidenceReady)problems.push("Falta adjuntar la evidencia requerida.");if(problems.length){showActionError(problems);return;}onComplete(run!.id);}}>
             Completar
           </button>
         )}
@@ -7044,3 +7050,4 @@ function StoreOverview({ day }: { day: string }) {
 function StoreBranchOptions({user, corporate = false}: {user: Employee; corporate?: boolean}) {
   return canViewAll(user) ? <>{corporate && <option>Corporativo</option>}<option>Matriz</option><option>Sucursal Centro</option></> : <option>{user.branch}</option>;
 }
+

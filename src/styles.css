@@ -2513,3 +2513,9 @@ textarea {
 .storeOpeningBoard {grid-column:1 / -1;min-width:0}.storeOpeningBoard > .openingCards {grid-template-columns:minmax(0,1fr)}.storeOpeningBoard .matrizOpeningSteps {grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
 
 .globalPriority > strong {flex-basis:100%;font-size:16px}.globalPriority > span {flex-basis:100%;min-width:0;font-size:14px;line-height:1.5}
+.actionFeedback { width:min(560px,calc(100vw - 32px)); max-height:85dvh; overflow:auto; border:2px solid #f5bd57; border-radius:18px; padding:24px; background:#12271d; color:#fff; box-shadow:0 18px 90px #0009; }
+.actionFeedback::backdrop { background:rgba(0,0,0,.72); }
+.actionFeedback h2 { margin-top:0; color:#ffe0a0; }
+.actionFeedback ul { padding-left:24px; }
+.actionFeedback li { margin:12px 0; line-height:1.5; }
+.actionFeedback button { width:100%; margin-top:12px; }
