@@ -28,6 +28,10 @@ const {PGlite}=require('@electric-sql/pglite');
   for(const f of ['supabase-fix-assignments.sql','supabase-fix-cleaning-evaluations.sql','supabase-centro-operation.sql','supabase-operation-calendar.sql'])await db.exec(fs.readFileSync(f,'utf8'));
   await db.exec(`create function work_branch(person text,day date) returns text language sql stable security definer as $$select branch from profiles where employee_number=person$$;select set_config('test.clock','2026-11-06 10:15:00',false);`);
   const sql=fs.readFileSync('supabase-weekly-permissions.sql','utf8').replaceAll("now()","(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");await db.exec(sql);await db.exec(sql);
+  const lockFix=fs.readFileSync('supabase-fix-cycle-lock-order.sql','utf8');await db.exec(lockFix);await db.exec(lockFix);
+  assert.match((await db.query("select pg_get_functiondef('staff_close_cycles(text)'::regprocedure) d")).rows[0].d,/staff_lock_cycle_set\(person\)/);
+  assert.match((await db.query("select pg_get_functiondef('staff_lock_cycle_set(text)'::regprocedure) d")).rows[0].d,/order by 1/);
+
   await db.exec(`grant usage on schema public,auth to authenticated;`);
   const who=async id=>db.exec(`reset role;select set_config('test.user','00000000-0000-0000-0000-${String(id).padStart(12,'0')}',false);set role authenticated;`);
   const ctx=async target=>(await db.query('select staff_permission_context($1) c',[target??null])).rows[0].c;

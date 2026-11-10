@@ -38,6 +38,15 @@ const {PGlite}=require('@electric-sql/pglite');
   const products=(count,start=0)=>Array.from({length:count},(_,i)=>({code:String(i+start).padStart(5,'0'),description:'Producto '+(i+start),price:25.50,saleQuantity:1}));
   await who(8);let c=await ctx();assert.equal(c.eligible,true);assert.equal(c.rows.length,1);assert.equal(c.rows[0].employee_number,'008');assert.equal(c.deadline,'2026-12-01');await assert.rejects(act('start'),/11:00/);
   await clock('2026-11-06 11:00:00');let r=await act('start');assert.equal(r.payload.status,'En curso');
+  const oldRun=(await db.query("select payload from activity_run_records where employee_number='008' and record_date='2026-11-06'")).rows[0].payload;
+  const sync=rows=>db.query("select sync_module_records('activityRuns',$1::jsonb)",[JSON.stringify(rows)]);
+  await assert.rejects(sync([{...oldRun,status:'Vencida',escalated:true}]),/proceso Invewin/);
+  await db.exec('reset role');const upsertFix=fs.readFileSync('supabase-fix-invewin-upsert.sql','utf8');await db.exec(upsertFix);await db.exec(upsertFix);await who(8);
+  await sync([{...oldRun,status:'Vencida',escalated:true}]);
+  assert.equal((await db.query("select payload->>'escalated' value from activity_run_records where record_id=$1",[oldRun.id])).rows[0].value,'true');
+  await assert.rejects(sync([{...oldRun,completedAt:'2026-11-06T18:00:00Z'}]),/proceso Invewin/);
+  await assert.rejects(sync([{...oldRun,id:'forged-invewin'}]),/proceso Invewin/);
+
   await assert.rejects(act('submit',{reference:'Reporte 01',confirmedInErp:true}),/50/);
   r=await act('save',{zoneType:'Anaquel',zone:'Electricidad 1',products:products(20),closed:false});const batch=r.payload.batches[0].id;assert.equal(r.payload.codeCount,20);
   await assert.rejects(act('save',{zoneType:'Muestrario',zone:'Electricidad 2',products:products(30,20),closed:true}),/Termina/);
