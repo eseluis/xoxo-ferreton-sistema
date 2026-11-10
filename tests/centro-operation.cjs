@@ -3,7 +3,7 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const assert = require('node:assert/strict');
 function load(path) { const exports = {}; vm.runInNewContext(ts.transpileModule(fs.readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, { exports }); return exports; }
-const { buildCentroAgenda, CENTRO_TASKS, centroCompletionError, centroSummary, isCentroSupervisor, cleaningFor } = load('src/centroOperation.ts');
+const { buildCentroAgenda, CENTRO_TASKS, centroCompletionError, centroSummary, isCentroSupervisor, canShowCentroOperation, cleaningFor } = load('src/centroOperation.ts');
 const { activeMinutes, resumePriority } = load('src/priorityPause.ts');
 const day = '2026-09-22';
 const worker = (id, role = 'AUXILIAR', overrides = {}) => ({ id, name: id, role, roleLabel: role, start: '08:50', end: '18:00', present: true, arrived: true, ...overrides });
@@ -56,3 +56,7 @@ const clock={startedAt:'2026-09-22T15:00:00Z',pausedAt:'2026-09-22T15:10:00Z',pa
 assert.equal(activeMinutes(clock,Date.parse('2026-09-22T16:00:00Z')),10);
 assert.equal(activeMinutes(resumePriority(clock,'2026-09-22T15:50:00Z'),Date.parse('2026-09-22T16:00:00Z')),20);
 console.log('PASS: Centro roles, coverage, transfers, reduced mode, inventory, metrics and priority pause clocks');
+
+for(const role of ['DIRECTOR','APODERADA_LEGAL','GERENTE_GENERAL','ADMIN_GENERAL']) assert.equal(canShowCentroOperation({id:'003',role,branch:'Matriz'},'Matriz'),true);
+assert.equal(canShowCentroOperation({id:'011',role:'JEFE_AREA',branch:'Matriz'},'Sucursal Centro'),true);
+assert.equal(canShowCentroOperation({id:'011',role:'JEFE_AREA',branch:'Matriz'},'Matriz'),false);

@@ -13,6 +13,12 @@ export const isCloudReady = Boolean(supabaseUrl && supabaseAnonKey);
 const pendingStorageKey = (key: string) => `xoxo.pending.${key}`;
 const pendingPrefix = "xoxo.pending.";
 
+export function cloudErrorMessage(error: unknown): string {
+  if (error && typeof error === "object" && "message" in error && typeof error.message === "string" && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return "No se pudo confirmar el guardado en la nube. Verifica tu conexión y vuelve a intentar.";
+}
+
 type PendingRecord<T> = {
   revision: string;
   value: T;
@@ -96,6 +102,7 @@ export function clearCloudPending(key: string, revision?: string) {
   const pending = pendingRecord(key);
   if (!pending || pending.revision === revision) {
     window.localStorage.removeItem(pendingStorageKey(key));
+    if (typeof window.dispatchEvent === "function") window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } }));
   }
 }
 export const supabase = isCloudReady
@@ -353,7 +360,9 @@ export function cloudSave(key: string, value: unknown, pendingChanges?: unknown[
   localVersions.set(key, (localVersions.get(key) ?? 0) + 1);
   if (incrementalModule(key) && Array.isArray(value)) rememberRows(key, value);
   const previous = mutationQueues.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(() => performCloudSave(key, value, changes));
+  const current = previous.catch(() => undefined).then(() => performCloudSave(key, value, changes)).catch(error => {
+    throw new Error(cloudErrorMessage(error));
+  });
   mutationQueues.set(key, current);
   void current.finally(() => {
     if (mutationQueues.get(key) === current) mutationQueues.delete(key);
@@ -373,8 +382,9 @@ export async function flushPendingCloudSaves(): Promise<void> {
       await cloudSave(key, pending.value, pending.changes);
       clearCloudPending(key, pending.revision);
       if (!pendingRecord(key)) window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } }));
-    } catch {
-      // Se conserva para el siguiente intento automático.
+    } catch (error) {
+      // Se conserva para el siguiente intento automático y se muestra la causa real.
+      window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: cloudErrorMessage(error) } }));
     }
   }));
 }

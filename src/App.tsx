@@ -764,11 +764,12 @@ function arrivalPunctuality(minutes: number): { label: string; className: string
 function App() {
   const [priorityBusy, setPriorityBusy] = useState(false);
   const [syncErrors, setSyncErrors] = useState<Record<string, string>>({});
+  const [syncRetryBusy, setSyncRetryBusy] = useState(false);
   useEffect(() => {
     const listener = (event: Event) => {
       const { key, error } = (event as CustomEvent<{ key: string; error: string }>).detail;
       setSyncErrors((previous) => ({ ...previous, [key]: error }));
-      if(error)showActionError(error,"No se confirmó el guardado");
+
     };
     window.addEventListener("xoxo-sync", listener);
     return () => window.removeEventListener("xoxo-sync", listener);
@@ -2110,6 +2111,7 @@ function App() {
         </div>
 
         <nav>
+          {canSeeCentro && <button className={view === "operacion-centro" ? "active" : ""} onClick={() => navigate("operacion-centro")}><Building2 size={18} /> Operación Sucursal Centro</button>}
           <button className={view === "calendario" ? "active" : ""} onClick={() => navigate("calendario")}><CalendarCheck size={18} /> Plan y calendario</button>
           <button className={view === "panel" ? "active" : ""} onClick={() => navigate("panel")}>
             <BarChart3 size={18} /> Panel
@@ -2189,7 +2191,7 @@ function App() {
       <main>
         {attendanceReceipt.message && <div className={`attendanceReceipt ${attendanceReceipt.error?"attendanceError":""}`} role={attendanceReceipt.error?"alert":"status"} aria-live="polite"><strong>{attendanceReceipt.message}</strong>{!attendanceReceipt.busy&&<button type="button" className="ghost" onClick={()=>void attendanceReaderRef.current?.refresh()}>Verificar recepción</button>}</div>}
         <div className="globalPriority" role="note" aria-label="Prioridad permanente de atención al cliente"><strong>EL CLIENTE ES PRIMERO, SIEMPRE</strong><span>Recibe y saluda al cliente de inmediato. Atiéndelo o canalízalo, asegurándote de que alguien lo reciba. Después retoma tu actividad asignada. La atención al cliente es vital durante toda la jornada.</span><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Cliente")}>Atender cliente</button><button className="ghost" disabled={priorityBusy} onClick={() => void pauseAllForPriority("Seguridad")}>Pausar por seguridad</button>{canSeeCentro && <button className="primary" onClick={() => navigate("operacion-centro")}>Operación Centro</button>}</div>
-        {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert"><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" onClick={() => window.location.reload()}>Reintentar y recargar</button></div>}
+        {Object.values(syncErrors).some(Boolean) && <div className="panelCard" role="alert" data-action-feedback><strong>Hay cambios pendientes de sincronizar. Aún no se confirma su recepción por otros colaboradores.</strong>{Object.entries(syncErrors).filter(([, error]) => error).map(([key, error]) => <p key={key}>{error}</p>)}<button className="ghost" disabled={syncRetryBusy} onClick={async () => { setSyncRetryBusy(true); try { await flushPendingCloudSaves(); } finally { setSyncRetryBusy(false); } }}>{syncRetryBusy ? "Reintentando…" : "Reintentar guardado"}</button></div>}
         <header className="topbar">
           <div>
             <div className="systemClock"><Clock size={18}/><span><strong>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(clockNow)}</strong><small>{new Intl.DateTimeFormat("es-MX",{timeZone:"America/Mexico_City",weekday:"long",day:"2-digit",month:"long",year:"numeric"}).format(clockNow)} · Oaxaca de Juárez</small></span></div>

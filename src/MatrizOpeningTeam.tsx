@@ -1,16 +1,17 @@
 import {useEffect,useRef,useState} from "react";
 import {supabase} from "./cloudStore";
+import {retryTransaction} from "./transactionRetry";
 import {canGovern,type Employee} from "./data";
 export type OpeningStep={id:string;step:string;title:string;description:string;start:string;end:string;employeeId:string;ownerName:string;status:string;version:number;preview?:boolean;ownerAvailable?:boolean;completedAt?:string;completedByName?:string;onTime?:boolean};
 export type OpeningTeamContext={applicable:boolean;required:boolean;legacyOpened:boolean;steps:OpeningStep[];owners:Record<string,string>;configVersion:number;canConfigure:boolean;canCover?:boolean;candidates:{id:string;name:string}[];clock:string;opening?:Record<string,unknown>};
 export function useMatrizOpening(day:string) {
- const [context,setContext]=useState<OpeningTeamContext>();const [error,setError]=useState("");const [busy,setBusy]=useState(false);const [revision,setRevision]=useState(0);const mutation=useRef(0);
+ const [context,setContext]=useState<OpeningTeamContext>();const [error,setError]=useState("");const [busy,setBusy]=useState(false);const [revision,setRevision]=useState(0);const mutation=useRef(0);const applying=useRef(false);
  useEffect(()=>{let alive=true,reading=false;const read=async()=>{if(reading||!supabase||document.visibilityState==="hidden")return;reading=true;const version=mutation.current;
-  try{const r=await supabase.rpc("matriz_opening_context",{day});if(r.error)throw r.error;if(alive&&version===mutation.current){setContext(r.data);setError("");}}
-  catch(e){if(alive)setError((e as Error).message);}finally{reading=false;}};
+  try{const r=await retryTransaction(()=>supabase!.rpc("matriz_opening_context",{day}));if(r.error)throw r.error;if(alive&&version===mutation.current){setContext(r.data);setError("");}}
+  catch(e){if(alive&&version===mutation.current)setError((e as Error).message);}finally{reading=false;}};
   void read();const timer=setInterval(()=>void read(),15000);const focus=()=>void read();window.addEventListener("focus",focus);window.addEventListener("matriz-opening-refresh",focus);document.addEventListener("visibilitychange",focus);
   return()=>{alive=false;clearInterval(timer);window.removeEventListener("focus",focus);window.removeEventListener("matriz-opening-refresh",focus);document.removeEventListener("visibilitychange",focus);};},[day,revision]);
- const apply=async(rpc:string,args:Record<string,unknown>)=>{if(!supabase)throw Error("Sin conexión para confirmar el paso");mutation.current++;setBusy(true);setError("");try{const r=await supabase.rpc(rpc,args);if(r.error)throw r.error;setContext(r.data);window.dispatchEvent(new Event("matriz-opening-refresh"));window.dispatchEvent(new CustomEvent("xoxo-sync",{detail:{key:"xoxo.storeOpeningChecks",error:""}}));return true;}catch(e){setError((e as Error).message);return false;}finally{setBusy(false);}};
+ const apply=async(rpc:string,args:Record<string,unknown>)=>{if(!supabase)throw Error("Sin conexión para confirmar el paso");if(applying.current)return false;applying.current=true;mutation.current++;setBusy(true);setError("");try{const r=await retryTransaction(()=>supabase!.rpc(rpc,args));if(r.error)throw r.error;setContext(r.data);window.dispatchEvent(new Event("matriz-opening-refresh"));window.dispatchEvent(new CustomEvent("xoxo-sync",{detail:{key:"xoxo.storeOpeningChecks",error:""}}));return true;}catch(e){setError((e as Error).message);return false;}finally{applying.current=false;setBusy(false);}};
  return {context,error,busy,refresh:()=>setRevision(n=>n+1),mark:(step:OpeningStep)=>apply("mark_matriz_opening_step",{step_id:step.step,expected_version:step.version}),save:(owners:Record<string,string>,version:number)=>apply("save_matriz_opening_owners",{owners,expected_version:version})};
 }
 export function canCoverOpening(user:Employee){return ["001","002","003","009"].includes(user.id)||["ADMIN_GENERAL","ADMIN_TIENDA"].includes(user.role);}

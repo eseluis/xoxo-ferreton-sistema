@@ -38,7 +38,7 @@ export function isCentroSupervisor(user: Pick<Employee, "id" | "role"> & Partial
   return (user.branch === "Sucursal Centro" && ["GERENTE_TIENDA", "ADMIN_TIENDA"].includes(user.role)) || ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL"].includes(user.role);
 }
 export function canShowCentroOperation(user: Parameters<typeof isCentroSupervisor>[0], location: string) {
-  return location !== "Matriz" && (location === "Sucursal Centro" || isCentroSupervisor(user));
+  return location === "Sucursal Centro" || isCentroSupervisor(user);
 }
 export const isControlRole = (role: Role) => ["APODERADA_LEGAL", "DIRECTOR", "GERENTE_GENERAL", "ADMIN_GENERAL", "GERENTE_TIENDA", "ADMIN_TIENDA"].includes(role);
 export function cleaningFor(day: string, part: number) {

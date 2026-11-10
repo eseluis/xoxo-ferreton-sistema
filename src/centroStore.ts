@@ -1,5 +1,6 @@
 import type { CleaningGate } from "./cleaningDeadline";
 import { supabase } from "./cloudStore";
+import { retryTransaction } from "./transactionRetry";
 import type { CentroPerson, CentroRecord, CentroAssignment } from "./centroOperation";
 
 export type CentroContext = { roster: CentroPerson[]; records: CentroRecord[]; previous: CentroRecord[]; assignments?: CentroAssignment[]; outsideBusy?: boolean; cleaningGates?: CleaningGate[] };
@@ -9,14 +10,14 @@ function message(error: { message: string; code?: string }) {
 }
 export async function fetchCentroContext(day: string): Promise<CentroContext> {
   if (!supabase) throw new Error("Sin conexión con el servidor.");
-  const { data, error } = await supabase.rpc("centro_context", { target_day: day });
+  const { data, error } = await retryTransaction(() => supabase!.rpc("centro_context", { target_day: day }));
   if (error) throw new Error(message(error));
   return data as CentroContext;
 }
 export type CentroAction = "start" | "save" | "pause" | "resume" | "submit" | "approve" | "reject";
 export async function saveCentroRecord(day: string, taskId: string, version: number, action: CentroAction, values: CentroRecord["data"], note = ""): Promise<CentroRecord> {
   if (!supabase) throw new Error("Sin conexión con el servidor.");
-  const { data, error } = await supabase.rpc("centro_update_task", { target_day: day, target_task: taskId, expected_version: version, task_action: action, task_data: values, action_note: note });
+  const { data, error } = await retryTransaction(() => supabase!.rpc("centro_update_task", { target_day: day, target_task: taskId, expected_version: version, task_action: action, task_data: values, action_note: note }));
   if (error) throw new Error(message(error));
   return data as CentroRecord;
 }

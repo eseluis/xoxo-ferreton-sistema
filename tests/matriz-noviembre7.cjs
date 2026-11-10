@@ -6,6 +6,6 @@ assert.equal(ex.priorityTasksFor({id:'015'},'Matriz','2026-11-07',rows).length,6
 console.log('PASS: 27 tasks, six Matriz collaborators, exact date, no assigned overlaps, meals excluded from evaluation, own/date/store priority visibility');
 
 let centroExports={};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/centroOperation.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:centroExports});
-for(const role of ['JEFE_AREA','AUXILIAR','CAJERO','GERENTE_TIENDA','GERENTE_GENERAL']){const u={id:'003',role,branch:'Matriz'};assert.equal(centroExports.canShowCentroOperation(u,'Matriz'),false);assert.equal(centroExports.canShowCentroOperation(u,'Sucursal Centro'),true);}
+for(const role of ['JEFE_AREA','AUXILIAR','CAJERO','GERENTE_TIENDA','GERENTE_GENERAL']){const u={id:'003',role,branch:'Matriz'};assert.equal(centroExports.canShowCentroOperation(u,'Matriz'),role==='GERENTE_GENERAL');assert.equal(centroExports.canShowCentroOperation(u,'Sucursal Centro'),true);}
 assert.equal(centroExports.canShowCentroOperation({id:'002',role:'DIRECTOR',branch:'Corporativo'},'Corporativo'),true);
-console.log('PASS: Matriz hides Centro for every role; daily transfers and corporate supervision retained');
+console.log('PASS: Centro retains corporate supervision from Matriz and daily transfer access');
