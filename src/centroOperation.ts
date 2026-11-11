@@ -70,7 +70,7 @@ export function buildCentroAgenda(day: string, roster: CentroPerson[], records: 
     return { ...task, title: task.id.startsWith("aseo-") ? cleaningFor(day, Number(task.id.slice(-1))) : task.title,
       ownerId, record, digital,
       blocked: !ownerId ? "Sin personal disponible en este horario; requiere cobertura" : task.outdoor && !digital && otherOutside ? "Hay otra persona en prospección exterior; esperar su regreso" : undefined,
-      reason: !ownerId ? "La obligación permanece pendiente" : record?.owner_id && ownerId !== record.owner_id ? "Reasignada por cambio de disponibilidad; conserva el avance" : preview ? "Asignación prevista; se confirma al registrar llegada" : "Asignada por puesto, horario y personal disponible",
+      reason: !ownerId ? "La obligación permanece pendiente" : record?.owner_id && ownerId !== record.owner_id ? "Reasignada por cambio de disponibilidad; conserva el avance" : preview || pool.some(p => p.id === ownerId && now < p.start) ? "Asignación prevista según su horario; se habilita al iniciar turno" : "Asignada por puesto, horario y personal disponible",
     };
   });
 }
