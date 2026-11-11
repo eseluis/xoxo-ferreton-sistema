@@ -18,7 +18,7 @@ function InvewinContent({user}:{user:Employee}){
  {error&&<p className="loginError" role="alert">{error}</p>}{!context&&!error&&<p>Cargando actividad y avances…</p>}
  {context&&<><p className="statusPill">{context.validatedCodes} códigos únicos validados en el proyecto dentro de tu acceso.</p><p className="muted">La totalidad del catálogo debe cotejarse con el área física y el catálogo de Invewin. No se supone 100% por alcanzar la meta diaria.</p><label>Consultar jornada<input type="date" value={day} min={context.start} max={context.today} onChange={e=>{setDay(e.target.value);setContext(undefined);}}/></label>
  {context.eligible&&day===context.today&&!context.active&&<p className="calendarWarning">La vigencia del proyecto terminó. Se conserva el historial y la revisión de las entregas.</p>}
- {context.eligible&&own&&day===context.today&&context.active&&<InvewinEditor key={own.record_id} row={own} minimum={context.minimumCodes} beforeStart={context.clock<'11:00'} busy={busy} act={act}/>}
+ {context.eligible&&own&&day===context.today&&context.active&&<InvewinEditor key={own.record_id} row={own} minimum={context.minimumCodes} beforeStart={false} busy={busy} act={act}/>}
  {!own&&user.role==="JEFE_AREA"&&<p>Esta jornada no tiene actividad asignada: revisa tu sucursal, descanso o vigencia.</p>}
  <h3>Avances de la jornada · {day}</h3><div className="invewinRows">{context.rows.map(row=><InvewinReview key={row.record_id} row={row} personName={name(row.employee_number)} own={row.employee_number===user.id} busy={busy} act={act}/>)}</div>{!context.rows.length&&<p>No hay registros para esta fecha.</p>}</>}
  </article>;

@@ -85,6 +85,18 @@ const {PGlite}=require('@electric-sql/pglite');
   const reconcile=freeze(fs.readFileSync('supabase-daily-agenda-reconcile.sql','utf8'));await db.exec(reconcile);await db.exec(reconcile);const revised=(await db.query("select slots from operation_day_plans where employee_number='009' and day='2026-11-07'")).rows[0].slots;assert.ok(revised.some(s=>s.itemId==='exhibicion-tarde-general'));assert.ok(revised.some(s=>s.itemId==='Aseo vigente'&&s.start==='09:00'));assert.ok(revised.some(s=>s.itemId==='manual-historia'));assert.ok(!revised.some(s=>s.itemId==='matriz-operacion-programada'));assert.equal((await db.query("select count(*) n from daily_agenda_revisions where employee_number='009' and day='2026-11-07'")).rows[0].n,1);
   const resetMigration=freeze(fs.readFileSync('supabase-weekly-reset-and-store-consistency.sql','utf8'));await db.exec(resetMigration);await db.exec(resetMigration);
   await clock('2026-11-09 10:00:00');await who(9);assert.equal((await ctx()).blocked,false);assert.ok((await ctx()).dates.some(d=>d.due==='2026-11-07'));
+  await db.exec('reset role');await clock('2026-11-11 09:45:00');
+  await db.exec(fs.readFileSync('supabase-fix-task-schedule.sql','utf8'));
+  const flexible=freeze(fs.readFileSync('supabase-flexible-tasks-and-rest-summary.sql','utf8'));await db.exec(flexible);await db.exec(flexible);
+  await who(3);const eve=(await db.query('select director_rest_eve_summary() c')).rows[0].c;
+  assert.ok(eve.people.some(p=>p.id==='010'));assert.ok(eve.people.every(p=>p.id!=='009'));
+  await db.exec(`reset role;insert into daily_task_records(record_id,employee_number,branch,record_date,payload,updated_by) values
+  ('flex-one','010','Matriz','2026-11-11','{"id":"flex-one","employeeId":"010","date":"2026-11-11","start":"15:00","end":"16:00","status":"Pendiente"}',auth.uid()),
+  ('flex-two','010','Matriz','2026-11-11','{"id":"flex-two","employeeId":"010","date":"2026-11-11","start":"15:00","end":"16:00","status":"Pendiente"}',auth.uid());
+  update daily_task_records set payload=payload||'{"completedAt":"2026-11-11T16:00:00Z","startedAt":"2026-11-11T15:50:00Z","status":"Completada","deliveryNote":"Se limpio y acomodo con evidencia"}' where record_id='flex-one';`);
+  assert.equal((await db.query("select payload->>'outsideSchedule' o from daily_task_records where record_id='flex-one'")).rows[0].o,'true');
+  await who(3);assert.ok((await db.query('select director_rest_eve_summary() c')).rows[0].c.people.find(p=>p.id==='010').report.items.some(i=>i.key==='task:flex-one'));
+  await who(9);await assert.rejects(db.query('select director_rest_eve_summary()'),/exclusivo de 003/);
   console.log('PASS reportes: descanso individual, Zalma viernes-domingo, evidencias, salida insert/update, entrega idempotente, omision conservada sin bloqueo entre ciclos, apertura sin inventar, revisión y jerarquía');
  }finally{await db.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

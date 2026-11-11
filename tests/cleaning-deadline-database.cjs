@@ -72,6 +72,8 @@ const {PGlite}=require('@electric-sql/pglite');
   assert.ok(fixedRoster.every(p=>p.start==='08:45'&&p.end==='18:00'));
   assert.ok(fixedRoster.some(p=>p.id==='011'&&p.start==='08:45'));
   assert.equal((await db.query("select cleaning_exit_time('011','2026-11-06') t")).rows[0].t,'18:00');
+  const flexible=fs.readFileSync('supabase-flexible-tasks-and-rest-summary.sql','utf8').replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");await db.exec(flexible);await db.exec(flexible);
+  assert.equal((await db.query("select cleaning_gate('015','2026-11-06','08:10','08:30',false) g")).rows[0].g.blocked,true);
   console.log('PASS aseo: ventana configurada, pausa automática, bloqueo servidor, reactivación a salida A/B y cambio diario, fotos, tiempos reales, Centro canónico y recuperación tardía');
  }finally{await db.close();}
 })().catch(e=>{console.error(e.message,e.where,e.internalQuery,e.position);process.exitCode=1;});

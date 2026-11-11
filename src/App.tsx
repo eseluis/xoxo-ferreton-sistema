@@ -1,3 +1,5 @@
+import { RestEveSummary } from "./RestEveSummary";
+import { timingLabel } from "./taskTiming";
 import {CleaningRecoveryReview} from "./CleaningRecoveryReview";
 import {ActionFeedback,showActionError} from "./ActionFeedback";
 import {ClosingRecovery} from "./ClosingRecovery";
@@ -1998,7 +2000,7 @@ function App() {
 
   const startDailyTask = (task: DailyTask) => {
     if(task.dependsOnTaskIds?.length && dependencyStatus[task.id]?.ready!==true)return;
-    if(task.systemKind === "area-handover" && (task.date!==todayKey() || workTimeAt()<task.start))return;
+    if(task.systemKind === "area-handover" && task.date!==todayKey())return;
     if (task.startedAt && !task.pausedAt) return;
     if (task.paused && !["Cliente", "Seguridad"].includes(task.pauseReason ?? "")) return;
     persistDailyTasks(
@@ -2601,7 +2603,7 @@ export function TaskDescription({ task, onNavigate }: { task: Pick<DailyTask, "n
   const process = processes.find((item) => item.id === task.processId);
   const evidenceNames: Record<string, string> = { none: "Sin evidencia especial", photo: "Foto", signature: "Registro de confirmación", ticket: "Ticket o folio" };
   const targetView = task.processId === "apertura" ? "panel" : task.processId === "apertura-centro" ? "operacion-centro" : undefined;
-  return <div className="taskDescription"><TeamTaskSummary task={task}/><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}{process && <div className="taskProcessGuide"><h3>Proceso: {process.name}</h3><p>{process.area} · Si hay un problema: {process.notifyOnFailure}. Riesgo: {process.risk}</p><ol>{process.steps.map((step, index) => <li key={`${step.title}-${index}`}><strong>{step.title}</strong><small>{step.owner} · {step.time} · {evidenceNames[step.evidence] ?? step.evidence}</small></li>)}</ol>{targetView && onNavigate && <button type="button" className="ghost compact" onClick={() => onNavigate(targetView)}>{task.processId === "apertura" ? "Abrir checklist de apertura" : "Abrir Operación Centro"}</button>}</div>}</div>;
+  return <div className="taskDescription">{timingLabel(task)&&<p className="muted">{timingLabel(task)}</p>}<TeamTaskSummary task={task}/><strong>Descripción e instrucciones de la tarea</strong><p>{task.notes?.trim() || "Esta tarea no tiene instrucciones detalladas registradas. Solicita la descripción a quien la asignó antes de ejecutarla."}</p>{task.requiresPhoto && <p><strong>Evidencia requerida:</strong> toma una foto antes de comenzar y otra del resultado final.</p>}{process && <div className="taskProcessGuide"><h3>Proceso: {process.name}</h3><p>{process.area} · Si hay un problema: {process.notifyOnFailure}. Riesgo: {process.risk}</p><ol>{process.steps.map((step, index) => <li key={`${step.title}-${index}`}><strong>{step.title}</strong><small>{step.owner} · {step.time} · {evidenceNames[step.evidence] ?? step.evidence}</small></li>)}</ol>{targetView && onNavigate && <button type="button" className="ghost compact" onClick={() => onNavigate(targetView)}>{task.processId === "apertura" ? "Abrir checklist de apertura" : "Abrir Operación Centro"}</button>}</div>}</div>;
 }
 
 export function MyWorkFocus({ user, date, location, schedules, tasks, runs, cleaning, cleaningRows, shift, onNavigate }: {
@@ -2742,10 +2744,11 @@ function Dashboard({
     const coworkersPresent = coworkersToday.filter((employee) => todaysAttendance.some((entry) => entry.employeeId === employee.id && entry.in)).length;
     return <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <RestEveSummary user={user}/>
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
       <PriorityTasksCard user={user} location={locationFor(user)} tasks={dailyTasks} day={today} onNavigate={onNavigate}/>
       <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
-      <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
+      {user.id!=="003"&&<WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>}
       <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
@@ -2773,10 +2776,11 @@ function Dashboard({
   return (
     <section className="grid">
       <RequestsPanel user={user} collaborators={collaborators} requests={internalRequests} onNavigate={onNavigate} />
+      <RestEveSummary user={user}/>
       <StaffPermissions user={user} collaborators={collaborators} onNavigate={onNavigate} compact/>
       <PriorityTasksCard user={user} location={locationFor(user)} tasks={dailyTasks} day={today} onNavigate={onNavigate}/>
       <DailyAgendaCard user={user} location={locationFor(user)} schedules={activitySchedules} cleaning={cleaningRole}/>
-      <WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>
+      {user.id!=="003"&&<WeeklyReports user={user} renderPhoto={(value,onCapture,onClear)=><PhotoCapture label="Evidencia del reporte semanal" value={value} onCapture={onCapture} onClear={onClear}/>}/>}
       <InvewinProject user={user} location={locationFor(user)}/>
       <MatrizOrders user={user} location={locationFor(user)} collaborators={collaborators} />
       <UniformRole user={user} />
@@ -3317,7 +3321,6 @@ export function AttendanceView({
         <div className="taskList">
           {dailyTasks.length ? (
             dailyTasks.map((task) => {
-              const handoverEarly = task.systemKind === "area-handover" && workTimeAt()<task.start;
               const sla = task.slaMinutes ?? Math.max(15, timeToMinutes(task.end) - timeToMinutes(task.start));
               const status = task.completedAt
                 ? task.status
@@ -3328,7 +3331,7 @@ export function AttendanceView({
                     <span>
                       <strong>{task.title}</strong>
                       <small>
-                        {task.start}-{task.end} · {task.priority} · SLA {sla} min
+                        {task.start}-{task.end} · {task.priority} · SLA {sla} min{timingLabel(task) ? ` · ${timingLabel(task)}` : ""}
                       </small>
                     </span>
                     <span className={`statusPill ${slaClassName(status as SlaState)}`}>
@@ -3360,11 +3363,10 @@ export function AttendanceView({
                   {task.requiresPhoto && <div className="beforeAfterEvidence"><div><strong>1. Foto antes de realizar la tarea</strong><PhotoCapture label="Antes de la tarea" value={task.beforeEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{beforeEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{beforeEvidenceCapture:undefined})}/></div>{task.startedAt && <div><strong>2. Foto del resultado final</strong><PhotoCapture label="Después de la tarea" value={task.afterEvidenceCapture} onCapture={(evidence)=>updateTask(task.id,{afterEvidenceCapture:evidence})} onClear={()=>updateTask(task.id,{afterEvidenceCapture:undefined})}/></div>}</div>}
                   {task.workflowKind&&<TeamTaskFields task={task} onUpdate={patch=>updateTask(task.id,patch)}/>}
                   {task.dependsOnTaskIds?.length&&<p>{dependencyStatus[task.id]?.ready?"Notificación recibida: etapa anterior terminada.":"En espera de la etapa anterior del equipo; no iniciar todavía."}</p>}
-                  {handoverEarly&&<p className="muted">Esta entrega se habilita a las {task.start}, cinco minutos antes de tu salida.</p>}
                   {task.requiresPhoto && !task.startedAt && <p className="muted">Registra la foto inicial para poder iniciar la tarea. Después podrás registrar la foto final y marcarla completada.</p>}
                   <div className="taskActions">
                     {(!task.startedAt || !!task.pausedAt) && (
-                      <button className="ghost compact" onClick={()=>{const problems:string[]=[];if(handoverEarly)problems.push(`La entrega se libera a las ${task.start}, cinco minutos antes de tu salida.`);if(task.dependsOnTaskIds?.length&&dependencyStatus[task.id]?.ready!==true)problems.push("Espera la notificación de la etapa anterior del equipo.");if(task.requiresPhoto&&!task.beforeEvidenceCapture)problems.push("Falta la foto de antes de realizar la tarea.");if(task.paused&&!["Cliente","Seguridad"].includes(task.pauseReason??""))problems.push("La tarea requiere autorización de tu superior para reanudarse.");if(problems.length){showActionError(problems,"No se puede iniciar todavía");return;}startDailyTask(task);}}>
+                      <button className="ghost compact" onClick={()=>{const problems:string[]=[];if(task.dependsOnTaskIds?.length&&dependencyStatus[task.id]?.ready!==true)problems.push("Espera la notificación de la etapa anterior del equipo.");if(task.requiresPhoto&&!task.beforeEvidenceCapture)problems.push("Falta la foto de antes de realizar la tarea.");if(task.paused&&!["Cliente","Seguridad"].includes(task.pauseReason??""))problems.push("La tarea requiere autorización de tu superior para reanudarse.");if(problems.length){showActionError(problems,"No se puede iniciar todavía");return;}startDailyTask(task);}}>
                         {task.pausedAt ? "Retomar tarea" : "Iniciar tarea"}
                       </button>
                     )}
@@ -3849,7 +3851,7 @@ function LiveActivityCard({
       <span>
         {title}
         <small>
-          Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
+          Programada {scheduledStart}-{scheduledEnd} · SLA {slaMinutes} min{!isCleaning && run && timingLabel({...run,start:scheduledStart,end:scheduledEnd}) ? " · Actividad hecha fuera de horario" : ""}{needsEvidence ? ` · Evidencia: ${evidence}` : ""}
         </small>
         {blockedReason&&<p className="calendarWarning" role="status">{blockedReason}</p>}{recovery&&!blockedReason&&<p className="warn">Recuperación habilitada desde tu salida programada. Debes realizar nuevamente el aseo y tomar fotos nuevas de antes y después. El retraso se conserva; registra tu salida real al terminar.</p>}
         {inProgress && <LiveStopwatch startedAt={run!.startedAt!} slaMinutes={slaMinutes} pausedAt={run?.pausedAt} pausedMinutes={run?.pausedMinutes} />}
