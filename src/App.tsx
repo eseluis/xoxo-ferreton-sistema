@@ -2906,7 +2906,7 @@ function Dashboard({
       <article className="panelCard">
         <h2>Aseo de hoy</h2>
         <div className="taskList">
-          {cleaningRole.slice(0, 6).map((row) => {
+          {cleaningRole.filter(row => canViewAll(user) || row.branch === locationFor(user)).slice(0, 6).map((row) => {
             const dayName = weekDays[(new Date().getDay() + 6) % 7];
             return (
               <div key={row.activity} className="taskRow">
@@ -4946,7 +4946,7 @@ function CleaningScoreboardView(props: {
     })
     .sort((a, b) => b.total - a.total);
 
-  const history = [...props.cleaningEvaluations].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
+  const history = props.cleaningEvaluations.filter(entry => canViewAll(props.user) || props.collaborators.some(employee => employee.id === entry.employeeId && employee.branch === props.user.branch)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 8);
 
   return (
     <section className="grid two">

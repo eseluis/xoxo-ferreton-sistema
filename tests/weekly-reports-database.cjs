@@ -52,8 +52,15 @@ const {PGlite}=require('@electric-sql/pglite');
   await who(3);assert.ok((await ctx('008')).canReview);await db.query('select review_weekly_report($1,$2,0)',[r.record_id,'Revisé las evidencias y la apertura.']);let detail=(await db.query('select weekly_report_detail($1) c',[r.record_id])).rows[0].c;assert.equal(detail.payload.status,'Revisado');assert.equal(detail.payload.summary,r.payload.summary);assert.equal(detail.payload.reviewHistory.length,1);
   await assert.rejects(db.query('select review_weekly_report($1,$2,0)',[r.record_id,'Segundo intento desde sesión vieja']),/Otra sesión/);
   await who(14);c=await ctx();assert.equal(c.due,'2026-11-08');assert.equal(c.blocked,false);await db.exec('reset role');assert.equal((await db.query("select staff_is_rest('014','2026-11-09') r")).rows[0].r,true);assert.equal((await db.query("select staff_is_rest('014','2026-11-08') r")).rows[0].r,false);
-  await clock('2026-11-09 10:00:00');await who(9);assert.equal((await ctx()).blocked,true);r=await submit('2026-11-07');assert.equal(r.payload.onTime,false);assert.equal((await ctx()).blocked,false);
-  await who(5);c=await ctx();assert.equal(c.due,'2026-11-07');assert.ok(c.openings.every(o=>o.branch==='Sucursal Centro'));assert.ok(!c.people.some(p=>p.id==='008'));
+  // Julio: Saturday blocks, Sunday and Monday start a fresh cycle without erasing the omission.
+  await db.exec("reset role;insert into work_readiness_records(record_id,employee_number,branch,record_date,payload) select 'julio-ready-'||d||'-'||phase,'009','Matriz',d::date,jsonb_build_object('phase',phase,'status','Conforme') from unnest(array['2026-11-07','2026-11-08','2026-11-09'])d cross join unnest(array['in','out'])phase;");
+  await clock('2026-11-07 10:00:00');await who(9);assert.equal((await ctx()).blocked,true);
+  const julioPunch=day=>db.query(`insert into attendance_records(record_id,employee_number,branch,record_date,payload,updated_by) values($1,'009','Matriz',$2,$3::jsonb,'00000000-0000-0000-0000-000000000009')`,['009-'+day,day,JSON.stringify({employeeId:'009',date:day,in:'08:00',out:'17:30'})]);
+  await assert.rejects(julioPunch('2026-11-07'),/Salida no registrada/);
+  for(const day of ['2026-11-08','2026-11-09']){await clock(day+' 10:00:00');assert.equal((await ctx()).blocked,false);await julioPunch(day);}
+  assert.equal((await ctx()).dates.find(d=>d.due==='2026-11-07').submitted,false);
+  await clock('2026-11-09 10:00:00');await who(9);assert.equal((await ctx()).blocked,false);assert.equal((await ctx()).due,'2026-11-14');assert.match((await ctx()).dates.find(d=>d.due==='2026-11-07').status,/No entregado/);r=await submit('2026-11-07');assert.equal(r.payload.onTime,false);assert.equal((await ctx()).blocked,false);
+  await who(5);c=await ctx();assert.equal(c.due,'2026-11-14');assert.equal(c.blocked,false);assert.ok(c.openings.every(o=>o.branch==='Sucursal Centro'));assert.ok(!c.people.some(p=>p.id==='008'));
 
   await db.exec('reset role');
   const ts=require('typescript'),vm=require('node:vm'),data={};vm.runInNewContext(ts.transpileModule(fs.readFileSync('src/data.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText,{exports:data});
@@ -76,7 +83,9 @@ const {PGlite}=require('@electric-sql/pglite');
 
   await db.exec('reset role');await clock('2026-11-07 08:50:00');await db.query("insert into operation_day_plans(employee_number,day,branch,slots) values('009','2026-11-07','Matriz',$1::jsonb) on conflict(employee_number,day) do update set slots=excluded.slots",[JSON.stringify([{key:'Actividad-matriz-operacion-programada',kind:'Actividad',itemId:'matriz-operacion-programada',title:'Bloque previo',start:'11:00',end:'16:30'},{key:'Aseo-guardado',kind:'Aseo',itemId:'Aseo vigente',title:'Aseo vigente',start:'09:00',end:'09:30'},{key:'Actividad-manual-historia',kind:'Actividad',itemId:'manual-historia',title:'Historia previa',start:'08:00',end:'08:30'}])]);
   const reconcile=freeze(fs.readFileSync('supabase-daily-agenda-reconcile.sql','utf8'));await db.exec(reconcile);await db.exec(reconcile);const revised=(await db.query("select slots from operation_day_plans where employee_number='009' and day='2026-11-07'")).rows[0].slots;assert.ok(revised.some(s=>s.itemId==='exhibicion-tarde-general'));assert.ok(revised.some(s=>s.itemId==='Aseo vigente'&&s.start==='09:00'));assert.ok(revised.some(s=>s.itemId==='manual-historia'));assert.ok(!revised.some(s=>s.itemId==='matriz-operacion-programada'));assert.equal((await db.query("select count(*) n from daily_agenda_revisions where employee_number='009' and day='2026-11-07'")).rows[0].n,1);
-  console.log('PASS reportes: descanso individual, Zalma viernes-domingo, evidencias, salida insert/update, entrega idempotente, atraso persistente, apertura sin inventar, revisión y jerarquía');
+  const resetMigration=freeze(fs.readFileSync('supabase-weekly-reset-and-store-consistency.sql','utf8'));await db.exec(resetMigration);await db.exec(resetMigration);
+  await clock('2026-11-09 10:00:00');await who(9);assert.equal((await ctx()).blocked,false);assert.ok((await ctx()).dates.some(d=>d.due==='2026-11-07'));
+  console.log('PASS reportes: descanso individual, Zalma viernes-domingo, evidencias, salida insert/update, entrega idempotente, omision conservada sin bloqueo entre ciclos, apertura sin inventar, revisión y jerarquía');
  }finally{await db.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
