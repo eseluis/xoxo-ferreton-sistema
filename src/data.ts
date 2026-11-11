@@ -60,7 +60,7 @@ export type InternalRule = {
   escalation: string;
 };
 
-export type ShiftKey = "A" | "B" | "Completo" | "Directivo";
+export type ShiftKey = "A" | "B" | "Completo" | "Directivo" | "Centro";
 
 export type ShiftConfig = {
   key: ShiftKey;
@@ -500,6 +500,7 @@ export const shifts = {
 };
 
 export const defaultShiftConfigs: ShiftConfig[] = [
+  {key:"Centro",name:"Sucursal Centro",start:"08:45",end:"18:00",lunchStart:"13:00",lunchEnd:"14:30",rotation:"Horario de Sucursal Centro",assignedBy:"Dirección"},
   {
     key: "A",
     name: "Turno A",

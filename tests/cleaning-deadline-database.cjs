@@ -66,6 +66,12 @@ const {PGlite}=require('@electric-sql/pglite');
   assert.ok(future.some(a=>a.ownerId==='011'&&a.taskId==='cierre'));
   assert.ok(future.some(a=>a.ownerId==='011'&&a.taskId.startsWith('inventario-')));
   assert.ok((await db.query("select centro_roster('2026-11-06') r")).rows[0].r.some(p=>p.id==='011'&&p.arrived&&!p.present));
+  await db.exec(`update app_state set value='[]' where key='xoxo.workLocations';update app_state set value=(select jsonb_agg(c||jsonb_build_object('branch',p.branch)) from jsonb_array_elements(value)c join profiles p on p.employee_number=c->>'id') where key='xoxo.collaborators';`);
+  const centroShift=fs.readFileSync('supabase-centro-work-shift.sql','utf8').replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");await db.exec(centroShift);await db.exec(centroShift);
+  const fixedRoster=(await db.query("select centro_roster('2026-11-06') r")).rows[0].r;
+  assert.ok(fixedRoster.every(p=>p.start==='08:45'&&p.end==='18:00'));
+  assert.ok(fixedRoster.some(p=>p.id==='011'&&p.start==='08:45'));
+  assert.equal((await db.query("select cleaning_exit_time('011','2026-11-06') t")).rows[0].t,'18:00');
   console.log('PASS aseo: ventana configurada, pausa automática, bloqueo servidor, reactivación a salida A/B y cambio diario, fotos, tiempos reales, Centro canónico y recuperación tardía');
  }finally{await db.close();}
 })().catch(e=>{console.error(e.message,e.where,e.internalQuery,e.position);process.exitCode=1;});

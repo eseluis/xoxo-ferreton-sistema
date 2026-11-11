@@ -4160,7 +4160,7 @@ function TeamView({
             </select>
             <input disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} value={employee.area} onChange={(event) => updateEmployee(index, "area", event.target.value)} />
             <select disabled={!(canGovern(user) || (canManageStore(user) && employee.branch === user.branch))} value={employee.shift} onChange={(event) => updateEmployee(index, "shift", event.target.value as Employee["shift"])}>
-              {["A", "B", "Completo", "Directivo"].map((shift) => (
+              {["A", "B", "Completo", "Directivo", "Centro"].map((shift) => (
                 <option key={shift}>{shift}</option>
               ))}
             </select>
