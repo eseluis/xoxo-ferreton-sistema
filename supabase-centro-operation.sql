@@ -83,6 +83,7 @@ begin
  for spec in select definition from public.centro_task_templates order by array_position(array[
   'apertura','aseo-1','aseo-2','presentacion','inventario-1','inventario-2','trafico-1','trafico-2',
   'exhibicion','seguimiento','experiencia','preparacion','demostracion','contenido','manana','cierre','atencion'],task_id),task_id loop
+  select coalesce(jsonb_agg(p),'[]'::jsonb) into pool from jsonb_array_elements(roster) p where (p->>'present')::boolean or (clock<p->>'start' and p->>'start'<spec->>'end' and p->>'end'>spec->>'start');
   owner:=null;
   select * into rec from public.centro_operation_records where day=target_day and task_id=spec->>'id';
   task_group:=regexp_replace(spec->>'id','-[12]$','');

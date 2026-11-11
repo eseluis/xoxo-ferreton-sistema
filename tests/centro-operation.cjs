@@ -18,6 +18,11 @@ assert.ok(agenda.filter(t => t.outdoor).every(t => t.digital));
 agenda = buildCentroAgenda(day, [worker('a'), worker('g', 'GERENTE_TIENDA')], [], '10:00');
 assert.equal(agenda.find(t => t.id === 'apertura').ownerId, 'g');
 assert.ok(agenda.filter(t => t.ownerId === 'a' && !t.control).length > agenda.filter(t => t.ownerId === 'g' && !t.control).length);
+// A second worker belongs to the operation before their shift begins.
+agenda = buildCentroAgenda(day, [worker('daniel', 'GERENTE_TIENDA', {start:'08:00',end:'17:30'}), worker('ruben', 'JEFE_AREA', {start:'09:30',end:'19:00',present:false,arrived:true})], [], '09:20');
+assert.ok(agenda.some(t=>t.ownerId==='ruben'&&t.start>='09:30'));
+assert.equal(agenda.find(t=>t.id==='cierre').ownerId,'ruben');
+assert.ok(agenda.filter(t=>t.id.startsWith('aseo-')).every(t=>t.ownerId==='daniel'));
 const prior = record('inventario-1', 'a', 'En curso', { items: [{code:'123'}] });
 agenda = buildCentroAgenda(day, [worker('a', 'AUXILIAR', { present: false }), worker('b')], [prior], '10:30');
 assert.equal(agenda.find(t => t.id === prior.task_id).ownerId, 'b');

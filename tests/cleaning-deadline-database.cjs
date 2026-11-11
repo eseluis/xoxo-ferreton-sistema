@@ -30,6 +30,7 @@ const {PGlite}=require('@electric-sql/pglite');
   await db.exec(fs.readFileSync('supabase-weekly-permissions.sql','utf8').replaceAll("now() at time zone 'America/Mexico_City'","current_setting('test.clock')::timestamp"));
   await db.exec(`update app_state set value='[{"id":"015","name":"Citlali","shift":"B"},{"id":"008","name":"Sabina","shift":"A"},{"id":"005","name":"Daniel","shift":"A"},{"id":"011","name":"Ruben","shift":"B"}]' where key='xoxo.collaborators';insert into app_state(key,value) values('xoxo.shiftConfigs','[{"key":"A","start":"08:00","end":"17:30"},{"key":"B","start":"08:00","end":"19:00"}]'),('xoxo.cleaningRole','[{"branch":"Matriz","activity":"Barrer atrás","start":"08:10","end":"08:30","details":"Barrer toda la zona","assignments":{"Viernes":"Citlali"}}]');insert into attendance_records(record_id,employee_number,branch,record_date,payload,updated_by) values('cit','015','Matriz','2026-11-06','{"employeeId":"015","date":"2026-11-06","in":"08:00"}',auth.uid()),('dan','005','Sucursal Centro','2026-11-06','{"employeeId":"005","date":"2026-11-06","in":"08:00"}',auth.uid()),('rub','011','Sucursal Centro','2026-11-06','{"employeeId":"011","date":"2026-11-06","in":"08:00"}',auth.uid());grant usage on schema public,auth to authenticated;`);
   const migration=fs.readFileSync('supabase-cleaning-deadline.sql','utf8').replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");await db.exec(migration);await db.exec(migration);
+  const planned=fs.readFileSync('supabase-centro-planned-staff.sql','utf8').replaceAll('now()',"(current_setting('test.clock')::timestamp at time zone 'America/Mexico_City')");await db.exec(planned);await db.exec(planned);
   const who=async id=>db.exec(`reset role;select set_config('test.user','00000000-0000-0000-0000-${String(id).padStart(12,'0')}',false);set role authenticated;`);
   const clock=async value=>db.query("select set_config('test.clock',$1,false)",[value]);
   const context=async()=> (await db.query("select cleaning_deadline_context('2026-11-06') c")).rows[0].c;
@@ -60,6 +61,11 @@ const {PGlite}=require('@electric-sql/pglite');
   await db.exec(`reset role;insert into activity_run_records(record_id,employee_number,branch,record_date,payload,updated_by) values('normal','015','Matriz','2026-11-06','{"itemType":"Actividad","itemId":"venta","status":"Pendiente"}',auth.uid());`);await who(15);await db.exec(`update activity_run_records set payload=payload||'{"status":"En curso"}' where record_id='normal';`);
   // The recovery never earns punctuality points in the current weekly report.
   await clock('2026-11-06 17:45:00');const report=(await db.query("select staff_permission_context('015') c")).rows[0].c.report;assert.equal(report.cleaningEarned,1);
+  await db.exec(`reset role;select set_config('test.clock','2026-11-06 09:20:00',false);update app_state set value='[{"key":"A","start":"08:00","end":"17:30"},{"key":"B","start":"09:30","end":"19:00"}]' where key='xoxo.shiftConfigs';`);
+  const future=(await db.query("select centro_task_assignments('2026-11-06') a")).rows[0].a;
+  assert.ok(future.some(a=>a.ownerId==='011'&&a.taskId==='cierre'));
+  assert.ok(future.some(a=>a.ownerId==='011'&&a.taskId.startsWith('inventario-')));
+  assert.ok((await db.query("select centro_roster('2026-11-06') r")).rows[0].r.some(p=>p.id==='011'&&p.arrived&&!p.present));
   console.log('PASS aseo: ventana configurada, pausa automática, bloqueo servidor, reactivación a salida A/B y cambio diario, fotos, tiempos reales, Centro canónico y recuperación tardía');
  }finally{await db.close();}
 })().catch(e=>{console.error(e.message,e.where,e.internalQuery,e.position);process.exitCode=1;});

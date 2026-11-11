@@ -49,10 +49,10 @@ export type CentroAgendaItem = CentroTask & { ownerId?: string; record?: CentroR
 export function buildCentroAgenda(day: string, roster: CentroPerson[], records: CentroRecord[], now: string): CentroAgendaItem[] {
   const present = roster.filter(p => p.present && p.start <= now && p.end > now);
   const preview = present.length === 0 && roster.every(p => !p.arrived) && roster.some(p => now < p.start);
-  const pool = preview ? roster : present;
   const load: Record<string, number> = {};
   const pairedOwners: Record<string, string> = {};
   return CENTRO_TASKS.map((task): CentroAgendaItem => {
+    const pool = roster.filter(p => present.includes(p) || (now < p.start && p.start < task.end && p.end > task.start));
     const record = records.find(r => r.day === day && r.task_id === task.id);
     const completed = record && ["Por validar", "Validada"].includes(record.status);
     const existing = pool.find(p => p.id === record?.owner_id);
