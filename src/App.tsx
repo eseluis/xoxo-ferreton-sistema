@@ -781,6 +781,8 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [dataHydrated, setDataHydrated] = useState(false);
+  const [hydrationError, setHydrationError] = useState("");
+  const [hydrationAttempt, setHydrationAttempt] = useState(0);
   const [mustChangePassword, setMustChangePassword] = useState(false);
   const [loginId, setLoginId] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -891,8 +893,8 @@ function App() {
     if (!isCloudReady || !isAuthenticated) return;
     let cancelled = false;
     setDataHydrated(false);
+    setHydrationError("");
     const hydrate = async () => {
-      const mutationAtStart = lastCloudMutationAt;
       const [
         cloudCollaborators,
         cloudAttendance,
@@ -948,13 +950,14 @@ function App() {
         cloudLoad("xoxo.storeOpeningChecks", storeOpeningChecks),
         cloudLoad("xoxo.cleaningEvaluations", cleaningEvaluations),
       ]);
-      if (cancelled || mutationAtStart !== lastCloudMutationAt) return;
+      if (cancelled) return;
       const organizationOverrides: Record<string, Partial<Employee>> = {
         "005": { branch: "Sucursal Centro", shift: "A" }, "006": { branch: "Sucursal Centro", shift: "A", supervisorId: "005" },
         "008": { branch: "Matriz", shift: "A", supervisorId: "003" }, "009": { branch: "Matriz", shift: "A", supervisorId: "003" },
         "010": { branch: "Matriz", shift: "A", supervisorId: "003" }, "007": { branch: "Matriz", shift: "B", supervisorId: "003" },
         "011": { branch: "Matriz", shift: "B", supervisorId: "003" }, "012": { branch: "Matriz", shift: "B", supervisorId: "003" },
       };
+      // Historical defaults fill missing fields; never undo saved transfers or shifts.
       const normalizedCollaborators = cloudCollaborators.map((employee) => ({ ...(organizationOverrides[employee.id] || {}), ...employee }));
       setCollaborators(normalizedCollaborators);
       setAttendance(cloudAttendance);
@@ -987,16 +990,15 @@ function App() {
       setStoreOpeningChecks(cloudStoreOpeningChecks);
       setCleaningEvaluations(cloudCleaningEvaluations);
       setDataHydrated(true);
-      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(normalizedCollaborators) !== JSON.stringify(cloudCollaborators)) save("xoxo.collaborators", normalizedCollaborators);
-      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(mergedActivitySchedules) !== JSON.stringify(cloudActivitySchedules)) save("xoxo.activitySchedules", mergedActivitySchedules);
-      if (canGovern(normalizedCollaborators.find(employee => employee.id === activeId) ?? {role: "AUXILIAR"} as Employee) && JSON.stringify(mergedCleaning) !== JSON.stringify(cloudCleaningRole)) save("xoxo.cleaningRole", mergedCleaning);
     };
-    void hydrate();
+    void hydrate().catch(error => {
+      if (!cancelled) setHydrationError(error instanceof Error ? error.message : "No se pudo conectar con el servidor.");
+    });
     return () => { cancelled = true; };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, hydrationAttempt]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !dataHydrated) return;
     let active = true;
     let busy = false;
     const refreshAssignments = async () => {
@@ -1024,7 +1026,7 @@ function App() {
     };
     const interval = window.setInterval(() => void refreshAssignments(), 15000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, dataHydrated]);
 
   useEffect(() => {
     if (!isAuthenticated || !dataHydrated) { setAttendanceSyncState({checkedAt:"",error:""}); setAttendanceReceipt({busy:false,error:false,message:"",phase:""}); attendancePunchBusy.current=false; return; }
@@ -1050,7 +1052,7 @@ function App() {
   }, [isAuthenticated,dataHydrated,attendanceDay,activeId]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !dataHydrated) return;
     let refreshing = false;
     const refreshOperationalState = async () => {
       if (refreshing) return;
@@ -1094,9 +1096,9 @@ function App() {
         refreshing = false;
       }
     };
-    void refreshOperationalState();
-    // Los módulos con fotos mantienen el respaldo de cinco minutos.
-    // Asistencia se consulta por separado cada 15 segundos.
+    // Initial hydration already fetched these modules. Refresh only on the timer or focus.
+    // Antes eran 8 segundos (450 consultas/hora por sesión). Cinco minutos son
+    // suficientes como respaldo; los cambios propios se muestran de inmediato.
     const interval = window.setInterval(() => void refreshOperationalState(), 5 * 60 * 1000);
     const refreshOnFocus = () => {
       if (Date.now() - lastCloudMutationAt > 30000) void refreshOperationalState();
@@ -1111,7 +1113,7 @@ function App() {
       window.removeEventListener("focus", refreshOnFocus);
       window.removeEventListener("online", flushOnOnline);
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, dataHydrated]);
 
   const user = collaborators.find((employee) => employee.id === activeId) ?? collaborators[0] ?? defaultEmployees[2];
   useEffect(() => {
@@ -1149,12 +1151,16 @@ function App() {
     if (centroArrival.current !== arrivalKey) { centroArrival.current = arrivalKey; setView("operacion-centro"); }
   }, [isAuthenticated, currentWorkLocation, myAttendance?.in, myAttendance?.out, today, user.id]);
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !dataHydrated) return;
     let alive = true;
+    let reading = false;
     const refresh = async () => {
-      if (document.visibilityState === "hidden") return;
+      if (reading || document.visibilityState === "hidden") return;
+      reading = true;
+      try {
       const next = await cloudRefresh<WorkLocation[]>("xoxo.workLocations");
       if (alive && next) setWorkLocations(next);
+      } finally { reading = false; }
     };
     const onSync = (event: Event) => {
       const detail = (event as CustomEvent).detail;
@@ -1167,7 +1173,7 @@ function App() {
     const timer = window.setInterval(() => void refresh(), 15000);
     window.addEventListener("xoxo-sync", onSync);
     return () => { alive = false; clearInterval(timer); window.removeEventListener("xoxo-sync", onSync); };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, dataHydrated]);
   const currentCleaningAssignment = getEditableCleaningAssignment(user, cleaningRole, currentWorkLocation);
   const currentCleaningRow = getEditableCleaningRow(user, cleaningRole, currentWorkLocation);
   const userTasks = dailyTasks.filter((task) => task.employeeId === user.id && task.date === today);
@@ -2084,7 +2090,7 @@ function App() {
   }
 
   if (!dataHydrated) {
-    return <main className="loginPage"><div className="loginCard">Cargando permisos y datos de tu sucursal…</div></main>;
+    return <main className="loginPage"><div className="loginCard">{hydrationError ? <><p role="alert">No se pudo completar la carga: {hydrationError}</p><button className="primary" onClick={() => setHydrationAttempt(n => n + 1)}>Reintentar conexión</button></> : "Cargando permisos y datos de tu sucursal…"}</div></main>;
   }
   if (!collaborators.some(employee => employee.id === activeId)) {
     return <main className="loginPage"><div className="loginCard"><p>No se pudo validar tu acceso a la sucursal. Revisa la conexión y la actualización de permisos con dirección.</p><button className="primary" onClick={() => window.location.reload()}>Reintentar</button><button className="ghost" onClick={logout}>Cerrar sesión</button></div></main>;

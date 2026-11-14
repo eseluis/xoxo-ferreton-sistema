@@ -1,0 +1,28 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const ts = require('typescript');
+const exportsObject = {};
+const code = ts.transpileModule(fs.readFileSync('src/cloudStore.ts','utf8').replaceAll('import.meta.env','({})'), {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+vm.runInNewContext(code,{exports:exportsObject,require:()=>({createClient:()=>({})}),URL,AbortController,setTimeout,clearTimeout});
+const {createReadFetch} = exportsObject;
+const url = 'https://example.test/rest/v1/activity_run_records';
+(async()=>{
+ let running=0,peak=0;const release=[];const order=[];
+ const fetcher = async (input,init)=>{if(init?.method==='PATCH'){order.push('write');return 'saved';}running++;peak=Math.max(peak,running);order.push(input);await new Promise(resolve=>release.push(resolve));running--;return input;};
+ const read=createReadFetch(fetcher,2,1000);
+ const jobs=[read(url+'?a'),read(url+'?b'),read(url+'?c')];
+ assert.equal(release.length,2);
+ assert.equal(await read(url,{method:'PATCH',body:'keep'}),'saved');
+ assert.equal(order[2],'write');
+ release.shift()();await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(release.length,2);assert.equal(peak,2);
+ while(release.length)release.shift()();await Promise.all(jobs);
+ const rejects=createReadFetch(async (input,init)=>{if(input.endsWith('ok'))return 'recovered';return await new Promise((resolve,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true}));},1,5);
+ const slow=rejects(url);const recovery=rejects(url+'?ok');
+ await assert.rejects(slow,/servidor tardó/);assert.equal(await recovery,'recovered');
+ const controller=new AbortController();let received;
+ const cancel=createReadFetch(async(input,init)=>{received=init.signal;return await new Promise((resolve,reject)=>{if(init.signal.aborted)reject(init.signal.reason);else init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true});});},1,1000);
+ const cancelled=cancel(url,{signal:controller.signal});controller.abort(new Error('Cancelled by caller'));await assert.rejects(cancelled,/Cancelled by caller/);assert.equal(received.aborted,true);
+ console.log('PASS: bounded reads, immediate writes, timeout releases queue and caller cancellation');
+})().catch(error=>{console.error(error);process.exitCode=1;});

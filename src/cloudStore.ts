@@ -105,8 +105,44 @@ export function clearCloudPending(key: string, revision?: string) {
     if (typeof window.dispatchEvent === "function") window.dispatchEvent(new CustomEvent("xoxo-sync", { detail: { key, error: "" } }));
   }
 }
+// Bound background reads so one session cannot fill the server connection pool.
+// Mutations bypass this queue and retain their existing confirmation/retry semantics.
+export function createReadFetch(fetcher: typeof fetch, concurrency = 4, timeoutMs = 15000): typeof fetch {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  const readRpcs = new Set(["store_collaborators", "store_opening_checks", "director_rest_eve_summary", "cleaning_recovery_queue", "store_overview"]);
+  return async (input, init) => {
+    const url = typeof input === "object" && "url" in input ? input.url : String(input);
+    const method = (init?.method ?? (typeof input === "object" && "method" in input ? input.method : "GET")).toUpperCase();
+    const path = new URL(url).pathname;
+    const rpc = path.split("/").pop() ?? "";
+    const read = path.startsWith("/rest/v1/") && (method === "GET" || path.includes("/rpc/") && (rpc.endsWith("_context") || readRpcs.has(rpc)));
+    if (!read) return fetcher(input, init);
+    if (active >= concurrency) await new Promise<void>(resolve => waiting.push(resolve));
+    else active++;
+    const controller = new AbortController();
+    const signal = init?.signal ?? (typeof input === "object" && "signal" in input ? input.signal : undefined);
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => controller.abort(new Error("El servidor tardó demasiado en responder. Reintenta la conexión.")), timeoutMs);
+    try {
+      return await fetcher(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      // Pass this slot to the next reader; new reads cannot jump the queue.
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+const cloudFetch = createReadFetch((input, init) => fetch(input, init));
+
 export const supabase = isCloudReady
   ? createClient(supabaseUrl!, supabaseAnonKey!, {
+      global: { fetch: cloudFetch },
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -213,7 +249,7 @@ export async function cloudLoad<T>(key: string, fallback: T): Promise<T> {
   if (!supabase) return fallback;
   if (key === "xoxo.collaborators" || key === "xoxo.storeOpeningChecks") {
     const { data, error } = await supabase.rpc(key === "xoxo.collaborators" ? "store_collaborators" : "store_opening_checks");
-    if (error) return [] as T;
+    if (error) throw new Error(error.message);
     return data as T;
   }
   const pending = pendingRecord<T>(key);
